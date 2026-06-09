@@ -31,7 +31,12 @@ export default defineConfig({
     // participant in. Without it, co-signers on MainMenu would miss
     // the invite entirely (service worker logs it but nothing
     // surfaces in the browser chrome).
-    permissions: ['storage', 'tabs', 'activeTab', 'offscreen', 'notifications'],
+    // `nativeMessaging` lets the background service worker open the
+    // YubiWallet native host (`chrome.runtime.connectNative(
+    // "com.yubiwallet.host")`) to discover on-card accounts and
+    // delegate ECDSA/EdDSA signing to the YubiKey. The host must be
+    // installed separately — see integration/native-messaging/README.md.
+    permissions: ['storage', 'tabs', 'activeTab', 'offscreen', 'notifications', 'nativeMessaging'],
     host_permissions: [
       'https://*/*',
       // The signal server (matches TUI's `model.rs` websocket_url).

@@ -93,7 +93,12 @@
     >
         {#if currentAccount}
             <div class="account-info">
-                <div class="account-name">{currentAccount.name}</div>
+                <div class="account-name">
+                    {currentAccount.name}
+                    {#if currentAccount.type === 'hardware'}
+                        <span class="hardware-badge" title="Signed on a YubiKey hardware device">YubiKey</span>
+                    {/if}
+                </div>
                 <div class="account-address">{formatAddress(currentAccount.address)}</div>
             </div>
             <div class="account-balance">
@@ -146,7 +151,12 @@
                         on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && selectAccount(account.id)}
                     >
                         <div class="account-item-info">
-                            <div class="account-item-name">{account.name}</div>
+                            <div class="account-item-name">
+                                {account.name}
+                                {#if account.type === 'hardware'}
+                                    <span class="hardware-badge" title="Signed on a YubiKey hardware device">YubiKey</span>
+                                {/if}
+                            </div>
                             <div class="account-item-address">
                                 {formatAddress(account.address)}
                                 <button
@@ -207,6 +217,19 @@
         font-weight: 600;
         font-size: 14px;
         color: var(--c-text);
+    }
+
+    .hardware-badge {
+        display: inline-block;
+        margin-left: 6px;
+        padding: 1px 6px;
+        font-size: 10px;
+        font-weight: 700;
+        line-height: 1.4;
+        vertical-align: middle;
+        color: var(--c-primary-fg);
+        background: var(--c-primary);
+        border-radius: 6px;
     }
 
     .account-address {

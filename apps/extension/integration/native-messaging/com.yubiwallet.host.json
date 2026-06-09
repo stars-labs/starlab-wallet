@@ -1,0 +1,9 @@
+{
+  "name": "com.yubiwallet.host",
+  "description": "YubiWallet native messaging host for Starlab Wallet (YubiKey PIV/OpenPGP signing)",
+  "path": "/REPLACE/WITH/ABSOLUTE/PATH/TO/yubiwallet-host",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://REPLACE_WITH_EXTENSION_ID/"
+  ]
+}

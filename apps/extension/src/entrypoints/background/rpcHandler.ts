@@ -16,6 +16,8 @@ import { getPermissionService } from '../../services/permissionService';
 import { toHex } from 'viem';
 import type { JsonRpcRequest } from "@frost-mpc/types/messages";
 import type { SessionManager } from './sessionManager';
+import type { YubiKeyManager } from './yubikeyManager';
+import type { YubiKeySigner } from '../../signers';
 
 /**
  * Handles JSON-RPC requests from web applications
@@ -72,6 +74,13 @@ export class RpcHandler {
      * signing (chainId, getBalance, etc.) work before it's wired.
      */
     private sessionManager?: SessionManager;
+    /**
+     * YubiKey: holds the SignerRegistry for hardware accounts. When a
+     * sign request targets a YubiKey address, we route to the card
+     * (single-party, instant) instead of the FROST ceremony. Optional so
+     * the FROST-only path works before it's wired / when no host exists.
+     */
+    private yubiKeyManager?: YubiKeyManager;
 
     constructor() {
         this.accountService = AccountService.getInstance();
@@ -81,6 +90,10 @@ export class RpcHandler {
 
     setSessionManager(sm: SessionManager): void {
         this.sessionManager = sm;
+    }
+
+    setYubiKeyManager(ym: YubiKeyManager): void {
+        this.yubiKeyManager = ym;
     }
 
     /**
@@ -248,6 +261,21 @@ export class RpcHandler {
             throw new Error('Invalid transaction parameters: missing "to" address');
         }
 
+        // YubiKey: if the sender is a hardware account, sign the tx on the
+        // card and return the raw signed transaction (single-party, no
+        // FROST ceremony). dApps expect eth_sendTransaction to broadcast,
+        // but this extension's FROST path also only signs — broadcasting is
+        // out of scope here, so we return the signed serialized tx to match
+        // existing behaviour (resolve of the signing promise).
+        const fromAddr: string | undefined =
+            transaction.from || this.accountService.getCurrentAccount()?.address;
+        const txYubiSigner = fromAddr
+            ? this.yubiKeyManager?.getSignerByAddress(fromAddr)
+            : undefined;
+        if (txYubiSigner) {
+            return await this.signTransactionWithYubiKey(txYubiSigner, transaction);
+        }
+
         // Generate a unique transaction signing ID
         const signingId = `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         
@@ -373,6 +401,14 @@ export class RpcHandler {
             address = currentAccount.address;
         }
 
+        // YubiKey: if this address is backed by a hardware account, sign
+        // on the card directly. This is single-party + instant, so it
+        // bypasses the whole FROST announce/approve/ceremony flow below.
+        const yubiSigner = this.yubiKeyManager?.getSignerByAddress(address);
+        if (yubiSigner) {
+            return await this.signWithYubiKey(yubiSigner, message);
+        }
+
         // Look up the wallet backing this address. KeystoreManager's
         // wallets carry `address` from the save-wallet flow (Ext-1d).
         // Case-insensitive compare — dApps frequently lowercase
@@ -492,6 +528,135 @@ export class RpcHandler {
                 }
             }, 300_000);
         });
+    }
+
+    /**
+     * YubiKey: produce a `personal_sign` signature on the card.
+     *
+     *   - secp256k1 (EVM): EIP-191 prehash the message (viem `hashMessage`),
+     *     hand the 32-byte digest to the card, then assemble the 65-byte
+     *     `(r,s,v)` signature with `v = recovery + 27` — the format dApps
+     *     feed to ecrecover / `verifyMessage`.
+     *   - ed25519 (Solana): the card signs the raw message bytes; we return
+     *     the 64-byte detached signature as hex.
+     *
+     * Returns a 0x-prefixed hex string, matching the FROST path's contract.
+     */
+    private async signWithYubiKey(
+        signer: YubiKeySigner,
+        message: string,
+    ): Promise<string> {
+        const isHex = /^0x[0-9a-fA-F]*$/.test(message);
+
+        if (signer.curve === 'secp256k1') {
+            const { hashMessage } = await import('viem');
+            const hash = isHex
+                ? hashMessage({ raw: message as `0x${string}` })
+                : hashMessage(message);
+            const prehash = this.hexToBytes(hash);
+            const { r, s, recovery } = await signer.signSecp256k1(prehash);
+            const rHex = this.stripHex(r).padStart(64, '0');
+            const sHex = this.stripHex(s).padStart(64, '0');
+            // Legacy EIP-191 `v` is recovery + 27.
+            const v = (recovery + 27).toString(16).padStart(2, '0');
+            return `0x${rHex}${sHex}${v}`;
+        }
+
+        // ed25519 / Solana: sign the raw message bytes.
+        const bytes = isHex
+            ? this.hexToBytes(message)
+            : new TextEncoder().encode(message);
+        const sig = await signer.signEd25519(bytes);
+        return `0x${this.bytesToHex(sig)}`;
+    }
+
+    /**
+     * YubiKey: sign an EVM transaction on the card. Builds an EIP-1559
+     * (or legacy, if gasPrice given) transaction with viem, takes its
+     * signing hash, signs the 32-byte digest on the card, and returns
+     * the serialized signed transaction (0x-hex, ready to broadcast).
+     *
+     * NOTE: this assembles `yParity` from the card's recovery id. For
+     * legacy (pre-EIP-1559) txs viem derives `v` from chainId + yParity
+     * internally when you pass `{ r, s, v: yParity }` via the typed
+     * signature object below.
+     */
+    private async signTransactionWithYubiKey(
+        signer: YubiKeySigner,
+        transaction: any,
+    ): Promise<string> {
+        if (signer.curve !== 'secp256k1') {
+            throw new Error('YubiKey account is not an EVM (secp256k1) key');
+        }
+        const {
+            serializeTransaction,
+            keccak256,
+            toHex: toHexFn,
+        } = await import('viem');
+
+        const network = this.networkService.getCurrentNetwork();
+        const chainId = network?.id ?? 1;
+
+        // Build a viem-serializable tx. Prefer EIP-1559 when fee fields are
+        // present, else fall back to legacy gasPrice.
+        const base: any = {
+            chainId,
+            to: transaction.to,
+            value: transaction.value ? BigInt(transaction.value) : 0n,
+            data: transaction.data ?? '0x',
+            nonce:
+                transaction.nonce !== undefined
+                    ? Number(transaction.nonce)
+                    : undefined,
+            gas:
+                transaction.gas || transaction.gasLimit
+                    ? BigInt(transaction.gas || transaction.gasLimit)
+                    : undefined,
+        };
+        if (transaction.maxFeePerGas || transaction.maxPriorityFeePerGas) {
+            base.type = 'eip1559';
+            base.maxFeePerGas = BigInt(transaction.maxFeePerGas ?? 0);
+            base.maxPriorityFeePerGas = BigInt(
+                transaction.maxPriorityFeePerGas ?? 0,
+            );
+        } else if (transaction.gasPrice) {
+            base.type = 'legacy';
+            base.gasPrice = BigInt(transaction.gasPrice);
+        }
+
+        // Unsigned serialization → keccak256 → 32-byte signing digest.
+        const unsigned = serializeTransaction(base);
+        const digest = keccak256(unsigned);
+        const { r, s, recovery } = await signer.signSecp256k1(
+            this.hexToBytes(digest),
+        );
+
+        const signed = serializeTransaction(base, {
+            r: (`0x${this.stripHex(r).padStart(64, '0')}`) as `0x${string}`,
+            s: (`0x${this.stripHex(s).padStart(64, '0')}`) as `0x${string}`,
+            // viem accepts yParity (0/1) directly; it derives v per tx type.
+            yParity: recovery,
+        });
+        return signed;
+    }
+
+    private stripHex(hex: string): string {
+        return hex.startsWith('0x') ? hex.slice(2) : hex;
+    }
+
+    private hexToBytes(hex: string): Uint8Array {
+        const h = this.stripHex(hex);
+        const out = new Uint8Array(h.length / 2);
+        for (let i = 0; i < out.length; i++) {
+            out[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
+        }
+        return out;
+    }
+
+    private bytesToHex(bytes: Uint8Array): string {
+        let s = '';
+        for (const b of bytes) s += b.toString(16).padStart(2, '0');
+        return s;
     }
 
     /**

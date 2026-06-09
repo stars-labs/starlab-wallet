@@ -33,6 +33,7 @@ import { SigningNotifier } from './signingNotification';
 import { StateManager } from './stateManager';
 import { PopupMessageHandler, OffscreenMessageHandler } from './messageHandlers';
 import { KeepaliveController } from './keepaliveController';
+import { YubiKeyManager } from './yubikeyManager';
 
 // Import types
 import { AppState, INITIAL_APP_STATE } from "@frost-mpc/types/appstate";
@@ -82,6 +83,7 @@ let webSocketManager: WebSocketManager;
 let popupMessageHandler: PopupMessageHandler;
 let offscreenMessageHandler: OffscreenMessageHandler;
 let keepaliveController: KeepaliveController;
+let yubiKeyManager: YubiKeyManager;
 
 // Global state variables for legacy compatibility
 let wsClient: WebSocketClient | null = null;
@@ -124,6 +126,14 @@ function initializeComponents(): void {
     // compatible FROST signing flow (createSigningSession) instead
     // of the legacy single-party DkgManager path.
     rpcHandler.setSessionManager(sessionManager);
+
+    // YubiKey: owns the SignerRegistry for hardware accounts. Injected
+    // into RpcHandler so personal_sign / tx requests for a YubiKey
+    // address route to the card instead of the FROST ceremony. Discovery
+    // itself runs in the async startup task below (it opens the native
+    // host, which we don't want blocking synchronous listener setup).
+    yubiKeyManager = new YubiKeyManager();
+    rpcHandler.setYubiKeyManager(yubiKeyManager);
 
     // Ext-3a: chrome.notifications push on incoming signing invites.
     // Guarded because chrome.notifications is only present when the
@@ -484,5 +494,13 @@ export default defineBackground(() => {
 
         // Initialize WebSocket connection
         initializeWebSocket();
+
+        // Discover YubiKey accounts via the native host and surface them
+        // in the popup. Fire-and-forget + self-contained error handling:
+        // a missing host (the common case) yields [] and never disturbs
+        // FROST startup above.
+        yubiKeyManager.discover().catch((e) => {
+            console.warn("[Background] YubiKey discovery error:", e);
+        });
     })();
 });

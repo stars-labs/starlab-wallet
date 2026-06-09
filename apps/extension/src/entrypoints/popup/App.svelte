@@ -26,6 +26,12 @@
     import CreateWalletForm from "../../components/CreateWalletForm.svelte";
     import { MESSAGE_TYPES } from "@frost-mpc/types/messages";
     import { hashMessage } from "viem";
+    import AccountService from "../../services/accountService";
+
+    // YubiKey hardware accounts are mirrored into AccountService by the
+    // background (yubikeyManager). Surface them even when no FROST wallet
+    // exists yet, so a YubiKey-only user still sees their account list.
+    let hasHardwareAccounts = false;
 
     // Theme (system | light | dark). initTheme() applies the saved mode
     // and live-tracks the OS preference while in "system". The cycle
@@ -956,6 +962,24 @@
 
     onMount(async () => {
         console.log("[UI] Component mounting");
+
+        // Detect mirrored YubiKey accounts so the account list can render
+        // for hardware-only users (the AccountManager gate below also opens
+        // on FROST DkgState.Complete / KeystoreImported).
+        try {
+            const accountService = AccountService.getInstance();
+            await accountService.ensureInitialized();
+            hasHardwareAccounts = accountService
+                .getAccounts()
+                .some((a) => a.type === "hardware");
+            accountService.onAccountChange(() => {
+                hasHardwareAccounts = accountService
+                    .getAccounts()
+                    .some((a) => a.type === "hardware");
+            });
+        } catch (e) {
+            console.warn("[UI] hardware account detection failed:", e);
+        }
 
         // Set up state tracking before connecting port
         let stateReceived = false;
@@ -2282,8 +2306,9 @@
             </div>
         {/if}
 
-        <!-- Multi-account support -->
-        {#if appState.dkgState === DkgState.Complete || appState.dkgState === DkgState.KeystoreImported}
+        <!-- Multi-account support. Also rendered for YubiKey-only users
+             (hasHardwareAccounts) even before any FROST DKG completes. -->
+        {#if appState.dkgState === DkgState.Complete || appState.dkgState === DkgState.KeystoreImported || hasHardwareAccounts}
             <AccountManager blockchain={appState.chain} />
         {/if}
 

@@ -1,0 +1,18 @@
+{
+  "name": "starlab-wallet",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Starlab — browser MPC wallet (FROST + YubiKey + sandbox execution)",
+  "workspaces": [
+    "apps/*",
+    "packages/@frost-mpc/*"
+  ],
+  "scripts": {
+    "build:types": "cd packages/@frost-mpc/types && bun run build",
+    "dev": "bun run build:types && cd apps/extension && bun run dev",
+    "build": "bun run build:types && cd apps/extension && bun run build",
+    "build:firefox": "bun run build:types && cd apps/extension && bun run build:firefox",
+    "check": "bun run build:types && cd apps/extension && bun run check",
+    "test": "cd apps/extension && bun test"
+  }
+}

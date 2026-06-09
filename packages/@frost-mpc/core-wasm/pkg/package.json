@@ -1,0 +1,15 @@
+{
+  "name": "frost-mpc-core-wasm",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "frost_mpc_core_wasm_bg.wasm",
+    "frost_mpc_core_wasm.js",
+    "frost_mpc_core_wasm.d.ts"
+  ],
+  "main": "frost_mpc_core_wasm.js",
+  "types": "frost_mpc_core_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "extends": "./.wxt/tsconfig.json",
+  "compilerOptions": {
+    "useDefineForClassFields": true,
+    "lib": [
+      "es2015",
+      "dom"
+    ],
+    "types": [
+      "chrome",
+      "node",
+      "bun"
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "@frost-mpc/core-wasm",
+  "version": "0.1.0",
+  "description": "FROST MPC WASM bindings (vendored build artifact from stars-labs/frost-mpc)",
+  "type": "module",
+  "main": "./pkg/frost_mpc_core_wasm.js",
+  "types": "./pkg/frost_mpc_core_wasm.d.ts",
+  "exports": {
+    ".": {
+      "import": "./pkg/frost_mpc_core_wasm.js",
+      "types": "./pkg/frost_mpc_core_wasm.d.ts"
+    }
+  },
+  "files": [
+    "pkg"
+  ],
+  "//": "Vendored artifact. The Rust source lives in stars-labs/frost-mpc (packages/@frost-mpc/core-wasm). To refresh: in frost-mpc run `bun run build:wasm`, then copy its pkg/ here. Proper fix: publish @frost-mpc/core-wasm to npm and depend on the published version."
+}

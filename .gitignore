@@ -1,0 +1,23 @@
+node_modules/
+dist/
+.output/
+.wxt/
+coverage/
+test-results/
+*.log
+
+# Editors / OS
+.DS_Store
+*.swp
+
+# Claude Code session runtime state
+.claude/scheduled_tasks.lock
+.claude/*.log
+.claude/worktrees/
+
+# direnv
+.direnv/
+
+# NOTE: packages/@frost-mpc/core-wasm/pkg is a VENDORED build artifact and IS
+# committed on purpose (it's how the extension gets FROST without building the
+# engine's Rust). Do not add it here.

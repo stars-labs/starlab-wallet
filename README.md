@@ -7,10 +7,10 @@ account backends behind a single `Signer` abstraction:
    via the `@starlab/core-wasm` engine. *(working today)*
 2. **YubiKey** — single-sign with on-card keys (PIV / OpenPGP) via the
    [`yubiwallet`](https://github.com/stars-labs/yubiwallet) native-messaging
-   host. *(planned)*
+   host. *(wired end-to-end; needs real-hardware verification)*
 3. **Sandbox execution** — point a network at a local fork node (anvil / surfpool)
    to run "create → sign → broadcast" against a simulated chain, no real funds.
-   *(planned)*
+   *(`scripts/sandbox.sh` working; a built-in network entry is a follow-up)*
 
 The EIP-1193 provider, transaction building, and dApp wiring are shared; only the
 "produce a signature" step differs per account, so a dApp never sees which

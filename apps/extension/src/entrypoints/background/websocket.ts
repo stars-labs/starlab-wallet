@@ -4,7 +4,7 @@ import type {
     WebSocketClientMsg,
     WebSocketServerMsg,
     OffscreenToBackgroundMsg
-} from "@frost-mpc/types/messages";
+} from "@starlab/types/messages";
 
 type MessageCallback = (message: WebSocketServerMsg) => void;
 type ErrorCallback = (error: Event) => void;

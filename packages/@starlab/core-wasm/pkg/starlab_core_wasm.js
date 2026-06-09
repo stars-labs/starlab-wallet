@@ -1,4 +1,4 @@
-/* @ts-self-types="./frost_mpc_core_wasm.d.ts" */
+/* @ts-self-types="./starlab_core_wasm.d.ts" */
 
 export class FrostDkgEd25519 {
     __destroy_into_raw() {
@@ -1080,7 +1080,7 @@ function __wbg_get_imports() {
             const ret = arg0.length;
             return ret;
         },
-        __wbg_log_669b43f712dc7aac: function(arg0, arg1) {
+        __wbg_log_9c0445d737f56d2c: function(arg0, arg1) {
             console.log(getStringFromWasm0(arg0, arg1));
         },
         __wbg_msCrypto_bd5a034af96bcba6: function(arg0) {
@@ -1170,7 +1170,7 @@ function __wbg_get_imports() {
     };
     return {
         __proto__: null,
-        "./frost_mpc_core_wasm_bg.js": import0,
+        "./starlab_core_wasm_bg.js": import0,
     };
 }
 
@@ -1382,7 +1382,7 @@ async function __wbg_init(module_or_path) {
     }
 
     if (module_or_path === undefined) {
-        module_or_path = new URL('frost_mpc_core_wasm_bg.wasm', import.meta.url);
+        module_or_path = new URL('starlab_core_wasm_bg.wasm', import.meta.url);
     }
     const imports = __wbg_get_imports();
 

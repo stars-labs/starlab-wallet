@@ -5,10 +5,10 @@
   "description": "Starlab — browser MPC wallet (FROST + YubiKey + sandbox execution)",
   "workspaces": [
     "apps/*",
-    "packages/@frost-mpc/*"
+    "packages/@starlab/*"
   ],
   "scripts": {
-    "build:types": "cd packages/@frost-mpc/types && bun run build",
+    "build:types": "cd packages/@starlab/types && bun run build",
     "dev": "bun run build:types && cd apps/extension && bun run dev",
     "build": "bun run build:types && cd apps/extension && bun run build",
     "build:firefox": "bun run build:types && cd apps/extension && bun run build:firefox",

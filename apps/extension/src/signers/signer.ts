@@ -6,7 +6,11 @@
  * dApp wiring don't care which backend actually produces the signature.
  */
 
-export type SignerKind = "frost" | "yubikey-piv" | "yubikey-openpgp";
+export type SignerKind =
+  | "frost"
+  | "yubikey-piv"
+  | "yubikey-openpgp"
+  | "ledger";
 
 export type Curve = "ed25519" | "secp256k1";
 
@@ -37,4 +41,33 @@ export interface Signer {
 
   /** secp256k1 signature over a 32-byte prehash — EVM / Bitcoin. */
   signSecp256k1(prehash32: Uint8Array): Promise<Secp256k1Signature>;
+}
+
+/**
+ * Structured-payload EVM signing, for hardware signers that refuse a raw
+ * prehash and insist on the full transaction / message so the device can
+ * display and hash it itself (Ledger, Trezor, …).
+ *
+ * FROST and YubiKey sign an arbitrary 32-byte prehash and so satisfy
+ * {@link Signer.signSecp256k1} directly; a Ledger cannot, so it throws from
+ * `signSecp256k1` and implements these instead. The EVM provider should
+ * prefer these when the resolved signer advertises them
+ * (see {@link isEvmStructuredSigner}).
+ */
+export interface EvmStructuredSigner {
+  /** Sign an RLP-encoded EVM transaction (hex, no 0x). */
+  signEvmTransaction(rawTxHex: string): Promise<Secp256k1Signature>;
+  /** Sign an `eth_sign` / `personal_sign` message (hex, no 0x). */
+  signEvmPersonalMessage(messageHex: string): Promise<Secp256k1Signature>;
+}
+
+export function isEvmStructuredSigner(
+  s: Signer,
+): s is Signer & EvmStructuredSigner {
+  return (
+    typeof (s as Partial<EvmStructuredSigner>).signEvmTransaction ===
+      "function" &&
+    typeof (s as Partial<EvmStructuredSigner>).signEvmPersonalMessage ===
+      "function"
+  );
 }

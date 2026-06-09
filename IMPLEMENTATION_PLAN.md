@@ -36,3 +36,32 @@ against a simulated chain, no real funds.
 verified: both nodes up, `cast balance` shows the funded 10000 ETH, Solana
 `getHealth`=ok. Point the wallet at the RPCs via Settings → custom network. A
 built-in "Sandbox" network entry + one-click toggle is an optional follow-up.
+
+## Stage 4: Ledger hardware wallet (a second hardware backend)
+Add Ledger behind the same `Signer` seam as YubiKey. The crypto/routing is
+already abstracted; the real difference is **transport**: Ledger uses WebHID,
+which is unavailable in the MV3 service worker and needs a user gesture — so the
+transport lives in the popup, not the SW (unlike YubiKey's native-messaging host
+which runs in the SW). Ledger also refuses a raw 32-byte prehash, so the seam
+grew an optional `EvmStructuredSigner` capability (sign the full tx / message).
+
+### Stage 4a: Ledger signer backend
+[DONE] `src/signers/ledger/`: `transport.ts` (WebHID, popup-only, graceful
+no-device fallback), `ledger-signer.ts` (`LedgerSigner` impl `Signer` +
+`EvmStructuredSigner` over `hw-app-eth` / `hw-app-solana`; Solana maps to
+`signEd25519`, EVM uses the structured methods, raw `signSecp256k1` throws by
+design) + `discoverLedgerAccounts()` for the default EVM + Solana paths. Seam:
+`SignerKind` gains `"ledger"`; `EvmStructuredSigner` + `isEvmStructuredSigner`
+added to `signer.ts`. **Gate:** `bun run build` + `tsc` (0 new type errors;
+the 31 remaining are pre-existing). Done — build + typecheck clean.
+
+### Stage 4b: wire Ledger into the extension (NOT STARTED)
+Popup "Connect Ledger" button → `requestLedgerTransport()` (user gesture) →
+`discoverLedgerAccounts()` → mirror into AccountService (`type:'hardware'`,
+badge "Ledger") like YubiKeyManager does. Because the transport can't live in
+the SW, route signing: dApp request → background detects a Ledger account →
+opens/uses the popup context to run the WebHID sign → returns. EVM signing must
+call `signEvmTransaction` / `signEvmPersonalMessage` (full payload), guarded by
+`isEvmStructuredSigner`, not the prehash path. NEEDS REAL HARDWARE: on-device
+v/recovery for EIP-1559 vs legacy, Solana tx-message signing, the
+popup↔background routing under MV3.

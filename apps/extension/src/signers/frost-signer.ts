@@ -2,7 +2,7 @@ import type { Curve, Secp256k1Signature, Signer, SignerContext } from "./signer"
 
 /**
  * Backend hooks the FROST flow already implements (offscreen WebRTC + the
- * `@frost-mpc/core-wasm` engine, driven through the background RpcHandler /
+ * `@starlab/core-wasm` engine, driven through the background RpcHandler /
  * SessionManager — see the signing pipeline in the extension docs). `FrostSigner`
  * is a thin facade over these; it does NOT reimplement the threshold ceremony.
  */

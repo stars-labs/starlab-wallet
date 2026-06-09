@@ -1,5 +1,5 @@
 {
-  "name": "@frost-mpc/types",
+  "name": "@starlab/types",
   "version": "0.1.0",
   "description": "Shared TypeScript types for MPC Wallet",
   "main": "./dist/index.js",

@@ -1,0 +1,18 @@
+{
+  "name": "@starlab/core-wasm",
+  "version": "0.1.0",
+  "description": "FROST MPC WASM bindings (vendored build artifact from stars-labs/starlab-mpc)",
+  "type": "module",
+  "main": "./pkg/starlab_core_wasm.js",
+  "types": "./pkg/starlab_core_wasm.d.ts",
+  "exports": {
+    ".": {
+      "import": "./pkg/starlab_core_wasm.js",
+      "types": "./pkg/starlab_core_wasm.d.ts"
+    }
+  },
+  "files": [
+    "pkg"
+  ],
+  "//": "Vendored artifact. The Rust source lives in stars-labs/starlab-mpc (packages/@starlab/core-wasm). To refresh: in starlab-mpc run `bun run build:wasm`, then copy its pkg/ here. Proper fix: publish @starlab/core-wasm to npm and depend on the published version."
+}

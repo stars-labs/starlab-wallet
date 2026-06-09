@@ -18,6 +18,6 @@ test-results/
 # direnv
 .direnv/
 
-# NOTE: packages/@frost-mpc/core-wasm/pkg is a VENDORED build artifact and IS
+# NOTE: packages/@starlab/core-wasm/pkg is a VENDORED build artifact and IS
 # committed on purpose (it's how the extension gets FROST without building the
 # engine's Rust). Do not add it here.

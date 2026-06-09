@@ -33,4 +33,7 @@ airdrop) + reset. `scripts/sandbox.sh` starts the nodes (the extension can't
 spawn processes). UI to select the sandbox network. Real signing + broadcast
 against a simulated chain, no real funds.
 **Gate:** build; `sandbox.sh` brings the nodes up; a tx confirms on the fork.
-**Status:** Not Started
+**Status:** Done — `scripts/sandbox.sh` (anvil :8545 + surfpool :8899 + funding)
+verified: both nodes up, `cast balance` shows the funded 10000 ETH, Solana
+`getHealth`=ok. Point the wallet at the RPCs via Settings → custom network. A
+built-in "Sandbox" network entry + one-click toggle is an optional follow-up.

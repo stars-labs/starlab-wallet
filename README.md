@@ -54,5 +54,24 @@ interface Signer {
 ```
 
 - `FrostSigner` wraps the existing FROST flow (offscreen WebRTC + WASM).
-- `YubiKeySigner` (planned) calls `chrome.runtime.connectNative` →
-  the `yubiwallet` host.
+- `YubiKeySigner` (`src/signers/yubikey/`) calls `chrome.runtime.connectNative` →
+  the [`yubiwallet`](https://github.com/stars-labs/yubiwallet) native host (the
+  card signs; the host collects the PIN). Wiring it into the popup/provider +
+  shipping the host manifest is the next step; it also needs a GUI pinentry added
+  to the host (it reads the PIN from `/dev/tty` today).
+
+## Sandbox execution (local fork chains)
+
+Run a real `create → sign → broadcast` against **simulated** chains — real
+signing, real blocks, no real funds:
+
+```bash
+scripts/sandbox.sh --fund-eth 0xYourEthAddr --fund-sol YourSolAddr
+#   EVM     http://127.0.0.1:8545   (chainId 31337, anvil)
+#   Solana  http://127.0.0.1:8899   (surfpool surfnet)
+```
+
+Then in the wallet, add a custom network pointing at those RPCs (Settings →
+networks) and send transactions normally. Restart the script to reset the chain.
+Needs Foundry (`anvil`/`cast`) + `surfpool`. The extension can't spawn processes,
+so the script owns the nodes.

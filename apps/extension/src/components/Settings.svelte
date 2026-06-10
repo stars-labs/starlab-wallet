@@ -36,6 +36,12 @@
         buildRevokeTx,
         type AllowanceRecord,
     } from "../services/allowanceService";
+    import {
+        TokenRegistry,
+        fetchTokenMetadata,
+        discoverTokens,
+        type TokenInfo,
+    } from "../services/tokenService";
 
     /** Active wallet address (for the token-approvals review). */
     export let currentAddress: string = "";
@@ -132,11 +138,85 @@
         return `${a.slice(0, 6)}…${a.slice(-4)}`;
     }
 
+    // Token management (#21): custom add + auto-discovery.
+    let tokenAddrInput = "";
+    let tokenStatus = "";
+    let trackedTokens: TokenInfo[] = [];
+    function evmChainId(): number | undefined {
+        return NetworkService.getInstance().getCurrentNetwork("ethereum")?.id;
+    }
+    async function loadTrackedTokens() {
+        const chainId = evmChainId();
+        if (chainId) trackedTokens = await TokenRegistry.getInstance().list(chainId);
+    }
+    async function addCustomToken() {
+        tokenStatus = "";
+        const addr = tokenAddrInput.trim();
+        if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) {
+            tokenStatus = "Enter a valid 0x token address";
+            return;
+        }
+        try {
+            const net = NetworkService.getInstance();
+            const network = net.getCurrentNetwork("ethereum");
+            if (!network) throw new Error("No EVM network selected");
+            const client = net.getPublicClient(network) as any;
+            const meta = await fetchTokenMetadata(client, addr);
+            await TokenRegistry.getInstance().add(network.id, {
+                address: addr,
+                symbol: meta.symbol,
+                decimals: meta.decimals,
+                name: meta.name,
+            });
+            tokenStatus = `Added ${meta.symbol} (${meta.decimals} decimals)`;
+            tokenAddrInput = "";
+            await loadTrackedTokens();
+        } catch (e) {
+            tokenStatus = `Not a readable ERC-20: ${(e as Error).message}`;
+        }
+    }
+    async function removeToken(address: string) {
+        const chainId = evmChainId();
+        if (!chainId) return;
+        await TokenRegistry.getInstance().remove(chainId, address);
+        await loadTrackedTokens();
+    }
+    let discovering = false;
+    async function runDiscovery() {
+        if (!currentAddress) {
+            tokenStatus = "No active wallet address";
+            return;
+        }
+        discovering = true;
+        tokenStatus = "Scanning recent Transfer logs…";
+        try {
+            const net = NetworkService.getInstance();
+            const network = net.getCurrentNetwork("ethereum");
+            if (!network) throw new Error("No EVM network selected");
+            const client = net.getPublicClient(network) as any;
+            const latest: bigint = await client.getBlockNumber();
+            // Bounded window — public RPCs cap getLogs ranges.
+            const fromBlock = latest > 50_000n ? latest - 50_000n : 0n;
+            const known = (await TokenRegistry.getInstance().list(network.id)).map((t) => t.address);
+            const found = await discoverTokens(client, currentAddress, { fromBlock, exclude: known });
+            for (const t of found) await TokenRegistry.getInstance().add(network.id, t);
+            tokenStatus = found.length
+                ? `Discovered ${found.length} token(s): ${found.map((t) => t.symbol).join(", ")}`
+                : "No new tokens found in the recent window.";
+            await loadTrackedTokens();
+        } catch (e) {
+            tokenStatus = `Discovery failed: ${(e as Error).message}`;
+        } finally {
+            discovering = false;
+        }
+    }
+
     onMount(async () => {
         signalRoom = (await getRoom()) ?? "";
         sandboxActive = isSandboxActive();
         await loadDappPermissions();
         await loadAllowances();
+        await loadTrackedTokens();
     });
     function genRoom() {
         signalRoom = newRoom();
@@ -489,6 +569,36 @@
                 Revoking removes the site's access; it takes effect on the
                 site's next request.
             </p>
+        {/if}
+    </div>
+
+    <!-- Tokens (#21): tracked list + custom add + auto-discovery -->
+    <div class="card card-pad space-y-2">
+        <h3 class="section-title">Tokens</h3>
+        {#if trackedTokens.length > 0}
+            <ul class="space-y-1">
+                {#each trackedTokens as t (t.address)}
+                    <li class="flex items-center justify-between gap-2 text-xs">
+                        <span class="truncate"><strong>{t.symbol}</strong> · {t.address.slice(0, 8)}…{t.address.slice(-4)}</span>
+                        <Button size="sm" variant="ghost" on:click={() => removeToken(t.address)}>Remove</Button>
+                    </li>
+                {/each}
+            </ul>
+        {/if}
+        <div class="flex items-center gap-2">
+            <input
+                type="text"
+                class="input flex-1 text-xs"
+                placeholder="0x… token contract"
+                bind:value={tokenAddrInput}
+            />
+            <Button size="sm" on:click={addCustomToken}>Add</Button>
+            <Button size="sm" variant="ghost" on:click={runDiscovery} disabled={discovering}>
+                {discovering ? "Scanning…" : "Discover"}
+            </Button>
+        </div>
+        {#if tokenStatus}
+            <p class="text-xs text-muted">{tokenStatus}</p>
         {/if}
     </div>
 

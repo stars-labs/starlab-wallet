@@ -117,6 +117,53 @@ export function encodeErc20Approve(
   });
 }
 
+/** keccak256("Transfer(address,address,uint256)") — the ERC-20 Transfer topic. */
+export const TRANSFER_TOPIC =
+  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+/**
+ * Token auto-discovery (#21): find ERC-20s the account has RECEIVED by
+ * scanning Transfer logs with `to = account`, then resolving metadata.
+ *
+ * - `fromBlock` bounds the scan (callers pass latest − N; public RPCs cap
+ *   ranges, so a bounded window is the portable choice).
+ * - Contracts whose metadata can't be read (not actually ERC-20, weird
+ *   bytes32 symbols, …) are skipped, not fatal.
+ * - `exclude` (already-registered addresses) are filtered before any RPC
+ *   metadata call so discovery stays cheap.
+ */
+export async function discoverTokens(
+  client: Pick<PublicClient, "getLogs" | "readContract">,
+  account: string,
+  opts: { fromBlock: bigint; toBlock?: bigint | "latest"; exclude?: string[] },
+): Promise<TokenInfo[]> {
+  const paddedAccount = `0x${account.toLowerCase().replace(/^0x/, "").padStart(64, "0")}` as `0x${string}`;
+  const logs = (await client.getLogs({
+    fromBlock: opts.fromBlock,
+    toBlock: opts.toBlock ?? "latest",
+    // Raw topic filter (not an ABI event object) so fakes stay trivial:
+    // topic0 = Transfer, topic2 = recipient (our account).
+    topics: [TRANSFER_TOPIC, null, paddedAccount],
+  } as any)) as { address: string }[];
+
+  const excluded = new Set((opts.exclude ?? []).map((a) => a.toLowerCase()));
+  const candidates = [...new Set(logs.map((l) => l.address.toLowerCase()))].filter(
+    (a) => !excluded.has(a),
+  );
+
+  const out: TokenInfo[] = [];
+  for (const address of candidates) {
+    try {
+      const meta = await fetchTokenMetadata(client as PublicClient, address);
+      if (!meta.symbol || !Number.isFinite(meta.decimals)) continue;
+      out.push({ address, symbol: meta.symbol, decimals: meta.decimals, name: meta.name });
+    } catch {
+      // Not a readable ERC-20 (NFT, malformed, proxy quirks) — skip.
+    }
+  }
+  return out;
+}
+
 /** Current on-chain allowance owner→spender for a token. */
 export async function fetchAllowance(
   client: PublicClient,

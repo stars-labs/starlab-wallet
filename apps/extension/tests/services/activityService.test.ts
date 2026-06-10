@@ -119,6 +119,44 @@ describe("ActivityService.reconcile", () => {
   });
 });
 
+describe("ActivityService.reconcileAllPending", () => {
+  const ACC2 = "0x2222222222222222222222222222222222222222";
+
+  it("sweeps all accounts/chains, counts finalized, skips chains without a client", async () => {
+    const svc = freshService();
+    await svc.record(ACC, { ...baseTx, hash: "0xa1" }); // chain 1 → confirms
+    await svc.record(ACC, { ...baseTx, hash: "0xa2", chainId: 137 }); // no client → skipped
+    await svc.record(ACC2, { ...baseTx, from: ACC2, hash: "0xb1" }); // chain 1 → reverts
+
+    const chain1 = {
+      getTransactionReceipt: async ({ hash }: { hash: string }) => ({
+        status: hash === "0xa1" ? "success" : "reverted",
+      }),
+    } as any;
+
+    const changed = await svc.reconcileAllPending((chainId) =>
+      chainId === 1 ? chain1 : undefined,
+    );
+
+    expect(changed).toBe(2); // 0xa1 confirmed + 0xb1 failed; 0xa2 untouched
+    expect((await svc.list(ACC, 1))[0].status).toBe("confirmed");
+    expect((await svc.list(ACC, 137))[0].status).toBe("pending");
+    expect((await svc.list(ACC2))[0].status).toBe("failed");
+  });
+
+  it("returns 0 when receipts aren't available yet", async () => {
+    const svc = freshService();
+    await svc.record(ACC, baseTx);
+    const never = {
+      getTransactionReceipt: async () => {
+        throw new Error("not found");
+      },
+    } as any;
+    expect(await svc.reconcileAllPending(() => never)).toBe(0);
+    expect((await svc.list(ACC))[0].status).toBe("pending");
+  });
+});
+
 describe("ActivityService persistence", () => {
   it("reloads activity from chrome.storage", async () => {
     const svc = freshService();

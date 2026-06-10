@@ -4,7 +4,7 @@ Browser **MPC wallet** (Chrome/Firefox, MV3 + WXT + Svelte). One wallet, three
 account backends behind a single `Signer` abstraction:
 
 1. **FROST** — multi-device threshold signing (DKG + signing over a WebRTC mesh),
-   via the `@starlab/core-wasm` engine. *(working today)*
+   via the `@stars-labs/core-wasm` engine. *(working today)*
 2. **YubiKey** — single-sign with on-card keys (PIV / OpenPGP) via the
    [`yubiwallet`](https://github.com/stars-labs/yubiwallet) native-messaging
    host. *(wired end-to-end; needs real-hardware verification)*
@@ -24,12 +24,12 @@ packages/@starlab/types/      # shared TS types (source; vendored from starlab-m
 packages/@starlab/core-wasm/  # FROST WASM (VENDORED build artifact, committed)
 ```
 
-`@starlab/core-wasm` is a **vendored build artifact** from
+`@stars-labs/core-wasm` is a **vendored build artifact** from
 [`stars-labs/starlab-mpc`](https://github.com/stars-labs/starlab-mpc) — the engine's
 Rust isn't built here. To refresh it: in `starlab-mpc` run `bun run build:wasm`,
 then copy its `packages/@starlab/core-wasm/pkg/` over the one here. (Proper
-decoupling once the `@starlab` npm scope exists: publish `@starlab/core-wasm`
-+ `@starlab/types` to npm and depend on the published versions.)
+decoupling once the `@starlab` npm scope exists: publish `@stars-labs/core-wasm`
++ `@stars-labs/types` to npm and depend on the published versions.)
 
 ## Develop
 

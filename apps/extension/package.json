@@ -1,5 +1,5 @@
 {
-  "name": "@starlab/browser-extension",
+  "name": "@stars-labs/browser-extension",
   "description": "MPC Wallet Browser Extension",
   "private": true,
   "version": "0.0.0",
@@ -47,8 +47,8 @@
     "@ledgerhq/hw-transport": "6.31.10",
     "@ledgerhq/hw-transport-webhid": "6.35.3",
     "@solana/web3.js": "1.98.4",
-    "@starlab/core-wasm": "workspace:*",
-    "@starlab/types": "workspace:*",
+    "@stars-labs/core-wasm": "workspace:*",
+    "@stars-labs/types": "workspace:*",
     "@tailwindcss/vite": "^4.3.0",
     "bs58": "6.0.0",
     "qrcode": "1.5.4",

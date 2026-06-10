@@ -23,7 +23,7 @@
 // ===================================================================
 
 import AccountService from "../../services/accountService";
-import type { Account } from "@starlab/types/account";
+import type { Account } from "@stars-labs/types/account";
 import {
     SignerRegistry,
     YubiKeySigner,

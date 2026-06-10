@@ -13,8 +13,8 @@
 import type {
     PopupToBackgroundMessage,
     OffscreenToBackgroundMessage
-} from "@starlab/types/messages";
-import { MESSAGE_TYPES, isRpcMessage, isAccountManagement, isNetworkManagement, isUIRequest } from "@starlab/types/messages";
+} from "@stars-labs/types/messages";
+import { MESSAGE_TYPES, isRpcMessage, isAccountManagement, isNetworkManagement, isUIRequest } from "@stars-labs/types/messages";
 import { StateManager } from "./stateManager";
 import { OffscreenManager } from "./offscreenManager";
 import { WebSocketManager } from "./webSocketManager";
@@ -25,7 +25,7 @@ import AccountService from "../../services/accountService";
 import NetworkService from "../../services/networkService";
 import { KeystoreManager } from "../../services/keystoreManager";
 import { handleGetPortfolio, handleGetActivity } from "./assetHandlers";
-import { DkgState } from "@starlab/types/dkg";
+import { DkgState } from "@stars-labs/types/dkg";
 
 /**
  * Handles messages from popup interface

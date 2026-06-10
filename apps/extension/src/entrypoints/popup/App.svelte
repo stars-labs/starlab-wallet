@@ -107,7 +107,13 @@
             if (res?.error) {
                 sendStatus = `Failed: ${res.error.message ?? res.error}`;
             } else {
-                sendStatus = `Sent ${amount} ${asset} → ${to.slice(0, 8)}…`;
+                // Hardware path broadcasts and returns the tx hash — show it
+                // so the user can match the pending entry in the activity feed.
+                const hash = typeof res?.result === "string" ? res.result : "";
+                sendStatus =
+                    hash.startsWith("0x") && hash.length === 66
+                        ? `Submitted ${amount} ${asset} → ${to.slice(0, 8)}… (tx ${hash.slice(0, 10)}…)`
+                        : `Sent ${amount} ${asset} → ${to.slice(0, 8)}…`;
                 showSend = false;
             }
         } catch (err) {

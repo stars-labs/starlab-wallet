@@ -11,6 +11,7 @@ import { numberToHex } from "viem";
 import {
   encodeErc20Transfer,
   parseTokenAmount,
+  formatTokenAmount,
   type TokenInfo,
 } from "./tokenService";
 
@@ -65,4 +66,93 @@ export function buildSendTransaction(opts: {
   return opts.token
     ? buildTokenSend(opts.from, opts.to, opts.amount, opts.token)
     : buildNativeSend(opts.from, opts.to, opts.amount);
+}
+
+export interface FeeEstimate {
+  /** Estimated gas units (with a 20% headroom over eth_estimateGas). */
+  gas: bigint;
+  /** Fee-per-gas the tx will carry (EIP-1559 maxFeePerGas, or legacy gasPrice). */
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas?: bigint;
+  /** Worst-case total fee in wei (gas × maxFeePerGas). */
+  totalWei: bigint;
+  /** Human ETH string of totalWei, for display. */
+  totalEth: string;
+  /** Whether the network gave EIP-1559 fees or legacy gasPrice. */
+  kind: "eip1559" | "legacy";
+}
+
+/**
+ * Estimate the fee for a built send. The client only needs three viem read
+ * methods, so tests inject a fake. Gas gets a 20% headroom — a stingy
+ * eth_estimateGas reverting a transfer is worse than a few unused units
+ * (unused gas is refunded anyway).
+ */
+export async function estimateSendFee(
+  client: {
+    estimateGas: (a: any) => Promise<bigint>;
+    estimateFeesPerGas?: () => Promise<{
+      maxFeePerGas?: bigint;
+      maxPriorityFeePerGas?: bigint;
+    }>;
+    getGasPrice: () => Promise<bigint>;
+  },
+  tx: EthSendParams,
+): Promise<FeeEstimate> {
+  const raw = await client.estimateGas({
+    account: tx.from as `0x${string}`,
+    to: tx.to as `0x${string}`,
+    value: BigInt(tx.value),
+    data: tx.data as `0x${string}`,
+  });
+  const gas = (raw * 120n) / 100n;
+
+  // Prefer EIP-1559 fees; fall back to legacy gasPrice on chains/nodes
+  // (or fakes) that don't provide them.
+  try {
+    const fees = await client.estimateFeesPerGas?.();
+    if (fees?.maxFeePerGas) {
+      const totalWei = gas * fees.maxFeePerGas;
+      return {
+        gas,
+        maxFeePerGas: fees.maxFeePerGas,
+        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+        totalWei,
+        totalEth: formatTokenAmount(totalWei, 18),
+        kind: "eip1559",
+      };
+    }
+  } catch {
+    /* fall through to legacy */
+  }
+  const gasPrice = await client.getGasPrice();
+  const totalWei = gas * gasPrice;
+  return {
+    gas,
+    maxFeePerGas: gasPrice,
+    totalWei,
+    totalEth: formatTokenAmount(totalWei, 18),
+    kind: "legacy",
+  };
+}
+
+/** Attach an estimate's fee fields to the eth_sendTransaction params (hex). */
+export function withFee(
+  tx: EthSendParams,
+  fee: FeeEstimate,
+): EthSendParams & {
+  gas: string;
+  maxFeePerGas?: string;
+  maxPriorityFeePerGas?: string;
+  gasPrice?: string;
+} {
+  const base = { ...tx, gas: numberToHex(fee.gas) };
+  if (fee.kind === "eip1559") {
+    return {
+      ...base,
+      maxFeePerGas: numberToHex(fee.maxFeePerGas),
+      maxPriorityFeePerGas: numberToHex(fee.maxPriorityFeePerGas ?? 0n),
+    };
+  }
+  return { ...base, gasPrice: numberToHex(fee.maxFeePerGas) };
 }

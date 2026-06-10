@@ -4,7 +4,14 @@
     // The parent routes the tx through the existing MPC sign+broadcast flow, so
     // this component stays self-contained and unaware of the signing plumbing.
     import { onMount, createEventDispatcher } from "svelte";
-    import { buildSendTransaction } from "../../../services/sendService";
+    import {
+        buildSendTransaction,
+        estimateSendFee,
+        withFee,
+        type EthSendParams,
+        type FeeEstimate,
+    } from "../../../services/sendService";
+    import NetworkService from "../../../services/networkService";
 
     export let from: string;
 
@@ -17,6 +24,9 @@
     let amount = "";
     let error = "";
     let loadingAssets = true;
+    // Review step (#12): built tx + fee estimate shown before signing.
+    let review: { tx: EthSendParams; fee: FeeEstimate } | null = null;
+    let estimating = false;
 
     async function loadAssets() {
         loadingAssets = true;
@@ -50,9 +60,12 @@
         return true;
     }
 
-    function submit() {
+    /** Step 1 → 2: build the tx and estimate the fee for review. */
+    async function toReview() {
         if (!validate()) return;
         const asset = assets[selected];
+        estimating = true;
+        error = "";
         try {
             const tx = buildSendTransaction({
                 from,
@@ -60,10 +73,29 @@
                 amount,
                 token: asset.address ? { address: asset.address, decimals: asset.decimals } : undefined,
             });
-            dispatch("submit", { tx, asset: asset.symbol, amount, to: recipient });
+            const net = NetworkService.getInstance();
+            const client = net.getPublicClient(net.getCurrentNetwork("ethereum")) as any;
+            const fee = await estimateSendFee(client, tx);
+            review = { tx, fee };
         } catch (e) {
+            // estimateGas reverting usually means the transfer itself would
+            // fail (bad token, insufficient balance) — surface it pre-sign.
             error = (e as Error).message;
+        } finally {
+            estimating = false;
         }
+    }
+
+    /** Step 2 confirm: hand the fee-laden tx to the parent for MPC signing. */
+    function confirm() {
+        if (!review) return;
+        const asset = assets[selected];
+        dispatch("submit", {
+            tx: withFee(review.tx, review.fee),
+            asset: asset.symbol,
+            amount,
+            to: recipient,
+        });
     }
 
     onMount(loadAssets);
@@ -97,10 +129,32 @@
 
     {#if error}<div class="sf-error">{error}</div>{/if}
 
-    <div class="sf-actions">
-        <button class="sf-cancel" on:click={() => dispatch("cancel")}>Cancel</button>
-        <button class="sf-submit" on:click={submit} disabled={loadingAssets}>Review &amp; sign</button>
-    </div>
+    {#if review}
+        <!-- Review step (#12): everything the user is about to authorize. -->
+        <div class="sf-review">
+            <div class="sf-row"><span>Send</span><strong>{amount} {assets[selected]?.symbol}</strong></div>
+            <div class="sf-row"><span>To</span><code>{recipient.slice(0, 10)}…{recipient.slice(-6)}</code></div>
+            <div class="sf-row">
+                <span>Network fee (max)</span>
+                <strong>{Number(review.fee.totalEth).toLocaleString(undefined, { maximumFractionDigits: 8 })} ETH</strong>
+            </div>
+            <div class="sf-row sf-muted">
+                <span>Gas</span>
+                <span>{review.fee.gas.toString()} × {review.fee.kind === "eip1559" ? "max fee" : "gas price"}</span>
+            </div>
+        </div>
+        <div class="sf-actions">
+            <button class="sf-cancel" on:click={() => (review = null)}>Back</button>
+            <button class="sf-submit" on:click={confirm}>Confirm &amp; sign</button>
+        </div>
+    {:else}
+        <div class="sf-actions">
+            <button class="sf-cancel" on:click={() => dispatch("cancel")}>Cancel</button>
+            <button class="sf-submit" on:click={toReview} disabled={loadingAssets || estimating}>
+                {estimating ? "Estimating…" : "Review & sign"}
+            </button>
+        </div>
+    {/if}
     <p class="sf-note">Signing runs the FROST threshold ceremony across your devices.</p>
 </div>
 
@@ -116,4 +170,7 @@
     .sf-error { color: #c0392b; font-size: 13px; }
     .sf-muted { opacity: 0.6; }
     .sf-note { font-size: 11px; opacity: 0.55; margin: 0; }
+    .sf-review { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid rgba(127,127,127,0.25); border-radius: 8px; font-size: 13px; }
+    .sf-row { display: flex; justify-content: space-between; gap: 8px; }
+    .sf-row code { font-size: 12px; }
 </style>

@@ -211,6 +211,33 @@
         }
     }
 
+    // Policy engine (#35): spending limits + auto-lock.
+    import { PolicyService } from "../services/policyService";
+    import { parseUnits, formatUnits } from "viem";
+    let policyMaxTxEth = "";
+    let policyDailyEth = "";
+    let policyAutoLockMin = "";
+    let policyStatus = "";
+    async function loadPolicy() {
+        const cfg = await PolicyService.getInstance().getConfig();
+        policyMaxTxEth = cfg.maxTxValueWei ? formatUnits(BigInt(cfg.maxTxValueWei), 18) : "";
+        policyDailyEth = cfg.dailyLimitWei ? formatUnits(BigInt(cfg.dailyLimitWei), 18) : "";
+        policyAutoLockMin = cfg.autoLockMinutes ? String(cfg.autoLockMinutes) : "";
+    }
+    async function savePolicy() {
+        policyStatus = "";
+        try {
+            await PolicyService.getInstance().setConfig({
+                maxTxValueWei: policyMaxTxEth ? parseUnits(policyMaxTxEth, 18).toString() : undefined,
+                dailyLimitWei: policyDailyEth ? parseUnits(policyDailyEth, 18).toString() : undefined,
+                autoLockMinutes: policyAutoLockMin ? Number(policyAutoLockMin) : undefined,
+            });
+            policyStatus = "Policy saved.";
+        } catch (e) {
+            policyStatus = `Invalid value: ${(e as Error).message}`;
+        }
+    }
+
     // Keystore backup (#22): export this device's key share as a file.
     let backupAcknowledged = false;
     let backupStatus = "";
@@ -249,6 +276,7 @@
         await loadDappPermissions();
         await loadAllowances();
         await loadTrackedTokens();
+        await loadPolicy();
     });
     function genRoom() {
         signalRoom = newRoom();
@@ -602,6 +630,33 @@
                 site's next request.
             </p>
         {/if}
+    </div>
+
+    <!-- Policy (#35): spending limits + auto-lock -->
+    <div class="card card-pad space-y-2">
+        <h3 class="section-title">Spending policy</h3>
+        <p class="text-xs text-muted">
+            Limits are enforced before any signing starts. A blocked send fails
+            with the policy reason; loosen the limits here if you really mean it.
+        </p>
+        <div class="grid grid-cols-3 gap-2">
+            <label class="text-xs">
+                Max per tx (ETH)
+                <input type="text" class="input mt-1 text-xs" placeholder="∞" bind:value={policyMaxTxEth} />
+            </label>
+            <label class="text-xs">
+                Daily limit (ETH)
+                <input type="text" class="input mt-1 text-xs" placeholder="∞" bind:value={policyDailyEth} />
+            </label>
+            <label class="text-xs">
+                Auto-lock (min)
+                <input type="text" class="input mt-1 text-xs" placeholder="never" bind:value={policyAutoLockMin} />
+            </label>
+        </div>
+        <div class="flex items-center gap-2">
+            <Button size="sm" on:click={savePolicy}>Save policy</Button>
+            {#if policyStatus}<span class="text-xs text-muted">{policyStatus}</span>{/if}
+        </div>
     </div>
 
     <!-- Backup (#22): export this device's key share -->

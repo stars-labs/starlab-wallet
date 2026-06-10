@@ -83,6 +83,8 @@ let webSocketManager: WebSocketManager;
 let popupMessageHandler: PopupMessageHandler;
 let offscreenMessageHandler: OffscreenMessageHandler;
 let keepaliveController: KeepaliveController;
+/** Last popup interaction, for the auto-lock idle timer (#35). */
+let lastPopupActivity = Date.now();
 let yubiKeyManager: YubiKeyManager;
 
 // Global state variables for legacy compatibility
@@ -187,6 +189,30 @@ function initializeComponents(): void {
         keepaliveController.onDkgStateChange(state);
     });
 
+    // Auto-lock (#35): lock the keystore after policy.autoLockMinutes of
+    // popup inactivity. lastPopupActivity is bumped by the popup-port
+    // connections below; checking every 60s keeps the granularity honest
+    // without burning cycles.
+    setInterval(() => {
+        void (async () => {
+            try {
+                const { PolicyService } = await import('../../services/policyService');
+                const cfg = await PolicyService.getInstance().getConfig();
+                if (!cfg.autoLockMinutes || cfg.autoLockMinutes <= 0) return;
+                const { KeystoreManager } = await import('../../services/keystoreManager');
+                const km = KeystoreManager.getInstance();
+                if (km.isLocked()) return;
+                const idleMs = Date.now() - lastPopupActivity;
+                if (idleMs > cfg.autoLockMinutes * 60_000) {
+                    km.lock();
+                    console.log('[Background] auto-locked keystore after idle timeout');
+                }
+            } catch (e) {
+                console.warn('[Background] auto-lock tick failed:', e);
+            }
+        })();
+    }, 60_000);
+
     // Receipt-polling reconciler (#11): every 30s, flip pending activity
     // entries to confirmed/failed once their receipt lands. clientFor maps a
     // chainId to a viem public client via NetworkService; chains without a
@@ -228,6 +254,10 @@ function setupPopupConnections(): void {
     chrome.runtime.onConnect.addListener((port) => {
         if (port.name === "popup") {
 //             console.log("🔌 [Background] Popup connected");
+            lastPopupActivity = Date.now(); // auto-lock idle tracking (#35)
+            port.onMessage.addListener(() => {
+                lastPopupActivity = Date.now();
+            });
             stateManager.addPopupPort(port);
         }
     });

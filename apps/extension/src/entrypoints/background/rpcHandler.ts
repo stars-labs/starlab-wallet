@@ -289,6 +289,20 @@ export class RpcHandler {
             throw new Error('Invalid transaction parameters: missing "to" address');
         }
 
+        // Policy gate (#35): enforce per-tx / daily / origin limits BEFORE any
+        // signing path runs. A denial is the policy working — the error tells
+        // the user to loosen it in Settings if they really mean it.
+        {
+            const { PolicyService } = await import('../../services/policyService');
+            const decision = await PolicyService.getInstance().check({
+                valueWei: transaction.value ? BigInt(transaction.value) : 0n,
+                origin: this.origin || undefined,
+            });
+            if (!decision.allowed) {
+                throw new Error(`Blocked by wallet policy: ${decision.reason}`);
+            }
+        }
+
         // YubiKey: if the sender is a hardware account, sign the tx on the
         // card and return the raw signed transaction (single-party, no
         // FROST ceremony). dApps expect eth_sendTransaction to broadcast,
@@ -994,6 +1008,17 @@ export class RpcHandler {
             });
         } catch (e) {
             console.warn('[RpcHandler] failed to record activity for', hash, e);
+        }
+
+        // Policy daily window (#35): count the broadcast value toward the
+        // rolling 24h limit. Best-effort like the other recorders.
+        try {
+            const { PolicyService } = await import('../../services/policyService');
+            await PolicyService.getInstance().recordSpend(
+                transaction.value ? BigInt(transaction.value) : 0n,
+            );
+        } catch (e) {
+            console.warn('[RpcHandler] failed to record policy spend:', e);
         }
 
         // Allowance registry (#17): if this tx was an ERC-20 approve, remember

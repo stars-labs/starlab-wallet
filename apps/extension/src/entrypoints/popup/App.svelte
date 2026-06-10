@@ -24,6 +24,7 @@
     import PasswordPrompt from "./components/PasswordPrompt.svelte";
     import WalletSelector from "./components/WalletSelector.svelte";
     import CreateWalletForm from "../../components/CreateWalletForm.svelte";
+    import { formatUserError } from "../../services/walletErrors";
     import TokenList from "./components/TokenList.svelte";
     import ActivityFeed from "./components/ActivityFeed.svelte";
     import SendForm from "./components/SendForm.svelte";
@@ -137,7 +138,7 @@
                 },
             });
             if (res?.error) {
-                sendStatus = `Failed: ${res.error.message ?? res.error}`;
+                sendStatus = formatUserError(new Error(String(res.error.message ?? res.error)));
             } else {
                 // Hardware path broadcasts and returns the tx hash — show it
                 // so the user can match the pending entry in the activity feed.
@@ -149,7 +150,7 @@
                 showSend = false;
             }
         } catch (err) {
-            sendStatus = `Failed: ${(err as Error).message}`;
+            sendStatus = formatUserError(err);
         }
     }
     let addrCopied = false;

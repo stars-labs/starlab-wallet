@@ -17,6 +17,7 @@
         resolveRecipient,
         type Contact,
     } from "../../../services/addressBookService";
+    import { formatUserError } from "../../../services/walletErrors";
     import {
         simulateTransaction,
         type SimulationResult,
@@ -104,7 +105,7 @@
         } catch (e) {
             // ENS not resolving / estimateGas reverting both mean the send
             // would fail — surface it pre-sign.
-            error = (e as Error).message;
+            error = formatUserError(e);
         } finally {
             estimating = false;
         }

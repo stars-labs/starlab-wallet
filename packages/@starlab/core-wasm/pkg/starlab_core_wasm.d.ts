@@ -54,6 +54,37 @@ export class FrostDkgSecp256k1 {
     signing_commit(): string;
 }
 
+export class FrostDkgSecp256k1Tr {
+    free(): void;
+    [Symbol.dispose](): void;
+    add_round1_package(participant_index: number, package_hex: string): void;
+    add_round2_package(sender_index: number, package_hex: string): void;
+    add_signature_share(participant_index: number, share_hex: string): void;
+    add_signing_commitment(participant_index: number, commitment_hex: string): void;
+    aggregate_signature(message_hex: string): string;
+    can_finalize(): boolean;
+    can_start_round2(): boolean;
+    clear_signing_state(): void;
+    export_keystore(): string;
+    finalize_dkg(): string;
+    generate_round1(): string;
+    generate_round2(): string;
+    get_address(): string;
+    get_group_public_key(): string;
+    /**
+     * BIP-340 x-only Taproot output key (32 bytes hex): the SEC1 key minus
+     * its parity prefix. This is what P2TR addresses / verifiers consume.
+     */
+    get_taproot_xonly_key(): string;
+    has_signing_nonces(): boolean;
+    import_keystore(keystore_json: string): void;
+    init_dkg(participant_index: number, total: number, threshold: number): void;
+    is_dkg_complete(): boolean;
+    constructor();
+    sign(message_hex: string): string;
+    signing_commit(): string;
+}
+
 export class FrostDkgUnified {
     free(): void;
     [Symbol.dispose](): void;
@@ -137,12 +168,104 @@ export class FrostDkgUnified {
     constructor();
 }
 
+export class FrostReshareEd25519 {
+    free(): void;
+    [Symbol.dispose](): void;
+    add_reshare_round1(from: number, package_hex: string): void;
+    add_reshare_round2(from: number, package_hex: string): void;
+    can_finalize_reshare(): boolean;
+    can_reshare_round2(): boolean;
+    /**
+     * Finalize and return the NEW keystore JSON (same format as
+     * export_keystore — drop-in replacement for the stored share).
+     */
+    finalize_reshare(): string;
+    /**
+     * Group public key hex after finalize — callers verify it equals
+     * the pre-reshare key (address unchanged).
+     */
+    get_group_public_key(): string;
+    /**
+     * Start a reshare from this device's existing keystore JSON (the
+     * exact format export_keystore produces). `new_ids` is the
+     * comma-separated new participant set (must include this device;
+     * every id must already hold a share).
+     */
+    init_reshare(keystore_json: string, new_ids_csv: string, new_threshold: number): void;
+    constructor();
+    /**
+     * Generate this device's round-1 package (broadcast to all peers).
+     */
+    reshare_round1(): string;
+    /**
+     * Generate the per-recipient round-2 packages as a JSON object
+     * mapping recipient id → hex package. Send each value ONLY to its
+     * recipient.
+     */
+    reshare_round2(): string;
+}
+
+export class FrostReshareSecp256k1 {
+    free(): void;
+    [Symbol.dispose](): void;
+    add_reshare_round1(from: number, package_hex: string): void;
+    add_reshare_round2(from: number, package_hex: string): void;
+    can_finalize_reshare(): boolean;
+    can_reshare_round2(): boolean;
+    /**
+     * Finalize and return the NEW keystore JSON (same format as
+     * export_keystore — drop-in replacement for the stored share).
+     */
+    finalize_reshare(): string;
+    /**
+     * Group public key hex after finalize — callers verify it equals
+     * the pre-reshare key (address unchanged).
+     */
+    get_group_public_key(): string;
+    /**
+     * Start a reshare from this device's existing keystore JSON (the
+     * exact format export_keystore produces). `new_ids` is the
+     * comma-separated new participant set (must include this device;
+     * every id must already hold a share).
+     */
+    init_reshare(keystore_json: string, new_ids_csv: string, new_threshold: number): void;
+    constructor();
+    /**
+     * Generate this device's round-1 package (broadcast to all peers).
+     */
+    reshare_round1(): string;
+    /**
+     * Generate the per-recipient round-2 packages as a JSON object
+     * mapping recipient id → hex package. Send each value ONLY to its
+     * recipient.
+     */
+    reshare_round2(): string;
+}
+
 export class WasmError {
     free(): void;
     [Symbol.dispose](): void;
     constructor(message: string);
     readonly message: string;
 }
+
+/**
+ * Derive a child keystore at a BIP-44 path (e.g. "m/44'/60'/0'/0/1").
+ * Deterministic across participants (chain code comes from the group
+ * key), so every device derives the SAME child account. The output is
+ * a full keystore JSON — import it into a FrostDkg instance and sign
+ * with the derived account like any other.
+ */
+export function derive_child_keystore_ed25519(keystore_json: string, path: string): string;
+
+/**
+ * Derive a child keystore at a BIP-44 path (e.g. "m/44'/60'/0'/0/1").
+ * Deterministic across participants (chain code comes from the group
+ * key), so every device derives the SAME child account. The output is
+ * a full keystore JSON — import it into a FrostDkg instance and sign
+ * with the derived account like any other.
+ */
+export function derive_child_keystore_secp256k1(keystore_json: string, path: string): string;
 
 export function main(): void;
 
@@ -154,8 +277,13 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_frostdkged25519_free: (a: number, b: number) => void;
     readonly __wbg_frostdkgsecp256k1_free: (a: number, b: number) => void;
+    readonly __wbg_frostdkgsecp256k1tr_free: (a: number, b: number) => void;
     readonly __wbg_frostdkgunified_free: (a: number, b: number) => void;
+    readonly __wbg_frostreshareed25519_free: (a: number, b: number) => void;
+    readonly __wbg_frostresharesecp256k1_free: (a: number, b: number) => void;
     readonly __wbg_wasmerror_free: (a: number, b: number) => void;
+    readonly derive_child_keystore_ed25519: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly derive_child_keystore_secp256k1: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly frostdkged25519_add_round1_package: (a: number, b: number, c: number, d: number) => [number, number];
     readonly frostdkged25519_add_round2_package: (a: number, b: number, c: number, d: number) => [number, number];
     readonly frostdkged25519_add_signature_share: (a: number, b: number, c: number, d: number) => [number, number];
@@ -199,6 +327,23 @@ export interface InitOutput {
     readonly frostdkgsecp256k1_new: () => number;
     readonly frostdkgsecp256k1_sign: (a: number, b: number, c: number) => [number, number, number, number];
     readonly frostdkgsecp256k1_signing_commit: (a: number) => [number, number, number, number];
+    readonly frostdkgsecp256k1tr_add_round1_package: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly frostdkgsecp256k1tr_add_round2_package: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly frostdkgsecp256k1tr_add_signature_share: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly frostdkgsecp256k1tr_add_signing_commitment: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly frostdkgsecp256k1tr_aggregate_signature: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly frostdkgsecp256k1tr_clear_signing_state: (a: number) => void;
+    readonly frostdkgsecp256k1tr_export_keystore: (a: number) => [number, number, number, number];
+    readonly frostdkgsecp256k1tr_finalize_dkg: (a: number) => [number, number, number, number];
+    readonly frostdkgsecp256k1tr_generate_round1: (a: number) => [number, number, number, number];
+    readonly frostdkgsecp256k1tr_generate_round2: (a: number) => [number, number, number, number];
+    readonly frostdkgsecp256k1tr_get_address: (a: number) => [number, number, number, number];
+    readonly frostdkgsecp256k1tr_get_group_public_key: (a: number) => [number, number, number, number];
+    readonly frostdkgsecp256k1tr_get_taproot_xonly_key: (a: number) => [number, number, number, number];
+    readonly frostdkgsecp256k1tr_import_keystore: (a: number, b: number, c: number) => [number, number];
+    readonly frostdkgsecp256k1tr_init_dkg: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly frostdkgsecp256k1tr_sign: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly frostdkgsecp256k1tr_signing_commit: (a: number) => [number, number, number, number];
     readonly frostdkgunified_add_round1_package: (a: number, b: number, c: number, d: number) => [number, number];
     readonly frostdkgunified_add_round2_package: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly frostdkgunified_can_finalize: (a: number) => number;
@@ -217,10 +362,35 @@ export interface InitOutput {
     readonly frostdkgunified_init_dkg: (a: number, b: number, c: number, d: number) => void;
     readonly frostdkgunified_is_dkg_complete: (a: number) => number;
     readonly frostdkgunified_new: () => number;
+    readonly frostreshareed25519_add_reshare_round1: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly frostreshareed25519_add_reshare_round2: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly frostreshareed25519_can_finalize_reshare: (a: number) => number;
+    readonly frostreshareed25519_can_reshare_round2: (a: number) => number;
+    readonly frostreshareed25519_finalize_reshare: (a: number) => [number, number, number, number];
+    readonly frostreshareed25519_get_group_public_key: (a: number) => [number, number, number, number];
+    readonly frostreshareed25519_init_reshare: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly frostreshareed25519_new: () => number;
+    readonly frostreshareed25519_reshare_round1: (a: number) => [number, number, number, number];
+    readonly frostreshareed25519_reshare_round2: (a: number) => [number, number, number, number];
+    readonly frostresharesecp256k1_add_reshare_round1: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly frostresharesecp256k1_add_reshare_round2: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly frostresharesecp256k1_can_finalize_reshare: (a: number) => number;
+    readonly frostresharesecp256k1_can_reshare_round2: (a: number) => number;
+    readonly frostresharesecp256k1_finalize_reshare: (a: number) => [number, number, number, number];
+    readonly frostresharesecp256k1_get_group_public_key: (a: number) => [number, number, number, number];
+    readonly frostresharesecp256k1_init_reshare: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly frostresharesecp256k1_new: () => number;
+    readonly frostresharesecp256k1_reshare_round1: (a: number) => [number, number, number, number];
+    readonly frostresharesecp256k1_reshare_round2: (a: number) => [number, number, number, number];
     readonly main: () => void;
     readonly wasmerror_message: (a: number) => [number, number];
     readonly wasmerror_new: (a: number, b: number) => number;
+    readonly frostdkgsecp256k1tr_is_dkg_complete: (a: number) => number;
+    readonly frostdkgsecp256k1tr_can_finalize: (a: number) => number;
+    readonly frostdkgsecp256k1tr_can_start_round2: (a: number) => number;
     readonly start: () => void;
+    readonly frostdkgsecp256k1tr_has_signing_nonces: (a: number) => number;
+    readonly frostdkgsecp256k1tr_new: () => number;
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;

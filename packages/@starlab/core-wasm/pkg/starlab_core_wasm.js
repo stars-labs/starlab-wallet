@@ -653,6 +653,345 @@ export class FrostDkgSecp256k1 {
 }
 if (Symbol.dispose) FrostDkgSecp256k1.prototype[Symbol.dispose] = FrostDkgSecp256k1.prototype.free;
 
+export class FrostDkgSecp256k1Tr {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        FrostDkgSecp256k1TrFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_frostdkgsecp256k1tr_free(ptr, 0);
+    }
+    /**
+     * @param {number} participant_index
+     * @param {string} package_hex
+     */
+    add_round1_package(participant_index, package_hex) {
+        const ptr0 = passStringToWasm0(package_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.frostdkgsecp256k1tr_add_round1_package(this.__wbg_ptr, participant_index, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {number} sender_index
+     * @param {string} package_hex
+     */
+    add_round2_package(sender_index, package_hex) {
+        const ptr0 = passStringToWasm0(package_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.frostdkgsecp256k1tr_add_round2_package(this.__wbg_ptr, sender_index, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {number} participant_index
+     * @param {string} share_hex
+     */
+    add_signature_share(participant_index, share_hex) {
+        const ptr0 = passStringToWasm0(share_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.frostdkgsecp256k1tr_add_signature_share(this.__wbg_ptr, participant_index, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {number} participant_index
+     * @param {string} commitment_hex
+     */
+    add_signing_commitment(participant_index, commitment_hex) {
+        const ptr0 = passStringToWasm0(commitment_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.frostdkgsecp256k1tr_add_signing_commitment(this.__wbg_ptr, participant_index, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {string} message_hex
+     * @returns {string}
+     */
+    aggregate_signature(message_hex) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(message_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.frostdkgsecp256k1tr_aggregate_signature(this.__wbg_ptr, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * @returns {boolean}
+     */
+    can_finalize() {
+        const ret = wasm.frostdkgsecp256k1tr_can_finalize(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {boolean}
+     */
+    can_start_round2() {
+        const ret = wasm.frostdkgsecp256k1tr_can_start_round2(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    clear_signing_state() {
+        wasm.frostdkgsecp256k1tr_clear_signing_state(this.__wbg_ptr);
+    }
+    /**
+     * @returns {string}
+     */
+    export_keystore() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.frostdkgsecp256k1tr_export_keystore(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    finalize_dkg() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.frostdkgsecp256k1tr_finalize_dkg(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    generate_round1() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.frostdkgsecp256k1tr_generate_round1(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    generate_round2() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.frostdkgsecp256k1tr_generate_round2(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    get_address() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.frostdkgsecp256k1tr_get_address(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    get_group_public_key() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.frostdkgsecp256k1tr_get_group_public_key(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * BIP-340 x-only Taproot output key (32 bytes hex): the SEC1 key minus
+     * its parity prefix. This is what P2TR addresses / verifiers consume.
+     * @returns {string}
+     */
+    get_taproot_xonly_key() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.frostdkgsecp256k1tr_get_taproot_xonly_key(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * @returns {boolean}
+     */
+    has_signing_nonces() {
+        const ret = wasm.frostdkgsecp256k1tr_has_signing_nonces(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @param {string} keystore_json
+     */
+    import_keystore(keystore_json) {
+        const ptr0 = passStringToWasm0(keystore_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.frostdkgsecp256k1tr_import_keystore(this.__wbg_ptr, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {number} participant_index
+     * @param {number} total
+     * @param {number} threshold
+     */
+    init_dkg(participant_index, total, threshold) {
+        const ret = wasm.frostdkgsecp256k1tr_init_dkg(this.__wbg_ptr, participant_index, total, threshold);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @returns {boolean}
+     */
+    is_dkg_complete() {
+        const ret = wasm.frostdkgsecp256k1tr_is_dkg_complete(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    constructor() {
+        const ret = wasm.frostdkgsecp256k1tr_new();
+        this.__wbg_ptr = ret;
+        FrostDkgSecp256k1TrFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {string} message_hex
+     * @returns {string}
+     */
+    sign(message_hex) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(message_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.frostdkgsecp256k1tr_sign(this.__wbg_ptr, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    signing_commit() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.frostdkgsecp256k1tr_signing_commit(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) FrostDkgSecp256k1Tr.prototype[Symbol.dispose] = FrostDkgSecp256k1Tr.prototype.free;
+
 export class FrostDkgUnified {
     static __wrap(ptr) {
         const obj = Object.create(FrostDkgUnified.prototype);
@@ -978,6 +1317,344 @@ export class FrostDkgUnified {
 }
 if (Symbol.dispose) FrostDkgUnified.prototype[Symbol.dispose] = FrostDkgUnified.prototype.free;
 
+export class FrostReshareEd25519 {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        FrostReshareEd25519Finalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_frostreshareed25519_free(ptr, 0);
+    }
+    /**
+     * @param {number} from
+     * @param {string} package_hex
+     */
+    add_reshare_round1(from, package_hex) {
+        const ptr0 = passStringToWasm0(package_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.frostreshareed25519_add_reshare_round1(this.__wbg_ptr, from, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {number} from
+     * @param {string} package_hex
+     */
+    add_reshare_round2(from, package_hex) {
+        const ptr0 = passStringToWasm0(package_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.frostreshareed25519_add_reshare_round2(this.__wbg_ptr, from, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @returns {boolean}
+     */
+    can_finalize_reshare() {
+        const ret = wasm.frostreshareed25519_can_finalize_reshare(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {boolean}
+     */
+    can_reshare_round2() {
+        const ret = wasm.frostreshareed25519_can_reshare_round2(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * Finalize and return the NEW keystore JSON (same format as
+     * export_keystore — drop-in replacement for the stored share).
+     * @returns {string}
+     */
+    finalize_reshare() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.frostreshareed25519_finalize_reshare(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * Group public key hex after finalize — callers verify it equals
+     * the pre-reshare key (address unchanged).
+     * @returns {string}
+     */
+    get_group_public_key() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.frostreshareed25519_get_group_public_key(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * Start a reshare from this device's existing keystore JSON (the
+     * exact format export_keystore produces). `new_ids` is the
+     * comma-separated new participant set (must include this device;
+     * every id must already hold a share).
+     * @param {string} keystore_json
+     * @param {string} new_ids_csv
+     * @param {number} new_threshold
+     */
+    init_reshare(keystore_json, new_ids_csv, new_threshold) {
+        const ptr0 = passStringToWasm0(keystore_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(new_ids_csv, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.frostreshareed25519_init_reshare(this.__wbg_ptr, ptr0, len0, ptr1, len1, new_threshold);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    constructor() {
+        const ret = wasm.frostreshareed25519_new();
+        this.__wbg_ptr = ret;
+        FrostReshareEd25519Finalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Generate this device's round-1 package (broadcast to all peers).
+     * @returns {string}
+     */
+    reshare_round1() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.frostreshareed25519_reshare_round1(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * Generate the per-recipient round-2 packages as a JSON object
+     * mapping recipient id → hex package. Send each value ONLY to its
+     * recipient.
+     * @returns {string}
+     */
+    reshare_round2() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.frostreshareed25519_reshare_round2(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) FrostReshareEd25519.prototype[Symbol.dispose] = FrostReshareEd25519.prototype.free;
+
+export class FrostReshareSecp256k1 {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        FrostReshareSecp256k1Finalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_frostresharesecp256k1_free(ptr, 0);
+    }
+    /**
+     * @param {number} from
+     * @param {string} package_hex
+     */
+    add_reshare_round1(from, package_hex) {
+        const ptr0 = passStringToWasm0(package_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.frostresharesecp256k1_add_reshare_round1(this.__wbg_ptr, from, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {number} from
+     * @param {string} package_hex
+     */
+    add_reshare_round2(from, package_hex) {
+        const ptr0 = passStringToWasm0(package_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.frostresharesecp256k1_add_reshare_round2(this.__wbg_ptr, from, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @returns {boolean}
+     */
+    can_finalize_reshare() {
+        const ret = wasm.frostresharesecp256k1_can_finalize_reshare(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {boolean}
+     */
+    can_reshare_round2() {
+        const ret = wasm.frostresharesecp256k1_can_reshare_round2(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * Finalize and return the NEW keystore JSON (same format as
+     * export_keystore — drop-in replacement for the stored share).
+     * @returns {string}
+     */
+    finalize_reshare() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.frostresharesecp256k1_finalize_reshare(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * Group public key hex after finalize — callers verify it equals
+     * the pre-reshare key (address unchanged).
+     * @returns {string}
+     */
+    get_group_public_key() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.frostresharesecp256k1_get_group_public_key(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * Start a reshare from this device's existing keystore JSON (the
+     * exact format export_keystore produces). `new_ids` is the
+     * comma-separated new participant set (must include this device;
+     * every id must already hold a share).
+     * @param {string} keystore_json
+     * @param {string} new_ids_csv
+     * @param {number} new_threshold
+     */
+    init_reshare(keystore_json, new_ids_csv, new_threshold) {
+        const ptr0 = passStringToWasm0(keystore_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(new_ids_csv, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.frostresharesecp256k1_init_reshare(this.__wbg_ptr, ptr0, len0, ptr1, len1, new_threshold);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    constructor() {
+        const ret = wasm.frostresharesecp256k1_new();
+        this.__wbg_ptr = ret;
+        FrostReshareSecp256k1Finalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Generate this device's round-1 package (broadcast to all peers).
+     * @returns {string}
+     */
+    reshare_round1() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.frostresharesecp256k1_reshare_round1(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * Generate the per-recipient round-2 packages as a JSON object
+     * mapping recipient id → hex package. Send each value ONLY to its
+     * recipient.
+     * @returns {string}
+     */
+    reshare_round2() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.frostresharesecp256k1_reshare_round2(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) FrostReshareSecp256k1.prototype[Symbol.dispose] = FrostReshareSecp256k1.prototype.free;
+
 export class WasmError {
     static __wrap(ptr) {
         const obj = Object.create(WasmError.prototype);
@@ -1023,6 +1700,72 @@ export class WasmError {
     }
 }
 if (Symbol.dispose) WasmError.prototype[Symbol.dispose] = WasmError.prototype.free;
+
+/**
+ * Derive a child keystore at a BIP-44 path (e.g. "m/44'/60'/0'/0/1").
+ * Deterministic across participants (chain code comes from the group
+ * key), so every device derives the SAME child account. The output is
+ * a full keystore JSON — import it into a FrostDkg instance and sign
+ * with the derived account like any other.
+ * @param {string} keystore_json
+ * @param {string} path
+ * @returns {string}
+ */
+export function derive_child_keystore_ed25519(keystore_json, path) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(keystore_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.derive_child_keystore_ed25519(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Derive a child keystore at a BIP-44 path (e.g. "m/44'/60'/0'/0/1").
+ * Deterministic across participants (chain code comes from the group
+ * key), so every device derives the SAME child account. The output is
+ * a full keystore JSON — import it into a FrostDkg instance and sign
+ * with the derived account like any other.
+ * @param {string} keystore_json
+ * @param {string} path
+ * @returns {string}
+ */
+export function derive_child_keystore_secp256k1(keystore_json, path) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(keystore_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.derive_child_keystore_secp256k1(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
 
 export function main() {
     wasm.main();
@@ -1180,9 +1923,18 @@ const FrostDkgEd25519Finalization = (typeof FinalizationRegistry === 'undefined'
 const FrostDkgSecp256k1Finalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_frostdkgsecp256k1_free(ptr, 1));
+const FrostDkgSecp256k1TrFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_frostdkgsecp256k1tr_free(ptr, 1));
 const FrostDkgUnifiedFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_frostdkgunified_free(ptr, 1));
+const FrostReshareEd25519Finalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_frostreshareed25519_free(ptr, 1));
+const FrostReshareSecp256k1Finalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_frostresharesecp256k1_free(ptr, 1));
 const WasmErrorFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmerror_free(ptr, 1));

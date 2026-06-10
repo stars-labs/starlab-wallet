@@ -108,7 +108,8 @@ describe("RpcHandler eth_signTypedData_v4 (EIP-712)", () => {
 
         const reqMsg = captured.find((m) => m.type === "signatureRequest");
         expect(reqMsg).toBeTruthy();
-        expect(reqMsg.message).toBe("EIP-712: Mail");
+        // Decoded by txDecoder (#33): primaryType + domain, human-readable.
+        expect(reqMsg.message).toBe("Sign Mail for Ether Mail");
 
         const stash = (rpc as any).pendingDappRequests.get(reqMsg.signingId);
         expect(stash).toBeTruthy();

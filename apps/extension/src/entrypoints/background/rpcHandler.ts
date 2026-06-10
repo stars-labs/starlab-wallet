@@ -338,11 +338,16 @@ export class RpcHandler {
             }
         });
 
-        // Also notify popup if open for user approval
+        // Also notify popup if open for user approval. Attach the decoded
+        // plain-language summary + warnings (#33) so the popup never has to
+        // ask for a blind signature on raw calldata.
+        const { decodeEvmTransaction } = await import('../../services/txDecoder');
+        const decodedTx = decodeEvmTransaction(transaction);
         chrome.runtime.sendMessage({
             type: 'transactionRequest',
             signingId,
             transaction,
+            decoded: decodedTx,
             origin: this.origin || 'Unknown',
             fromAddress: transaction.from || (this.accountService.getCurrentAccount()?.address)
         });
@@ -779,7 +784,15 @@ export class RpcHandler {
         const threshold = keyShare?.threshold ?? 2;
         const total = keyShare?.total_participants ?? 3;
 
-        const primaryType = (typedData as any).primaryType ?? 'TypedData';
+        // Human-readable summary + danger warnings (#33) — a Permit is an
+        // approval in disguise; the popup must say so, not show raw JSON.
+        const { decodeTypedData } = await import('../../services/txDecoder');
+        const decoded = decodeTypedData(typedData as any);
+        const display =
+            decoded.warnings.length > 0
+                ? `${decoded.danger === 'critical' ? '⚠️ ' : ''}${decoded.summary}\n${decoded.warnings.join('\n')}`
+                : decoded.summary;
+
         return this.enqueueDappSignature({
             walletId: (wallet as any).id,
             walletName: (wallet as any).name ?? (wallet as any).id,
@@ -792,7 +805,7 @@ export class RpcHandler {
                 ? typedDataRaw
                 : JSON.stringify(typedDataRaw),
             address,
-            displayMessage: `EIP-712: ${primaryType}`,
+            displayMessage: display,
         });
     }
 

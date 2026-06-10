@@ -27,6 +27,10 @@
         isSandboxActive,
         probeSandbox,
     } from "../services/sandboxService";
+    import {
+        getPermissionService,
+        type DAppPermission,
+    } from "../services/permissionService";
 
     // Tenant room (multi-tenant signal server, #31). The hosted server routes
     // each ?room=<id> to an isolated instance and REQUIRES a strong room.
@@ -59,9 +63,26 @@
         }
     }
 
+    // Connected dApps (#15): list per-origin permissions + revoke.
+    let dappPermissions: DAppPermission[] = [];
+    async function loadDappPermissions() {
+        const ps = getPermissionService();
+        await ps.ensureInitialized();
+        dappPermissions = ps.getAllPermissions();
+    }
+    async function revokeDapp(origin: string) {
+        const ps = getPermissionService();
+        await ps.disconnectAccounts(origin); // no accounts arg = revoke all
+        await loadDappPermissions();
+    }
+    function shortAcct(a: string): string {
+        return a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a;
+    }
+
     onMount(async () => {
         signalRoom = (await getRoom()) ?? "";
         sandboxActive = isSandboxActive();
+        await loadDappPermissions();
     });
     function genRoom() {
         signalRoom = newRoom();
@@ -382,6 +403,38 @@
         </div>
         {#if roomStatus}
             <span class="text-xs text-muted" data-testid="room-status">{roomStatus}</span>
+        {/if}
+    </div>
+
+    <!-- Connected dApps (#15): review + revoke per-origin permissions -->
+    <div class="card card-pad space-y-2">
+        <h3 class="section-title">Connected dApps</h3>
+        {#if dappPermissions.length === 0}
+            <p class="text-xs text-muted">No dApps connected.</p>
+        {:else}
+            <ul class="space-y-2">
+                {#each dappPermissions as p (p.origin)}
+                    <li class="flex items-center justify-between gap-2">
+                        <div class="min-w-0">
+                            <div class="truncate text-xs font-semibold">{p.origin}</div>
+                            <div class="truncate text-xs text-muted">
+                                {p.connectedAccounts.map(shortAcct).join(", ")}
+                            </div>
+                        </div>
+                        <Button
+                            size="sm"
+                            variant="ghost"
+                            on:click={() => revokeDapp(p.origin)}
+                        >
+                            Revoke
+                        </Button>
+                    </li>
+                {/each}
+            </ul>
+            <p class="text-xs text-muted">
+                Revoking removes the site's access; it takes effect on the
+                site's next request.
+            </p>
         {/if}
     </div>
 

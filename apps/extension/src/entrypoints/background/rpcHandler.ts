@@ -15,6 +15,7 @@ import WalletController from "../../services/walletController";
 import { getPermissionService } from '../../services/permissionService';
 import { toHex } from 'viem';
 import type { JsonRpcRequest } from "@stars-labs/types/messages";
+import { checkOrigin } from '../../services/phishingService';
 import type { SessionManager } from './sessionManager';
 import type { YubiKeyManager } from './yubikeyManager';
 import type { YubiKeySigner } from '../../signers';
@@ -186,6 +187,19 @@ export class RpcHandler {
 
         // For eth_requestAccounts, we need to prompt user for permission
         if (method === 'eth_requestAccounts') {
+            // Phishing gate (#36): a known-phishing origin never gets a
+            // connect prompt at all. Lookalikes still connect (fail-open) but
+            // every signing request will carry the warning.
+            if (this.origin) {
+                const { checkOrigin } = await import('../../services/phishingService');
+                const check = checkOrigin(this.origin);
+                if (check.verdict === 'block') {
+                    throw new Error(
+                        `Connection refused: ${this.origin} is a known phishing site.`,
+                    );
+                }
+            }
+
             // First ensure we have at least one account
             await this.accountService.ensureInitialized();
             let accounts = this.accountService.getAccountsByBlockchain('ethereum');
@@ -664,10 +678,25 @@ export class RpcHandler {
             origin: this.origin || 'Unknown',
         });
 
+        // Phishing gate (#36): every signing request re-checks the origin —
+        // a lookalike that slipped past connect still gets flagged where it
+        // matters, on the approve screen.
+        let display = ctx.displayMessage ?? ctx.originalMessage;
+        if (this.origin) {
+            try {
+                const check = checkOrigin(this.origin);
+                if (check.verdict !== 'ok') {
+                    display = `🚨 ${check.reason}${check.imitates ? ` (imitates ${check.imitates})` : ''}\n${display}`;
+                }
+            } catch {
+                /* never let the gate break signing */
+            }
+        }
+
         chrome.runtime.sendMessage({
             type: 'signatureRequest',
             signingId: requestId,
-            message: ctx.displayMessage ?? ctx.originalMessage,
+            message: display,
             origin: this.origin || 'Unknown',
             fromAddress: ctx.address,
         });

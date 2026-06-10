@@ -24,6 +24,10 @@
     import PasswordPrompt from "./components/PasswordPrompt.svelte";
     import WalletSelector from "./components/WalletSelector.svelte";
     import CreateWalletForm from "../../components/CreateWalletForm.svelte";
+    import TokenList from "./components/TokenList.svelte";
+    import ActivityFeed from "./components/ActivityFeed.svelte";
+    import SendForm from "./components/SendForm.svelte";
+    import ReceiveCard from "./components/ReceiveCard.svelte";
     import { MESSAGE_TYPES } from "@starlab/types/messages";
     import { hashMessage } from "viem";
     import AccountService from "../../services/accountService";
@@ -65,6 +69,33 @@
     // copy-confirmation flag for the address (CopyButton's surface
     // styling is wrong on the gradient, so the hero copies inline).
     let showGroupKey = false;
+    // Wallet views: token/activity feed + send/receive (added incrementally).
+    let showSend = false;
+    let showReceive = false;
+    let sendStatus = "";
+    async function handleSendSubmit(e: CustomEvent) {
+        const { tx, asset, amount, to } = e.detail;
+        sendStatus = "Submitting…";
+        try {
+            const res = await chrome.runtime.sendMessage({
+                type: "rpcRequest",
+                payload: {
+                    jsonrpc: "2.0",
+                    id: Date.now(),
+                    method: "eth_sendTransaction",
+                    params: [tx],
+                },
+            });
+            if (res?.error) {
+                sendStatus = `Failed: ${res.error.message ?? res.error}`;
+            } else {
+                sendStatus = `Sent ${amount} ${asset} → ${to.slice(0, 8)}…`;
+                showSend = false;
+            }
+        } catch (err) {
+            sendStatus = `Failed: ${(err as Error).message}`;
+        }
+    }
     let addrCopied = false;
     async function copyAddress(addr: string | undefined) {
         if (!addr) return;
@@ -1780,6 +1811,44 @@
                     </button>
                 {/if}
             </div>
+        {/if}
+
+        <!-- Wallet assets + activity + send/receive (shown once a wallet exists) -->
+        {#if canSign && appState.dkgState === DkgState.Complete && appState.dkgAddress}
+            {#if showSend}
+                <div class="card card-pad">
+                    <SendForm
+                        from={appState.dkgAddress}
+                        on:submit={handleSendSubmit}
+                        on:cancel={() => (showSend = false)}
+                    />
+                </div>
+            {:else if showReceive}
+                <div class="card card-pad">
+                    <ReceiveCard address={appState.dkgAddress} />
+                    <button class="btn-ghost mt-2 w-full" on:click={() => (showReceive = false)}>Close</button>
+                </div>
+            {:else}
+                <div class="grid grid-cols-2 gap-2.5">
+                    <button
+                        class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
+                        on:click={() => { showSend = true; sendStatus = ""; }}
+                    >Send</button>
+                    <button
+                        class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
+                        on:click={() => (showReceive = true)}
+                    >Receive</button>
+                </div>
+                {#if sendStatus}
+                    <p class="text-xs text-muted">{sendStatus}</p>
+                {/if}
+                <div class="card card-pad">
+                    <TokenList address={appState.dkgAddress} />
+                </div>
+                <div class="card card-pad">
+                    <ActivityFeed address={appState.dkgAddress} />
+                </div>
+            {/if}
         {/if}
 
         <!-- Sign message: inline form (opened from the action above) -->

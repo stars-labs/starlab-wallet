@@ -9,7 +9,6 @@
  * through the same page→content→background channel the EVM provider uses, and
  * signing lands on the FROST ed25519 ceremony.
  */
-import { PublicKey, VersionedTransaction } from "@solana/web3.js";
 import bs58 from "bs58";
 
 export const SOLANA_CHAINS = [
@@ -24,14 +23,20 @@ const ACCOUNT_FEATURES = [
   "solana:signAndSendTransaction",
 ] as const;
 
-/** The extension-facing side of the wallet. Everything I/O lives here. */
+/**
+ * The extension-facing side of the wallet. All I/O — and crucially all
+ * @solana/web3.js transaction (de)serialization — lives behind this in the
+ * background, so the page-injected bundle stays tiny (no web3.js on every page).
+ */
 export interface SolanaBridge {
   /** Prompt/return the connected account's base58 address. */
   connect(): Promise<string>;
-  /** Sign raw bytes with the account's ed25519 key → 64-byte signature. */
-  signBytes(address: string, bytes: Uint8Array): Promise<Uint8Array>;
-  /** Broadcast a fully-signed, serialized tx → signature (base58). */
-  sendRawTransaction(address: string, signedTx: Uint8Array): Promise<string>;
+  /** Sign raw message bytes with the account's ed25519 key → 64-byte signature. */
+  signMessage(address: string, bytes: Uint8Array): Promise<Uint8Array>;
+  /** Sign a serialized tx (background deserializes/signs/reserializes) → signed tx bytes. */
+  signTransaction(address: string, tx: Uint8Array): Promise<Uint8Array>;
+  /** Sign + broadcast a serialized tx → tx signature (base58). */
+  signAndSendTransaction(address: string, tx: Uint8Array): Promise<string>;
 }
 
 interface WalletAccount {
@@ -94,7 +99,7 @@ export function createStarlabSolanaWallet(bridge: SolanaBridge) {
   ) {
     const out = [];
     for (const { account, message } of inputs) {
-      const signature = await bridge.signBytes(account.address, message);
+      const signature = await bridge.signMessage(account.address, message);
       out.push({ signedMessage: message, signature });
     }
     return out;
@@ -105,13 +110,12 @@ export function createStarlabSolanaWallet(bridge: SolanaBridge) {
   ) {
     const out = [];
     for (const { account, transaction } of inputs) {
-      const tx = VersionedTransaction.deserialize(transaction);
-      const signature = await bridge.signBytes(
+      // Background owns the @solana/web3.js (de)serialization + ed25519 sign.
+      const signedTransaction = await bridge.signTransaction(
         account.address,
-        tx.message.serialize(),
+        transaction,
       );
-      tx.addSignature(new PublicKey(account.address), signature);
-      out.push({ signedTransaction: tx.serialize() });
+      out.push({ signedTransaction });
     }
     return out;
   }
@@ -121,13 +125,10 @@ export function createStarlabSolanaWallet(bridge: SolanaBridge) {
   ) {
     const out = [];
     for (const { account, transaction } of inputs) {
-      const tx = VersionedTransaction.deserialize(transaction);
-      const signature = await bridge.signBytes(
+      const sig = await bridge.signAndSendTransaction(
         account.address,
-        tx.message.serialize(),
+        transaction,
       );
-      tx.addSignature(new PublicKey(account.address), signature);
-      const sig = await bridge.sendRawTransaction(account.address, tx.serialize());
       out.push({ signature: bs58.decode(sig) });
     }
     return out;

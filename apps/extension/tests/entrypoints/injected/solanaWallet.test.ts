@@ -26,13 +26,20 @@ const ADDRESS = KP.publicKey.toBase58();
 function fakeBridge(overrides: Partial<SolanaBridge> = {}): SolanaBridge {
   return {
     connect: async () => ADDRESS,
-    signBytes: async (_addr, bytes) => {
-      // return a deterministic 64-byte "signature" derived from input length
+    signMessage: async (_addr, bytes) => {
+      // deterministic 64-byte "signature" derived from input length
       const sig = new Uint8Array(64);
       sig[0] = bytes.length & 0xff;
       return sig;
     },
-    sendRawTransaction: async () => bs58.encode(new Uint8Array(64)),
+    signTransaction: async (_addr, tx) => {
+      // background returns the "signed" serialized tx; echo a marker
+      const out = new Uint8Array(tx.length + 1);
+      out.set(tx);
+      out[tx.length] = 0xff;
+      return out;
+    },
+    signAndSendTransaction: async () => bs58.encode(new Uint8Array(64)),
     ...overrides,
   };
 }
@@ -80,7 +87,7 @@ describe("createStarlabSolanaWallet", () => {
     let seen: Uint8Array | null = null;
     const w = createStarlabSolanaWallet(
       fakeBridge({
-        signBytes: async (_a, bytes) => {
+        signMessage: async (_a, bytes) => {
           seen = bytes;
           return new Uint8Array(64);
         },
@@ -92,13 +99,13 @@ describe("createStarlabSolanaWallet", () => {
       account: accounts[0],
       message: msg,
     });
-    expect(seen).toEqual(msg);
+    expect(seen!).toEqual(msg);
     expect(out.signedMessage).toEqual(msg);
     expect(out.signature.length).toBe(64);
   });
 
-  it("signTransaction signs the message bytes and reattaches the signature", async () => {
-    // Build a real (unsigned) v0 transaction from this account.
+  it("signTransaction forwards the serialized tx to the bridge (background owns web3.js)", async () => {
+    // A real serialized v0 tx, just to have realistic bytes to forward.
     const ix = SystemProgram.transfer({
       fromPubkey: KP.publicKey,
       toPubkey: new PublicKey("11111111111111111111111111111111"),
@@ -109,15 +116,14 @@ describe("createStarlabSolanaWallet", () => {
       recentBlockhash: bs58.encode(new Uint8Array(32).fill(1)),
       instructions: [ix],
     }).compileToV0Message();
-    const tx = new VersionedTransaction(msg);
-    const serialized = tx.serialize();
+    const serialized = new VersionedTransaction(msg).serialize();
 
-    let signedBytes: Uint8Array | null = null;
+    let forwarded: Uint8Array | null = null;
     const w = createStarlabSolanaWallet(
       fakeBridge({
-        signBytes: async (_a, bytes) => {
-          signedBytes = bytes; // the wallet must hand us the tx *message* bytes
-          return new Uint8Array(64).fill(7);
+        signTransaction: async (_a, tx) => {
+          forwarded = tx;
+          return new Uint8Array([1, 2, 3]); // background's "signed tx"
         },
       }),
     );
@@ -127,12 +133,8 @@ describe("createStarlabSolanaWallet", () => {
       transaction: serialized,
     });
 
-    // The bridge was asked to sign exactly the transaction's compiled message.
-    expect(signedBytes).toEqual(msg.serialize());
-    // Round-trips back to a VersionedTransaction with the signature reattached.
-    const signed = VersionedTransaction.deserialize(out.signedTransaction);
-    expect(signed.signatures.length).toBe(1);
-    expect(signed.signatures[0].length).toBe(64);
-    expect(signed.signatures[0][0]).toBe(7);
+    // The wallet forwards the exact serialized tx and returns what the bridge gives.
+    expect(forwarded!).toEqual(serialized);
+    expect(Array.from(out.signedTransaction)).toEqual([1, 2, 3]);
   });
 });

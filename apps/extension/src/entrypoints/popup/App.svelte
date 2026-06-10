@@ -28,6 +28,7 @@
     import TokenList from "./components/TokenList.svelte";
     import ActivityFeed from "./components/ActivityFeed.svelte";
     import NftGallery from "./components/NftGallery.svelte";
+    import Onboarding from "./components/Onboarding.svelte";
     import SendForm from "./components/SendForm.svelte";
     import ReceiveCard from "./components/ReceiveCard.svelte";
     import { MESSAGE_TYPES } from "@stars-labs/types/messages";
@@ -106,6 +107,10 @@
         }
     }
     onMount(loadNetworkChoices);
+
+    // Onboarding wizard dismissal (#26) — session-scoped; the wizard also
+    // disappears permanently once a wallet exists.
+    let onboardingDismissed = false;
 
     // Hero-card portfolio fiat total (#13). null = not loaded / unavailable.
     let heroFiat: number | null = null;
@@ -1834,6 +1839,17 @@
                     </div>
                 {/if}
             </div>
+        {/if}
+
+        <!-- First-run onboarding (#26): guided create-or-join wizard, shown
+             until this profile has a wallet (or the user dismisses it). -->
+        {#if (keystoreStatus.wallets?.length ?? 0) === 0 && !showCreateWallet && !onboardingDismissed}
+            <Onboarding
+                wsConnected={appState.wsConnected}
+                on:create={() => (showCreateWallet = true)}
+                on:reconnect={() => chrome.runtime.sendMessage({ type: "reconnectSignal" })}
+                on:done={() => (onboardingDismissed = true)}
+            />
         {/if}
 
         <!-- Primary actions -->

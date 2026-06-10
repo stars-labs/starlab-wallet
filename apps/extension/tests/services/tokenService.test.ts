@@ -17,6 +17,8 @@ import {
   fetchTokenMetadata,
   TokenRegistry,
   DEFAULT_TOKENS,
+  discoverTokens,
+  TRANSFER_TOPIC,
 } from "../../src/services/tokenService";
 
 const TO = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
@@ -66,6 +68,68 @@ describe("tokenService reads", () => {
     } as any;
     const meta = await fetchTokenMetadata(client, "0xToken");
     expect(meta).toEqual({ symbol: "USDC", decimals: 6, name: "USD Coin" });
+  });
+});
+
+describe("discoverTokens", () => {
+  const ACCT = "0x1111111111111111111111111111111111111111";
+  const NEW_TOKEN = "0x9999999999999999999999999999999999999999";
+  const KNOWN = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"; // already registered
+  const BROKEN = "0x8888888888888888888888888888888888888888"; // metadata reverts
+
+  function fakeClient() {
+    const calls: any[] = [];
+    return {
+      calls,
+      getLogs: async (args: any) => {
+        calls.push(args);
+        return [
+          { address: NEW_TOKEN },
+          { address: NEW_TOKEN }, // duplicate transfer → must dedupe
+          { address: KNOWN },
+          { address: BROKEN },
+        ];
+      },
+      readContract: async (a: any) => {
+        if (a.address === BROKEN) throw new Error("not erc20");
+        if (a.functionName === "symbol") return "NEW";
+        if (a.functionName === "decimals") return 18;
+        if (a.functionName === "name") return "New Token";
+        throw new Error("unexpected");
+      },
+    } as any;
+  }
+
+  it("filters to Transfer(to=account), dedupes, excludes known, skips broken", async () => {
+    const client = fakeClient();
+    const found = await discoverTokens(client, ACCT, {
+      fromBlock: 100n,
+      exclude: [KNOWN],
+    });
+    expect(found.length).toBe(1);
+    expect(found[0]).toEqual({
+      address: NEW_TOKEN,
+      symbol: "NEW",
+      decimals: 18,
+      name: "New Token",
+    });
+    // topic filter: Transfer topic + our padded account as topic2
+    const logArgs = client.calls[0];
+    expect(logArgs.topics[0]).toBe(TRANSFER_TOPIC);
+    expect(logArgs.topics[2]).toBe(`0x${ACCT.slice(2).padStart(64, "0")}`);
+    expect(logArgs.fromBlock).toBe(100n);
+  });
+
+  it("excluded addresses never trigger metadata reads", async () => {
+    const client = fakeClient();
+    const reads: string[] = [];
+    const orig = client.readContract;
+    client.readContract = async (a: any) => {
+      reads.push(a.address);
+      return orig(a);
+    };
+    await discoverTokens(client, ACCT, { fromBlock: 1n, exclude: [KNOWN] });
+    expect(reads.every((r) => r !== KNOWN)).toBe(true);
   });
 });
 

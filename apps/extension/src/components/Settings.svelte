@@ -211,6 +211,38 @@
         }
     }
 
+    // Keystore backup (#22): export this device's key share as a file.
+    let backupAcknowledged = false;
+    let backupStatus = "";
+    function exportKeystoreBackup() {
+        backupStatus = "";
+        chrome.runtime.sendMessage(
+            { type: "exportKeystore", chain },
+            (response) => {
+                if (chrome.runtime.lastError) {
+                    backupStatus = `Export failed: ${chrome.runtime.lastError.message}`;
+                    return;
+                }
+                if (response?.success && response.keystoreData) {
+                    const blob = new Blob([response.keystoreData], {
+                        type: "application/json",
+                    });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `starlab-share-backup-${chain}-${Date.now()}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    backupStatus = "Backup saved. Store it offline, away from this device.";
+                } else {
+                    backupStatus = `Export failed: ${response?.error ?? "unknown error"}`;
+                }
+            },
+        );
+    }
+
     onMount(async () => {
         signalRoom = (await getRoom()) ?? "";
         sandboxActive = isSandboxActive();
@@ -569,6 +601,29 @@
                 Revoking removes the site's access; it takes effect on the
                 site's next request.
             </p>
+        {/if}
+    </div>
+
+    <!-- Backup (#22): export this device's key share -->
+    <div class="card card-pad space-y-2">
+        <h3 class="section-title">Backup</h3>
+        <p class="text-xs text-muted">
+            Exports <strong>this device's key share</strong> as a file (CLI-compatible).
+            One share alone can never sign — the threshold protects you — but treat
+            the file like a secret: store it offline, never paste it anywhere.
+            Restore via "Import keystore" or the CLI.
+        </p>
+        <label class="flex items-center gap-2 text-xs">
+            <input type="checkbox" bind:checked={backupAcknowledged} />
+            I understand this file contains key material
+        </label>
+        <div class="flex items-center gap-2">
+            <Button size="sm" on:click={exportKeystoreBackup} disabled={!backupAcknowledged}>
+                Export share backup
+            </Button>
+        </div>
+        {#if backupStatus}
+            <p class="text-xs text-muted">{backupStatus}</p>
         {/if}
     </div>
 

@@ -12,6 +12,11 @@
         type FeeEstimate,
     } from "../../../services/sendService";
     import NetworkService from "../../../services/networkService";
+    import {
+        AddressBookService,
+        resolveRecipient,
+        type Contact,
+    } from "../../../services/addressBookService";
 
     export let from: string;
 
@@ -25,8 +30,13 @@
     let error = "";
     let loadingAssets = true;
     // Review step (#12): built tx + fee estimate shown before signing.
-    let review: { tx: EthSendParams; fee: FeeEstimate } | null = null;
+    let review: { tx: EthSendParams; fee: FeeEstimate; resolvedTo: string; ens?: string } | null = null;
     let estimating = false;
+    // Address book + ENS (#25).
+    let contacts: Contact[] = [];
+    async function loadContacts() {
+        contacts = await AddressBookService.getInstance().list("ethereum");
+    }
 
     async function loadAssets() {
         loadingAssets = true;
@@ -49,8 +59,10 @@
 
     function validate(): boolean {
         error = "";
-        if (!/^0x[0-9a-fA-F]{40}$/.test(recipient)) {
-            error = "Enter a valid 0x recipient address";
+        const r = recipient.trim();
+        // 0x address or an ENS-style name — exact resolution happens in toReview.
+        if (!/^0x[0-9a-fA-F]{40}$/.test(r) && !(r.includes(".") && !r.startsWith("0x"))) {
+            error = "Enter a valid 0x address or an ENS name";
             return false;
         }
         if (!(Number(amount) > 0)) {
@@ -60,26 +72,32 @@
         return true;
     }
 
-    /** Step 1 → 2: build the tx and estimate the fee for review. */
+    /** Step 1 → 2: resolve the recipient (ENS), build the tx, estimate fee. */
     async function toReview() {
         if (!validate()) return;
         const asset = assets[selected];
         estimating = true;
         error = "";
         try {
+            const net = NetworkService.getInstance();
+            const client = net.getPublicClient(net.getCurrentNetwork("ethereum")) as any;
+            // ENS lives on mainnet — resolve against mainnet when available,
+            // falling back to the current network's client.
+            const mainnet = net.getNetworkByChainId(1);
+            const ensClient = mainnet ? (net.getPublicClient(mainnet) as any) : client;
+            const resolved = await resolveRecipient(ensClient, recipient);
+
             const tx = buildSendTransaction({
                 from,
-                to: recipient,
+                to: resolved.address,
                 amount,
                 token: asset.address ? { address: asset.address, decimals: asset.decimals } : undefined,
             });
-            const net = NetworkService.getInstance();
-            const client = net.getPublicClient(net.getCurrentNetwork("ethereum")) as any;
             const fee = await estimateSendFee(client, tx);
-            review = { tx, fee };
+            review = { tx, fee, resolvedTo: resolved.address, ens: resolved.ens };
         } catch (e) {
-            // estimateGas reverting usually means the transfer itself would
-            // fail (bad token, insufficient balance) — surface it pre-sign.
+            // ENS not resolving / estimateGas reverting both mean the send
+            // would fail — surface it pre-sign.
             error = (e as Error).message;
         } finally {
             estimating = false;
@@ -94,11 +112,14 @@
             tx: withFee(review.tx, review.fee),
             asset: asset.symbol,
             amount,
-            to: recipient,
+            to: review.resolvedTo,
         });
     }
 
-    onMount(loadAssets);
+    onMount(() => {
+        loadAssets();
+        loadContacts();
+    });
 </script>
 
 <div class="send-form">
@@ -119,7 +140,17 @@
 
     <label class="sf-field">
         <span>To</span>
-        <input placeholder="0x…" bind:value={recipient} spellcheck="false" />
+        <input
+            placeholder="0x… or name.eth"
+            bind:value={recipient}
+            spellcheck="false"
+            list="sf-contacts"
+        />
+        <datalist id="sf-contacts">
+            {#each contacts as c (c.address)}
+                <option value={c.address}>{c.name}</option>
+            {/each}
+        </datalist>
     </label>
 
     <label class="sf-field">
@@ -133,7 +164,12 @@
         <!-- Review step (#12): everything the user is about to authorize. -->
         <div class="sf-review">
             <div class="sf-row"><span>Send</span><strong>{amount} {assets[selected]?.symbol}</strong></div>
-            <div class="sf-row"><span>To</span><code>{recipient.slice(0, 10)}…{recipient.slice(-6)}</code></div>
+            <div class="sf-row">
+                <span>To</span>
+                <code>
+                    {#if review.ens}{review.ens} → {/if}{review.resolvedTo.slice(0, 10)}…{review.resolvedTo.slice(-6)}
+                </code>
+            </div>
             <div class="sf-row">
                 <span>Network fee (max)</span>
                 <strong>{Number(review.fee.totalEth).toLocaleString(undefined, { maximumFractionDigits: 8 })} ETH</strong>

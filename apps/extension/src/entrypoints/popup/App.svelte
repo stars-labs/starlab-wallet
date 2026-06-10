@@ -73,6 +73,24 @@
     let showSend = false;
     let showReceive = false;
     let sendStatus = "";
+    // Hero-card portfolio fiat total (#13). null = not loaded / unavailable.
+    let heroFiat: number | null = null;
+    let heroFiatFor = ""; // address the current value belongs to
+    async function loadHeroFiat(address: string) {
+        try {
+            const res = await chrome.runtime.sendMessage({ type: "getPortfolio", address });
+            if (res?.success && typeof res.portfolio?.totalFiat === "number") {
+                heroFiat = res.portfolio.totalFiat;
+                heroFiatFor = address;
+            }
+        } catch {
+            /* price feed down — keep whatever we had */
+        }
+    }
+    // Refresh whenever the displayed address changes (wallet switch / DKG done).
+    $: if (appState.dkgAddress && appState.dkgAddress !== heroFiatFor) {
+        loadHeroFiat(appState.dkgAddress);
+    }
     async function handleSendSubmit(e: CustomEvent) {
         const { tx, asset, amount, to } = e.detail;
         sendStatus = "Submitting…";
@@ -1719,6 +1737,12 @@
                         </span>
                     {/if}
                 </div>
+                <!-- Portfolio fiat total (native + tokens, USD). null = loading/unavailable. -->
+                {#if heroFiat !== null}
+                    <div class="relative mt-2 text-2xl font-bold tracking-tight">
+                        ${heroFiat.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </div>
+                {/if}
                 <button
                     class="relative mt-3 flex items-center gap-2"
                     on:click={() => copyAddress(appState.dkgAddress)}

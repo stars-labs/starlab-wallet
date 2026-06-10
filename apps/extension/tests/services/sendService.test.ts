@@ -10,6 +10,8 @@ import {
   buildNativeSend,
   buildTokenSend,
   buildSendTransaction,
+  estimateSendFee,
+  withFee,
 } from "../../src/services/sendService";
 
 const FROM = "0x1111111111111111111111111111111111111111";
@@ -34,6 +36,58 @@ describe("buildTokenSend", () => {
     expect(decoded.functionName).toBe("transfer");
     expect((decoded.args[0] as string).toLowerCase()).toBe(TO.toLowerCase());
     expect(decoded.args[1]).toBe(12_500_000n); // 12.5 * 10^6
+  });
+});
+
+describe("estimateSendFee / withFee", () => {
+  const tx = buildNativeSend(FROM, TO, "1");
+
+  it("EIP-1559 path: 20% gas headroom, worst-case total", async () => {
+    const client = {
+      estimateGas: async () => 21_000n,
+      estimateFeesPerGas: async () => ({
+        maxFeePerGas: 30_000_000_000n,
+        maxPriorityFeePerGas: 1_000_000_000n,
+      }),
+      getGasPrice: async () => {
+        throw new Error("should not be called");
+      },
+    };
+    const fee = await estimateSendFee(client, tx);
+    expect(fee.kind).toBe("eip1559");
+    expect(fee.gas).toBe(25_200n); // 21000 × 1.2
+    expect(fee.totalWei).toBe(25_200n * 30_000_000_000n);
+
+    const withF = withFee(tx, fee);
+    expect(withF.gas).toBe("0x6270"); // 25200
+    expect(withF.maxFeePerGas).toBeDefined();
+    expect(withF.gasPrice).toBeUndefined();
+  });
+
+  it("legacy fallback when 1559 fees are unavailable", async () => {
+    const client = {
+      estimateGas: async () => 50_000n,
+      estimateFeesPerGas: async () => ({}), // node without 1559 data
+      getGasPrice: async () => 20_000_000_000n,
+    };
+    const fee = await estimateSendFee(client, tx);
+    expect(fee.kind).toBe("legacy");
+    expect(fee.gas).toBe(60_000n);
+    expect(fee.totalWei).toBe(60_000n * 20_000_000_000n);
+
+    const withF = withFee(tx, fee);
+    expect(withF.gasPrice).toBeDefined();
+    expect(withF.maxFeePerGas).toBeUndefined();
+  });
+
+  it("propagates estimateGas reverts (bad tx must not get a fee)", async () => {
+    const client = {
+      estimateGas: async () => {
+        throw new Error("execution reverted");
+      },
+      getGasPrice: async () => 1n,
+    };
+    await expect(estimateSendFee(client, tx)).rejects.toThrow("reverted");
   });
 });
 

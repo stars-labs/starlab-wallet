@@ -31,6 +31,14 @@
         getPermissionService,
         type DAppPermission,
     } from "../services/permissionService";
+    import {
+        AllowanceService,
+        buildRevokeTx,
+        type AllowanceRecord,
+    } from "../services/allowanceService";
+
+    /** Active wallet address (for the token-approvals review). */
+    export let currentAddress: string = "";
 
     // Tenant room (multi-tenant signal server, #31). The hosted server routes
     // each ?room=<id> to an isolated instance and REQUIRES a strong room.
@@ -79,10 +87,56 @@
         return a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a;
     }
 
+    // Token approvals (#17): recorded approvals refreshed against the chain.
+    let allowances: (AllowanceRecord & { current: bigint })[] = [];
+    let allowanceStatus = "";
+    async function loadAllowances() {
+        if (!currentAddress) return;
+        try {
+            const net = NetworkService.getInstance();
+            const network = net.getCurrentNetwork("ethereum");
+            if (!network) return;
+            const client = net.getPublicClient(network) as any;
+            allowances = await AllowanceService.getInstance().listLive(
+                currentAddress,
+                network.id,
+                client,
+            );
+        } catch (e) {
+            allowanceStatus = `Failed to load: ${(e as Error).message}`;
+        }
+    }
+    async function revokeAllowance(r: AllowanceRecord) {
+        allowanceStatus = "Submitting revoke…";
+        try {
+            const res = await chrome.runtime.sendMessage({
+                type: "rpcRequest",
+                payload: {
+                    jsonrpc: "2.0",
+                    id: Date.now(),
+                    method: "eth_sendTransaction",
+                    params: [buildRevokeTx(r.owner, r.token, r.spender)],
+                },
+            });
+            if (res?.error) {
+                allowanceStatus = `Revoke failed: ${res.error.message ?? res.error}`;
+            } else {
+                allowanceStatus = "Revoke submitted — allowance clears once it confirms.";
+                await loadAllowances();
+            }
+        } catch (e) {
+            allowanceStatus = `Revoke failed: ${(e as Error).message}`;
+        }
+    }
+    function shortHexId(a: string): string {
+        return `${a.slice(0, 6)}…${a.slice(-4)}`;
+    }
+
     onMount(async () => {
         signalRoom = (await getRoom()) ?? "";
         sandboxActive = isSandboxActive();
         await loadDappPermissions();
+        await loadAllowances();
     });
     function genRoom() {
         signalRoom = newRoom();
@@ -435,6 +489,38 @@
                 Revoking removes the site's access; it takes effect on the
                 site's next request.
             </p>
+        {/if}
+    </div>
+
+    <!-- Token approvals (#17): review + revoke ERC-20 allowances -->
+    <div class="card card-pad space-y-2">
+        <h3 class="section-title">Token approvals</h3>
+        {#if allowances.length === 0}
+            <p class="text-xs text-muted">
+                No active approvals recorded. Approvals signed in this wallet
+                appear here for review and revocation.
+            </p>
+        {:else}
+            <ul class="space-y-2">
+                {#each allowances as r (r.chainId + r.token + r.spender)}
+                    <li class="flex items-center justify-between gap-2">
+                        <div class="min-w-0 text-xs">
+                            <div class="truncate font-semibold">
+                                token {shortHexId(r.token)} → spender {shortHexId(r.spender)}
+                            </div>
+                            <div class="truncate text-muted">
+                                {r.current === -1n ? "current allowance unknown" : `allowance: ${r.current}`}
+                            </div>
+                        </div>
+                        <Button size="sm" variant="ghost" on:click={() => revokeAllowance(r)}>
+                            Revoke
+                        </Button>
+                    </li>
+                {/each}
+            </ul>
+        {/if}
+        {#if allowanceStatus}
+            <p class="text-xs text-muted">{allowanceStatus}</p>
         {/if}
     </div>
 

@@ -72,6 +72,26 @@ export const ERC20_ABI = [
     ],
     outputs: [{ name: "", type: "bool" }],
   },
+  {
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "allowance",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
 ] as const;
 
 // ── 1. Pure codec ──────────────────────────────────────────────────────────
@@ -83,6 +103,33 @@ export function encodeErc20Transfer(to: string, amount: bigint): `0x${string}` {
     functionName: "transfer",
     args: [to as `0x${string}`, amount],
   });
+}
+
+/** ABI-encode `approve(spender, amount)`. amount 0n = revoke. */
+export function encodeErc20Approve(
+  spender: string,
+  amount: bigint,
+): `0x${string}` {
+  return encodeFunctionData({
+    abi: ERC20_ABI,
+    functionName: "approve",
+    args: [spender as `0x${string}`, amount],
+  });
+}
+
+/** Current on-chain allowance owner→spender for a token. */
+export async function fetchAllowance(
+  client: PublicClient,
+  token: string,
+  owner: string,
+  spender: string,
+): Promise<bigint> {
+  return (await client.readContract({
+    address: token as `0x${string}`,
+    abi: ERC20_ABI,
+    functionName: "allowance",
+    args: [owner as `0x${string}`, spender as `0x${string}`],
+  })) as bigint;
 }
 
 /** Human amount ("1.5") → base units (bigint), given token decimals. */

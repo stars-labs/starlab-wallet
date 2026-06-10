@@ -1648,6 +1648,7 @@
     <div class="flex-1 space-y-4 px-4 py-4">
     {#if appState.showSettings}
         <Settings
+            currentAddress={appState.dkgAddress || ""}
             on:backToWallet={({ detail }) => {
                 if (detail.chain === "ethereum" || detail.chain === "solana") {
                     appState.chain = detail.chain;

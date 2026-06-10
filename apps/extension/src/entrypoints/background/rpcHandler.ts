@@ -995,6 +995,31 @@ export class RpcHandler {
         } catch (e) {
             console.warn('[RpcHandler] failed to record activity for', hash, e);
         }
+
+        // Allowance registry (#17): if this tx was an ERC-20 approve, remember
+        // (token, spender) so the user can review/revoke it later. Best-effort.
+        try {
+            if (typeof transaction.data === 'string' && transaction.data.startsWith('0x095ea7b3')) {
+                const { decodeFunctionData } = await import('viem');
+                const { ERC20_ABI } = await import('../../services/tokenService');
+                const dec = decodeFunctionData({ abi: ERC20_ABI, data: transaction.data as `0x${string}` });
+                if (dec.functionName === 'approve') {
+                    const [spender, amount] = dec.args as [string, bigint];
+                    if (amount > 0n) {
+                        const { AllowanceService } = await import('../../services/allowanceService');
+                        await AllowanceService.getInstance().record({
+                            chainId: network?.id ?? 1,
+                            token: transaction.to,
+                            spender,
+                            owner: from,
+                            lastApproved: amount.toString(),
+                        });
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[RpcHandler] failed to record allowance:', e);
+        }
         return hash;
     }
 

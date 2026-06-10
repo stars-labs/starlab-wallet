@@ -73,6 +73,38 @@
     let showSend = false;
     let showReceive = false;
     let sendStatus = "";
+    // Switcher polish (#16): bumping this remounts the balance/activity panels
+    // and refetches hero fiat — fired on wallet switch and network switch so
+    // every data view tracks the active (account, network) pair.
+    let dataEpoch = 0;
+    function refreshWalletData() {
+        dataEpoch += 1;
+        heroFiatFor = ""; // force the hero fiat reactive block to refetch
+    }
+
+    // Header network switcher (#16): compact per-curve EVM network select.
+    import NetworkServicePopup from "../../services/networkService";
+    let evmNetworks: { id: number; name: string }[] = [];
+    let currentEvmNetworkId: number | undefined = undefined;
+    async function loadNetworkChoices() {
+        const net = NetworkServicePopup.getInstance();
+        await net.ensureInitialized();
+        evmNetworks = net.getNetworks("ethereum").map((n) => ({ id: n.id, name: n.name }));
+        currentEvmNetworkId = net.getCurrentNetwork("ethereum")?.id;
+    }
+    async function switchEvmNetwork(e: Event) {
+        const id = Number((e.target as HTMLSelectElement).value);
+        try {
+            const net = NetworkServicePopup.getInstance();
+            await net.setCurrentNetwork("ethereum", id);
+            currentEvmNetworkId = id;
+            refreshWalletData();
+        } catch (err) {
+            console.error("[UI] network switch failed:", err);
+        }
+    }
+    onMount(loadNetworkChoices);
+
     // Hero-card portfolio fiat total (#13). null = not loaded / unavailable.
     let heroFiat: number | null = null;
     let heroFiatFor = ""; // address the current value belongs to
@@ -1566,6 +1598,7 @@
             }
             if (response && response.success) {
                 keystoreStatus.activeWallet = wallet;
+                refreshWalletData(); // remount balance/activity for the new account (#16)
                 console.log("[UI] Switched to wallet:", wallet.id);
             } else {
                 console.error("[UI] Failed to switch wallet:", response?.error);
@@ -1714,16 +1747,31 @@
             />
         {/if}
 
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between gap-2">
             <span class="section-title">Overview</span>
-            <span
-                class="badge {appState.wsConnected
-                    ? 'badge-success'
-                    : 'badge-danger'}"
-            >
-                <span class="h-1.5 w-1.5 rounded-full bg-current"></span>
-                {appState.wsConnected ? "Online" : "Offline"}
-            </span>
+            <div class="flex items-center gap-2">
+                {#if evmNetworks.length > 1}
+                    <!-- Header network switcher (#16) -->
+                    <select
+                        class="rounded-lg border border-line bg-surface px-1.5 py-0.5 text-xs"
+                        value={currentEvmNetworkId}
+                        on:change={switchEvmNetwork}
+                        title="EVM network"
+                    >
+                        {#each evmNetworks as n (n.id)}
+                            <option value={n.id}>{n.name}</option>
+                        {/each}
+                    </select>
+                {/if}
+                <span
+                    class="badge {appState.wsConnected
+                        ? 'badge-success'
+                        : 'badge-danger'}"
+                >
+                    <span class="h-1.5 w-1.5 rounded-full bg-current"></span>
+                    {appState.wsConnected ? "Online" : "Offline"}
+                </span>
+            </div>
         </div>
 
         <!-- Hero: address card (shown once a wallet's keys exist) -->
@@ -1873,12 +1921,14 @@
                 {#if sendStatus}
                     <p class="text-xs text-muted">{sendStatus}</p>
                 {/if}
-                <div class="card card-pad">
-                    <TokenList address={appState.dkgAddress} />
-                </div>
-                <div class="card card-pad">
-                    <ActivityFeed address={appState.dkgAddress} />
-                </div>
+                {#key dataEpoch}
+                    <div class="card card-pad">
+                        <TokenList address={appState.dkgAddress} />
+                    </div>
+                    <div class="card card-pad">
+                        <ActivityFeed address={appState.dkgAddress} />
+                    </div>
+                {/key}
             {/if}
         {/if}
 

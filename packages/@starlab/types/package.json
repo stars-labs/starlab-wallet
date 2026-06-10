@@ -1,5 +1,5 @@
 {
-  "name": "@starlab/types",
+  "name": "@stars-labs/types",
   "version": "0.1.0",
   "description": "Shared TypeScript types for MPC Wallet",
   "main": "./dist/index.js",

@@ -120,7 +120,7 @@ describe("RpcHandler eth_signTypedData_v4 (EIP-712)", () => {
             types: TYPED_DATA.types,
             primaryType: TYPED_DATA.primaryType,
             message: TYPED_DATA.message,
-        }).slice(2);
+        } as any).slice(2);
         expect(stash.messageHex).toBe(expected);
     });
 
@@ -140,7 +140,7 @@ describe("RpcHandler eth_signTypedData_v4 (EIP-712)", () => {
             types: TYPED_DATA.types,
             primaryType: TYPED_DATA.primaryType,
             message: TYPED_DATA.message,
-        }).slice(2);
+        } as any).slice(2);
         expect(stash.messageHex).toBe(expected);
     });
 

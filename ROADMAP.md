@@ -43,6 +43,8 @@ headless CLI ([starlab-mpc](https://github.com/stars-labs/starlab-mpc)).
   real devices; both backends are build-verified only.
 - **dApp connection manager** — list connected origins and **revoke**
   per-origin permissions in Settings.
+- **Built-in Sandbox network** — one-click toggle to the local anvil/surfpool
+  fork nodes (today: hand-entered custom RPCs; #31).
 - **Account / network switcher polish** — fast, obvious switching across wallets
   and chains.
 
@@ -54,6 +56,14 @@ headless CLI ([starlab-mpc](https://github.com/stars-labs/starlab-mpc)).
   orders).
 - **Solana dApp interop verified** (e.g. a Jupiter swap) on the wallet-standard
   provider.
+- **⭐ Transaction preflight simulation** — replay every tx on a local fork
+  (anvil, sandbox-powered) *before* the FROST ceremony: balance diffs, approvals
+  granted, revert prediction. Turns the sandbox into a security feature (#32).
+- **Human-readable signing** — decode calldata + EIP-712 into plain language in
+  the approval UI; red warnings for unlimited approvals / `setApprovalForAll`
+  (#33).
+- **Phishing protection** — origin reputation + lookalike-domain warnings at
+  connect and at every signing request (#36).
 - **NFT display** — ERC-721/1155 + Metaplex, with media.
 - **Token discovery** — auto-detect held tokens; custom-token add UI on top of
   the registry.
@@ -65,6 +75,12 @@ headless CLI ([starlab-mpc](https://github.com/stars-labs/starlab-mpc)).
   encrypted shares.
 - **Key resharing / device rotation UI** — the engine supports resharing; wire a
   recover-a-lost-device / rotate-cohort flow into the wallet.
+- **FIDO2 touch-to-sign** — gate this device's FROST share behind a YubiKey
+  user-presence assertion per ceremony. (A stock YubiKey *cannot hold* a FROST
+  share — no on-card threshold math — so user-presence gating is the honest,
+  feasible hardware factor; #34.)
+- **Share-usage policy engine** — auto-lock timer, per-tx / daily value limits,
+  per-origin allowlist; policy breach ⇒ explicit re-auth (#35).
 - **Account-recovery story** + docs.
 - **Third-party security audit** of the integration layer + UI (upstream FROST
   crates are audited; our glue is not).

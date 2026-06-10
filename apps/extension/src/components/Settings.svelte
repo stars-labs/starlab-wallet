@@ -21,12 +21,47 @@
         isValidRoom,
     } from "../config/signal-server";
 
+    import {
+        enableSandbox,
+        disableSandbox,
+        isSandboxActive,
+        probeSandbox,
+    } from "../services/sandboxService";
+
     // Tenant room (multi-tenant signal server, #31). The hosted server routes
     // each ?room=<id> to an isolated instance and REQUIRES a strong room.
     let signalRoom = "";
     let roomStatus = "";
+
+    // Sandbox mode (#31): one-click local-fork networks.
+    let sandboxActive = false;
+    let sandboxStatus = "";
+    async function toggleSandbox() {
+        sandboxStatus = "";
+        try {
+            if (sandboxActive) {
+                await disableSandbox();
+                sandboxActive = false;
+                sandboxStatus = "Back on the previous networks.";
+            } else {
+                const up = await probeSandbox();
+                if (!up.evm && !up.solana) {
+                    sandboxStatus =
+                        "No local nodes found — run scripts/sandbox.sh first.";
+                    return;
+                }
+                await enableSandbox();
+                sandboxActive = true;
+                sandboxStatus = `Sandbox active (EVM ${up.evm ? "up" : "down"}, Solana ${up.solana ? "up" : "down"}).`;
+            }
+        } catch (e) {
+            sandboxStatus = `Failed: ${(e as Error).message}`;
+        }
+    }
+
     onMount(async () => {
         signalRoom = (await getRoom()) ?? "";
+        sandboxActive = isSandboxActive();
     });
     function genRoom() {
         signalRoom = newRoom();
@@ -348,6 +383,29 @@
         {#if roomStatus}
             <span class="text-xs text-muted" data-testid="room-status">{roomStatus}</span>
         {/if}
+    </div>
+
+    <!-- Sandbox mode (#31): one-click switch onto local fork nodes -->
+    <div class="card card-pad space-y-2">
+        <h3 class="section-title">Sandbox mode</h3>
+        <p class="text-xs text-muted">
+            Point the wallet at local fork chains (anvil :8545 / surfpool :8899)
+            — real signing &amp; broadcast, no real funds. Start the nodes with
+            <code>scripts/sandbox.sh</code>.
+        </p>
+        <div class="flex items-center gap-2">
+            <Button
+                size="sm"
+                variant={sandboxActive ? "ghost" : undefined}
+                on:click={toggleSandbox}
+                data-testid="sandbox-toggle"
+            >
+                {sandboxActive ? "Exit sandbox" : "Enter sandbox"}
+            </Button>
+            {#if sandboxStatus}
+                <span class="text-xs text-muted">{sandboxStatus}</span>
+            {/if}
+        </div>
     </div>
 
     <!-- Network -->

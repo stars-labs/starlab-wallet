@@ -75,10 +75,6 @@ headless CLI ([starlab-mpc](https://github.com/stars-labs/starlab-mpc)).
   encrypted shares.
 - **Key resharing / device rotation UI** — the engine supports resharing; wire a
   recover-a-lost-device / rotate-cohort flow into the wallet.
-- **FIDO2 touch-to-sign** — gate this device's FROST share behind a YubiKey
-  user-presence assertion per ceremony. (A stock YubiKey *cannot hold* a FROST
-  share — no on-card threshold math — so user-presence gating is the honest,
-  feasible hardware factor; #34.)
 - **Share-usage policy engine** — auto-lock timer, per-tx / daily value limits,
   per-origin allowlist; policy breach ⇒ explicit re-auth (#35).
 - **Account-recovery story** + docs.

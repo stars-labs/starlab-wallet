@@ -1,7 +1,6 @@
 <script lang="ts">
     // Receive screen: address + scannable QR. Pure client-side (qrcode lib).
     import { onMount } from "svelte";
-    import QRCode from "qrcode";
 
     export let address: string;
     export let label: string = "Your address";
@@ -12,6 +11,7 @@
 
     async function render() {
         try {
+            const QRCode = (await import("qrcode")).default;
             dataUrl = await QRCode.toDataURL(address, { width: 200, margin: 1 });
         } catch (e) {
             error = (e as Error).message;

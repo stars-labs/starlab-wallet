@@ -24,11 +24,15 @@
 
 import AccountService from "../../services/accountService";
 import type { Account } from "@stars-labs/types/account";
+// Deep imports, deliberately NOT the ../../signers barrel: the barrel
+// re-exports LedgerSigner, which drags @ledgerhq/hw-app-eth + hw-app-solana
+// + the WebHID transport into the MV3 service worker that can never use
+// WebHID anyway (#27).
+import { SignerRegistry } from "../../signers/registry";
 import {
-    SignerRegistry,
     YubiKeySigner,
     discoverYubiKeyAccounts,
-} from "../../signers";
+} from "../../signers/yubikey/yubikey-signer";
 
 export class YubiKeyManager {
     private readonly registry = new SignerRegistry();

@@ -1,6 +1,7 @@
 import { defineUnlistedScript } from '#imports';
 import { MESSAGE_PREFIX, MessageType, WALLET_INFO, DEFAULT_ADDRESSES } from '../../constants';
 import { v4 as uuidv4 } from 'uuid';
+import { registerStarlabSolanaWallet } from './solana/register';
 
 // EIP6963 types
 interface EIP6963ProviderInfo {
@@ -605,9 +606,18 @@ export default defineUnlistedScript(() => {
     
     // Listen for EIP6963 provider request events
     window.addEventListener('eip6963:requestProvider', createAndDispatchEvent);
-    
+
     // Announce the provider on page load
     setTimeout(createAndDispatchEvent, 0);
-    
+
+    // Also register on the Solana side (wallet-standard) so Solana dApps
+    // discover Starlab alongside the EVM EIP-6963 provider. Routes through
+    // the same page→content→background bridge; signing lands on FROST ed25519.
+    try {
+        registerStarlabSolanaWallet();
+    } catch (e) {
+        console.warn('[Injected] Solana wallet-standard registration failed:', e);
+    }
+
     return injectedProvider;
 });

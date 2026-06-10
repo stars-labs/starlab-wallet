@@ -45,6 +45,7 @@
     "@ledgerhq/hw-app-solana": "7.10.3",
     "@ledgerhq/hw-transport": "6.31.10",
     "@ledgerhq/hw-transport-webhid": "6.35.3",
+    "@solana/web3.js": "1.98.4",
     "@starlab/core-wasm": "workspace:*",
     "@starlab/types": "workspace:*",
     "@tailwindcss/vite": "^4.3.0",

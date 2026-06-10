@@ -136,6 +136,13 @@ export class RpcHandler {
                 case 'eth_signTypedData_v4':
                     return await this.handleSignTypedDataRequest(request.params as unknown[]);
 
+                case 'solana_connect':
+                    return await this.handleSolanaConnect();
+                case 'solana_signBytes':
+                    return await this.handleSolanaSignBytes(request.params as unknown[]);
+                case 'solana_sendRawTransaction':
+                    return await this.handleSolanaSendRawTransaction(request.params as unknown[]);
+
                 case 'eth_getTransactionCount':
                     return await this.handleGetTransactionCountRequest(request.params as unknown[]);
 
@@ -476,6 +483,114 @@ export class RpcHandler {
             address,
             displayMessage: message,
         });
+    }
+
+    /**
+     * Solana wallet-standard: return the connected Solana (ed25519) address.
+     * dApps call this on `standard:connect`.
+     */
+    private async handleSolanaConnect(): Promise<string> {
+        const wallet = await this.findSolanaWallet();
+        if (!wallet) {
+            throw new Error(
+                'No Solana account available. Create or unlock a wallet with a Solana (ed25519) address.',
+            );
+        }
+        return (wallet as any).address as string;
+    }
+
+    /**
+     * Solana wallet-standard: sign raw bytes (an off-chain message, or a
+     * transaction's serialized message) with the account's ed25519 key via the
+     * gated FROST ceremony. Params: [address, hexBytes]. Returns the 64-byte
+     * signature as hex (the page bridge decodes it).
+     */
+    private async handleSolanaSignBytes(params: unknown[]): Promise<string> {
+        if (!this.sessionManager) {
+            throw new Error('SessionManager not initialized — cannot route signing request');
+        }
+        const address = params[0] as string;
+        const hexBytes = params[1] as string;
+        if (!address || typeof hexBytes !== 'string') {
+            throw new Error('solana_signBytes: expected [address, hexBytes]');
+        }
+
+        // Hardware (YubiKey/Ledger) ed25519 accounts sign the bytes directly.
+        const hwSigner = this.yubiKeyManager?.getSignerByAddress(address);
+        if (hwSigner && hwSigner.curve === 'ed25519') {
+            const sig = await hwSigner.signEd25519(this.hexToBytes(this.stripHex(hexBytes)));
+            return this.bytesToHex(sig);
+        }
+
+        const wallet = await this.findSolanaWallet(address);
+        if (!wallet) {
+            throw new Error(`No Solana wallet found for ${address}.`);
+        }
+        const { KeystoreManager } = await import('../../services/keystoreManager');
+        const km = KeystoreManager.getInstance();
+        const keyShare = (km as any).getKeyShareData?.((wallet as any).id);
+        const groupPublicKey =
+            keyShare?.group_public_key ?? (wallet as any).group_public_key ?? '';
+        const threshold = keyShare?.threshold ?? 2;
+        const total = keyShare?.total_participants ?? 3;
+
+        return this.enqueueDappSignature({
+            walletId: (wallet as any).id,
+            walletName: (wallet as any).name ?? (wallet as any).id,
+            groupPublicKey,
+            blockchain: 'solana',
+            threshold,
+            total,
+            messageHex: this.stripHex(hexBytes),
+            originalMessage: hexBytes,
+            address,
+            displayMessage: 'Solana: sign request',
+        });
+    }
+
+    /**
+     * Solana wallet-standard: broadcast a fully-signed serialized tx to the
+     * current Solana network RPC. Params: [address, hexTx]. Returns the tx
+     * signature (base58). Used by `solana:signAndSendTransaction`.
+     */
+    private async handleSolanaSendRawTransaction(params: unknown[]): Promise<string> {
+        const hexTx = params[1] as string;
+        const raw = this.hexToBytes(this.stripHex(hexTx));
+        const b64 = btoa(String.fromCharCode(...raw));
+
+        const net = this.networkService?.getCurrentNetwork?.('solana');
+        const rpcUrl = (net as any)?.rpcUrls?.default?.http?.[0];
+        if (!rpcUrl) throw new Error('No Solana RPC configured');
+
+        const res = await fetch(rpcUrl, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'sendTransaction',
+                params: [b64, { encoding: 'base64' }],
+            }),
+        });
+        const json = await res.json();
+        if (json.error) throw new Error(json.error.message ?? 'sendTransaction failed');
+        return json.result as string;
+    }
+
+    /**
+     * Find a Solana (ed25519) wallet — by address if given, else the first one.
+     */
+    private async findSolanaWallet(address?: string): Promise<unknown | undefined> {
+        const { KeystoreManager } = await import('../../services/keystoreManager');
+        const wallets = KeystoreManager.getInstance().getWallets();
+        const isSolana = (w: any) => w.blockchain === 'solana' || w.curve === 'ed25519';
+        if (address) {
+            const norm = address.toLowerCase();
+            return wallets.find(
+                (w: any) => isSolana(w) && typeof w.address === 'string' && w.address.toLowerCase() === norm,
+            );
+        }
+        return wallets.find(isSolana);
     }
 
     /**

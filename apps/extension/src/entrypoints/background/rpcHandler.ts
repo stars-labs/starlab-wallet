@@ -131,6 +131,11 @@ export class RpcHandler {
                 case 'personal_sign':
                     return await this.handleSignMessageRequest(request.params as unknown[]);
 
+                case 'eth_signTypedData':
+                case 'eth_signTypedData_v3':
+                case 'eth_signTypedData_v4':
+                    return await this.handleSignTypedDataRequest(request.params as unknown[]);
+
                 case 'eth_getTransactionCount':
                     return await this.handleGetTransactionCountRequest(request.params as unknown[]);
 
@@ -459,16 +464,7 @@ export class RpcHandler {
             ).join('');
         }
 
-        // Ext-4-confirm: DO NOT announce the session yet. A dApp
-        // RPC arriving at the extension MUST gate on explicit user
-        // approval before any signing session hits the signal
-        // server — otherwise a malicious dApp could trigger
-        // notifications / offscreen wake on all co-signer devices
-        // just by calling personal_sign. Stash the context, show
-        // the request in the popup, and only call createSigningSession
-        // when the user clicks Approve (approveDappSignature below).
-        const requestId = `dapp_req_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-        this.pendingDappRequests.set(requestId, {
+        return this.enqueueDappSignature({
             walletId: (wallet as any).id,
             walletName: (wallet as any).name ?? (wallet as any).id,
             groupPublicKey,
@@ -478,32 +474,65 @@ export class RpcHandler {
             messageHex,
             originalMessage: message,
             address,
+            displayMessage: message,
+        });
+    }
+
+    /**
+     * Shared tail for every gated dApp signing request (personal_sign,
+     * eth_signTypedData, …). Stashes the request context, surfaces it in the
+     * popup for explicit user approval, fires a desktop notification, and
+     * returns a Promise that resolves when the approved FROST ceremony
+     * completes (or rejects on user-reject / timeout).
+     *
+     * Ext-4-confirm: we DO NOT announce the signing session here. A dApp RPC
+     * MUST gate on explicit user approval before anything hits the signal
+     * server — otherwise a malicious dApp could wake every co-signer device
+     * just by calling a sign method. The session is only created when the user
+     * clicks Approve (see approveDappSignature).
+     */
+    private enqueueDappSignature(ctx: {
+        walletId: string;
+        walletName: string;
+        groupPublicKey: string;
+        blockchain: 'ethereum' | 'solana';
+        threshold: number;
+        total: number;
+        messageHex: string;
+        originalMessage: string;
+        address: string;
+        /** Human-readable text shown in the popup (defaults to originalMessage). */
+        displayMessage?: string;
+    }): Promise<string> {
+        const requestId = `dapp_req_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        this.pendingDappRequests.set(requestId, {
+            walletId: ctx.walletId,
+            walletName: ctx.walletName,
+            groupPublicKey: ctx.groupPublicKey,
+            blockchain: ctx.blockchain,
+            threshold: ctx.threshold,
+            total: ctx.total,
+            messageHex: ctx.messageHex,
+            originalMessage: ctx.originalMessage,
+            address: ctx.address,
             origin: this.origin || 'Unknown',
         });
 
-        // Surface the request in the popup so users see the dApp
-        // origin before approving. SignatureRequest.svelte already
-        // renders this shape + dispatches `approveMessageSignature`
-        // when the user picks Sign or Reject.
         chrome.runtime.sendMessage({
             type: 'signatureRequest',
             signingId: requestId,
-            message,
+            message: ctx.displayMessage ?? ctx.originalMessage,
             origin: this.origin || 'Unknown',
-            fromAddress: address,
+            fromAddress: ctx.address,
         });
 
-        // Fire a desktop notification so users know to open the
-        // popup. Without this, a signature request arriving while
-        // the popup is closed is silent — the dApp would spin
-        // until timeout with no user-facing signal.
         if (typeof chrome !== 'undefined' && chrome.notifications) {
             try {
                 chrome.notifications.create(`mpc-dapp-sig:${requestId}`, {
                     type: 'basic',
                     iconUrl: 'icon/128.png',
                     title: 'Signature requested',
-                    message: `${this.origin || 'A dApp'} wants you to sign a message with ${address.slice(0, 6)}…${address.slice(-4)}`,
+                    message: `${this.origin || 'A dApp'} wants you to sign with ${ctx.address.slice(0, 6)}…${ctx.address.slice(-4)}`,
                     priority: 2,
                     requireInteraction: true,
                 });
@@ -512,12 +541,6 @@ export class RpcHandler {
             }
         }
 
-        // Promise resolves (from handleSignatureComplete) when the
-        // FROST ceremony that the popup kicks off on approval
-        // produces the aggregated signature. On rejection, the
-        // popup's handler calls handleSignatureError which rejects
-        // this promise. 5-min timeout catches abandoned requests
-        // (user ignored popup + never approved).
         return new Promise<string>((resolve, reject) => {
             this.pendingSignatures.set(requestId, { resolve, reject });
             setTimeout(() => {
@@ -527,6 +550,108 @@ export class RpcHandler {
                     reject(new Error('Signature request timed out'));
                 }
             }, 300_000);
+        });
+    }
+
+    /**
+     * Ext-4: handle eth_signTypedData_v3 / _v4 (EIP-712). Params are
+     * `[address, typedData]` where typedData is the EIP-712 payload (a JSON
+     * string per the MetaMask convention, or an already-parsed object).
+     *
+     * EIP-712 differs from personal_sign only in the digest: we compute the
+     * 32-byte typed-data hash via viem's `hashTypedData` (domainSeparator +
+     * hashStruct) instead of the EIP-191 message hash. The FROST ceremony then
+     * signs that digest exactly as it signs the personal_sign digest, so this
+     * funnels into the same gated approval pipeline. EVM-only (secp256k1) —
+     * Solana has no EIP-712 analogue.
+     */
+    private async handleSignTypedDataRequest(params: unknown[]): Promise<string> {
+        if (!this.sessionManager) {
+            throw new Error(
+                'SessionManager not initialized — cannot route signing request',
+            );
+        }
+
+        // eth_signTypedData_v4: [address, typedDataJSON]. Some callers
+        // (legacy v1) pass [typedData, address]; detect by the 0x-address shape.
+        let address: string;
+        let typedDataRaw: unknown;
+        const p0 = params[0] as string;
+        if (typeof p0 === 'string' && p0.startsWith('0x') && p0.length === 42) {
+            address = p0;
+            typedDataRaw = params[1];
+        } else {
+            typedDataRaw = params[0];
+            address = params[1] as string;
+        }
+        if (!address) {
+            const currentAccount = this.accountService.getCurrentAccount();
+            if (!currentAccount) throw new Error('No account selected');
+            address = currentAccount.address;
+        }
+
+        const typedData =
+            typeof typedDataRaw === 'string'
+                ? JSON.parse(typedDataRaw)
+                : typedDataRaw;
+        if (!typedData || typeof typedData !== 'object') {
+            throw new Error('eth_signTypedData: malformed typed-data payload');
+        }
+
+        // EIP-712 digest. viem derives the EIP712Domain type from `domain`, so
+        // a stray `types.EIP712Domain` from the dApp is harmless.
+        const { hashTypedData } = await import('viem');
+        const digest = hashTypedData({
+            domain: (typedData as any).domain ?? {},
+            types: (typedData as any).types ?? {},
+            primaryType: (typedData as any).primaryType,
+            message: (typedData as any).message ?? {},
+        });
+        const messageHex = digest.startsWith('0x') ? digest.slice(2) : digest;
+
+        // YubiKey hardware account: sign the precomputed digest on the card.
+        const yubiSigner = this.yubiKeyManager?.getSignerByAddress(address);
+        if (yubiSigner) {
+            return await this.signDigestWithYubiKey(yubiSigner, messageHex);
+        }
+
+        // Look up the FROST wallet backing this address (EVM/secp256k1).
+        const { KeystoreManager } = await import('../../services/keystoreManager');
+        const km = KeystoreManager.getInstance();
+        const normalized = address.toLowerCase();
+        const wallet = km
+            .getWallets()
+            .find(
+                (w: any) =>
+                    typeof w.address === 'string' &&
+                    w.address.toLowerCase() === normalized,
+            );
+        if (!wallet) {
+            throw new Error(
+                `No wallet found for address ${address}. Unlock a wallet in the extension that owns this address before signing.`,
+            );
+        }
+
+        const keyShare = (km as any).getKeyShareData?.((wallet as any).id);
+        const groupPublicKey =
+            keyShare?.group_public_key ?? (wallet as any).group_public_key ?? '';
+        const threshold = keyShare?.threshold ?? 2;
+        const total = keyShare?.total_participants ?? 3;
+
+        const primaryType = (typedData as any).primaryType ?? 'TypedData';
+        return this.enqueueDappSignature({
+            walletId: (wallet as any).id,
+            walletName: (wallet as any).name ?? (wallet as any).id,
+            groupPublicKey,
+            blockchain: 'ethereum',
+            threshold,
+            total,
+            messageHex,
+            originalMessage: typeof typedDataRaw === 'string'
+                ? typedDataRaw
+                : JSON.stringify(typedDataRaw),
+            address,
+            displayMessage: `EIP-712: ${primaryType}`,
         });
     }
 
@@ -568,6 +693,28 @@ export class RpcHandler {
             : new TextEncoder().encode(message);
         const sig = await signer.signEd25519(bytes);
         return `0x${this.bytesToHex(sig)}`;
+    }
+
+    /**
+     * YubiKey: sign an already-computed 32-byte digest on the card (EIP-712
+     * typed data, where the EIP-712 hashing happened upstream). Unlike
+     * {@link signWithYubiKey} this does NOT re-wrap with EIP-191 — the digest
+     * is signed verbatim — then assembles the 65-byte `(r,s,v)` with
+     * `v = recovery + 27`, the format dApps expect from eth_signTypedData.
+     */
+    private async signDigestWithYubiKey(
+        signer: YubiKeySigner,
+        digestHex: string,
+    ): Promise<string> {
+        if (signer.curve !== 'secp256k1') {
+            throw new Error('eth_signTypedData requires a secp256k1 account');
+        }
+        const prehash = this.hexToBytes(this.stripHex(digestHex));
+        const { r, s, recovery } = await signer.signSecp256k1(prehash);
+        const rHex = this.stripHex(r).padStart(64, '0');
+        const sHex = this.stripHex(s).padStart(64, '0');
+        const v = (recovery + 27).toString(16).padStart(2, '0');
+        return `0x${rHex}${sHex}${v}`;
     }
 
     /**

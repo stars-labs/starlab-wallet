@@ -17,6 +17,11 @@
         resolveRecipient,
         type Contact,
     } from "../../../services/addressBookService";
+    import {
+        simulateTransaction,
+        type SimulationResult,
+    } from "../../../services/simulationService";
+    import { TokenRegistry, formatTokenAmount } from "../../../services/tokenService";
 
     export let from: string;
 
@@ -95,12 +100,32 @@
             });
             const fee = await estimateSendFee(client, tx);
             review = { tx, fee, resolvedTo: resolved.address, ens: resolved.ens };
+            runPreflight(tx); // fire-and-forget; panel fills in when done (#32)
         } catch (e) {
             // ENS not resolving / estimateGas reverting both mean the send
             // would fail — surface it pre-sign.
             error = (e as Error).message;
         } finally {
             estimating = false;
+        }
+    }
+
+    // Preflight simulation (#32): replay the tx on the local anvil fork and
+    // show what it actually does. Absent node ⇒ "unavailable", never blocking.
+    let preflight: SimulationResult | null = null;
+    let preflightRunning = false;
+    async function runPreflight(tx: EthSendParams) {
+        preflight = null;
+        preflightRunning = true;
+        try {
+            const net = NetworkService.getInstance();
+            const chainId = net.getCurrentNetwork("ethereum")?.id ?? 1;
+            const tokens = await TokenRegistry.getInstance().list(chainId);
+            preflight = await simulateTransaction("http://127.0.0.1:8545", tx, tokens);
+        } catch {
+            preflight = { available: false };
+        } finally {
+            preflightRunning = false;
         }
     }
 
@@ -178,6 +203,25 @@
                 <span>Gas</span>
                 <span>{review.fee.gas.toString()} × {review.fee.kind === "eip1559" ? "max fee" : "gas price"}</span>
             </div>
+
+            <!-- Preflight simulation (#32) -->
+            <div class="sf-preflight">
+                {#if preflightRunning}
+                    <span class="sf-muted">Simulating on local fork…</span>
+                {:else if preflight && !preflight.available}
+                    <span class="sf-muted">Preflight unavailable — start a fork node with scripts/sandbox.sh for a dry-run.</span>
+                {:else if preflight && preflight.success === false}
+                    <span class="sf-pf-bad">⛔ Would REVERT{preflight.revertReason ? `: ${preflight.revertReason}` : ""}</span>
+                {:else if preflight && preflight.success}
+                    <span class="sf-pf-ok">✓ Simulated OK (gas {preflight.gasUsed})</span>
+                    {#if preflight.nativeDiff !== undefined}
+                        <span>ETH: {formatTokenAmount(preflight.nativeDiff < 0n ? -preflight.nativeDiff : preflight.nativeDiff, 18)} {preflight.nativeDiff < 0n ? "out" : "in"}</span>
+                    {/if}
+                    {#each preflight.tokenDiffs ?? [] as d}
+                        <span>{d.token.symbol}: {formatTokenAmount(d.diff < 0n ? -d.diff : d.diff, d.token.decimals)} {d.diff < 0n ? "out" : "in"}</span>
+                    {/each}
+                {/if}
+            </div>
         </div>
         <div class="sf-actions">
             <button class="sf-cancel" on:click={() => (review = null)}>Back</button>
@@ -207,6 +251,9 @@
     .sf-muted { opacity: 0.6; }
     .sf-note { font-size: 11px; opacity: 0.55; margin: 0; }
     .sf-review { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid rgba(127,127,127,0.25); border-radius: 8px; font-size: 13px; }
+    .sf-preflight { display: flex; flex-direction: column; gap: 2px; border-top: 1px dashed rgba(127,127,127,0.25); padding-top: 6px; font-size: 12px; }
+    .sf-pf-ok { color: #27ae60; font-weight: 600; }
+    .sf-pf-bad { color: #c0392b; font-weight: 600; }
     .sf-row { display: flex; justify-content: space-between; gap: 8px; }
     .sf-row code { font-size: 12px; }
 </style>

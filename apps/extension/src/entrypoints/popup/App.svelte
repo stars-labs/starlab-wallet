@@ -27,6 +27,7 @@
     import { formatUserError } from "../../services/walletErrors";
     import TokenList from "./components/TokenList.svelte";
     import ActivityFeed from "./components/ActivityFeed.svelte";
+    import NftGallery from "./components/NftGallery.svelte";
     import SendForm from "./components/SendForm.svelte";
     import ReceiveCard from "./components/ReceiveCard.svelte";
     import { MESSAGE_TYPES } from "@stars-labs/types/messages";
@@ -1928,6 +1929,9 @@
                     </div>
                     <div class="card card-pad">
                         <ActivityFeed address={appState.dkgAddress} />
+                    </div>
+                    <div class="card card-pad">
+                        <NftGallery address={appState.dkgAddress} />
                     </div>
                 {/key}
             {/if}

@@ -211,6 +211,41 @@
         }
     }
 
+    // Address book (#25).
+    import {
+        AddressBookService,
+        type Contact,
+    } from "../services/addressBookService";
+    let contacts: Contact[] = [];
+    let contactName = "";
+    let contactAddr = "";
+    let contactStatus = "";
+    async function loadContacts() {
+        contacts = await AddressBookService.getInstance().list();
+    }
+    async function addContact() {
+        contactStatus = "";
+        if (!contactName.trim()) {
+            contactStatus = "Enter a name";
+            return;
+        }
+        if (!/^0x[0-9a-fA-F]{40}$/.test(contactAddr.trim())) {
+            contactStatus = "Enter a valid 0x address";
+            return;
+        }
+        await AddressBookService.getInstance().add({
+            name: contactName.trim(),
+            address: contactAddr.trim(),
+        });
+        contactName = "";
+        contactAddr = "";
+        await loadContacts();
+    }
+    async function removeContact(c: Contact) {
+        await AddressBookService.getInstance().remove(c.address, c.chain);
+        await loadContacts();
+    }
+
     // Policy engine (#35): spending limits + auto-lock.
     import { PolicyService } from "../services/policyService";
     import { parseUnits, formatUnits } from "viem";
@@ -277,6 +312,7 @@
         await loadAllowances();
         await loadTrackedTokens();
         await loadPolicy();
+        await loadContacts();
     });
     function genRoom() {
         signalRoom = newRoom();
@@ -629,6 +665,29 @@
                 Revoking removes the site's access; it takes effect on the
                 site's next request.
             </p>
+        {/if}
+    </div>
+
+    <!-- Address book (#25) -->
+    <div class="card card-pad space-y-2">
+        <h3 class="section-title">Address book</h3>
+        {#if contacts.length > 0}
+            <ul class="space-y-1">
+                {#each contacts as c (c.chain + ":" + c.address)}
+                    <li class="flex items-center justify-between gap-2 text-xs">
+                        <span class="truncate"><strong>{c.name}</strong> · {c.address.slice(0, 8)}…{c.address.slice(-4)}</span>
+                        <Button size="sm" variant="ghost" on:click={() => removeContact(c)}>Remove</Button>
+                    </li>
+                {/each}
+            </ul>
+        {/if}
+        <div class="flex items-center gap-2">
+            <input type="text" class="input w-24 text-xs" placeholder="Name" bind:value={contactName} />
+            <input type="text" class="input flex-1 text-xs" placeholder="0x…" bind:value={contactAddr} />
+            <Button size="sm" on:click={addContact}>Add</Button>
+        </div>
+        {#if contactStatus}
+            <p class="text-xs text-muted">{contactStatus}</p>
         {/if}
     </div>
 

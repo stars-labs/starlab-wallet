@@ -52,10 +52,12 @@ function makeBridge(): SolanaBridge {
 
   return {
     connect: () => request("solana_connect", []),
-    signBytes: async (address, bytes) =>
+    signMessage: async (address, bytes) =>
       unhex(await request("solana_signBytes", [address, hex(bytes)])),
-    sendRawTransaction: (address, tx) =>
-      request("solana_sendRawTransaction", [address, hex(tx)]),
+    signTransaction: async (address, tx) =>
+      unhex(await request("solana_signTransaction", [address, hex(tx)])),
+    signAndSendTransaction: (address, tx) =>
+      request("solana_signAndSendTransaction", [address, hex(tx)]),
   };
 }
 

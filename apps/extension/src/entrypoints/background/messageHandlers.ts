@@ -22,7 +22,9 @@ import { SessionManager } from "./sessionManager";
 import { checkAndRestoreKeystores } from "./index";
 import { RpcHandler, UIRequestHandler } from "./rpcHandler";
 import AccountService from "../../services/accountService";
+import NetworkService from "../../services/networkService";
 import { KeystoreManager } from "../../services/keystoreManager";
+import { handleGetPortfolio, handleGetActivity } from "./assetHandlers";
 import { DkgState } from "@starlab/types/dkg";
 
 /**
@@ -278,6 +280,14 @@ export class PopupMessageHandler {
                 case "getActiveKeystore":
                     console.log("🔑 [PopupMessageHandler] GET_ACTIVE_KEYSTORE: Getting active keystore");
                     await this.handleGetActiveKeystoreMessage(sendResponse);
+                    break;
+
+                case "getPortfolio":
+                    await this.handleGetPortfolioMessage(message, sendResponse);
+                    break;
+
+                case "getActivity":
+                    await this.handleGetActivityMessage(message, sendResponse);
                     break;
 
                 default:
@@ -1610,6 +1620,61 @@ export class PopupMessageHandler {
             sendResponse({ success: true, keyShare });
         } catch (error) {
             console.error("[PopupMessageHandler] Error getting active keystore:", error);
+            sendResponse({ success: false, error: (error as Error).message });
+        }
+    }
+
+    /**
+     * Portfolio for the popup: native + ERC-20 balances joined with fiat for the
+     * given (or current) EVM account/network. Best-effort — returns an error
+     * shape the popup can render instead of throwing.
+     */
+    private async handleGetPortfolioMessage(
+        message: any,
+        sendResponse: (response: any) => void,
+    ): Promise<void> {
+        try {
+            const net = NetworkService.getInstance();
+            const account: string =
+                message?.address ||
+                AccountService.getInstance().getCurrentAccount()?.address;
+            if (!account) {
+                sendResponse({ success: false, error: "No account selected" });
+                return;
+            }
+            const network = net.getCurrentNetwork("ethereum");
+            const chainId = network?.id;
+            if (!chainId) {
+                sendResponse({ success: false, error: "No EVM network selected" });
+                return;
+            }
+            const client = net.getPublicClient(network);
+            const symbol = (network as any)?.nativeCurrency?.symbol ?? "ETH";
+            const portfolio = await handleGetPortfolio(account, chainId, client, symbol);
+            sendResponse({ success: true, portfolio });
+        } catch (error) {
+            console.error("[PopupMessageHandler] getPortfolio failed:", error);
+            sendResponse({ success: false, error: (error as Error).message });
+        }
+    }
+
+    /** Activity feed for the given (or current) account, optional chain filter. */
+    private async handleGetActivityMessage(
+        message: any,
+        sendResponse: (response: any) => void,
+    ): Promise<void> {
+        try {
+            const account: string =
+                message?.address ||
+                AccountService.getInstance().getCurrentAccount()?.address;
+            if (!account) {
+                sendResponse({ success: false, error: "No account selected" });
+                return;
+            }
+            const activity = await handleGetActivity(account, message?.chainId);
+            sendResponse({ success: true, activity });
+        } catch (error) {
+            console.error("[PopupMessageHandler] getActivity failed:", error);
             sendResponse({ success: false, error: (error as Error).message });
         }
     }

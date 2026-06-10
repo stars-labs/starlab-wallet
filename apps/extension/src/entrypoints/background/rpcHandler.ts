@@ -140,8 +140,10 @@ export class RpcHandler {
                     return await this.handleSolanaConnect();
                 case 'solana_signBytes':
                     return await this.handleSolanaSignBytes(request.params as unknown[]);
-                case 'solana_sendRawTransaction':
-                    return await this.handleSolanaSendRawTransaction(request.params as unknown[]);
+                case 'solana_signTransaction':
+                    return await this.handleSolanaSignTransaction(request.params as unknown[]);
+                case 'solana_signAndSendTransaction':
+                    return await this.handleSolanaSignAndSendTransaction(request.params as unknown[]);
 
                 case 'eth_getTransactionCount':
                     return await this.handleGetTransactionCountRequest(request.params as unknown[]);
@@ -549,13 +551,32 @@ export class RpcHandler {
     }
 
     /**
-     * Solana wallet-standard: broadcast a fully-signed serialized tx to the
-     * current Solana network RPC. Params: [address, hexTx]. Returns the tx
-     * signature (base58). Used by `solana:signAndSendTransaction`.
+     * Solana wallet-standard: sign a serialized transaction. The background
+     * owns @solana/web3.js (kept off every page): deserialize → sign the
+     * compiled message via the gated FROST ed25519 ceremony → reattach the
+     * signature → re-serialize. Params: [address, hexTx]; returns hex(signed tx).
      */
-    private async handleSolanaSendRawTransaction(params: unknown[]): Promise<string> {
+    private async handleSolanaSignTransaction(params: unknown[]): Promise<string> {
+        const address = params[0] as string;
         const hexTx = params[1] as string;
-        const raw = this.hexToBytes(this.stripHex(hexTx));
+        const { PublicKey, VersionedTransaction } = await import('@solana/web3.js');
+        const tx = VersionedTransaction.deserialize(this.hexToBytes(this.stripHex(hexTx)));
+        const sigHex = await this.handleSolanaSignBytes([
+            address,
+            this.bytesToHex(tx.message.serialize()),
+        ]);
+        tx.addSignature(new PublicKey(address), this.hexToBytes(this.stripHex(sigHex)));
+        return this.bytesToHex(tx.serialize());
+    }
+
+    /**
+     * Solana wallet-standard: sign (as above) then broadcast to the current
+     * Solana network RPC. Params: [address, hexTx]; returns the tx signature
+     * (base58). Used by `solana:signAndSendTransaction`.
+     */
+    private async handleSolanaSignAndSendTransaction(params: unknown[]): Promise<string> {
+        const signedHex = await this.handleSolanaSignTransaction(params);
+        const raw = this.hexToBytes(this.stripHex(signedHex));
         const b64 = btoa(String.fromCharCode(...raw));
 
         const net = this.networkService?.getCurrentNetwork?.('solana');

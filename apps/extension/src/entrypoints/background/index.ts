@@ -187,6 +187,33 @@ function initializeComponents(): void {
         keepaliveController.onDkgStateChange(state);
     });
 
+    // Receipt-polling reconciler (#11): every 30s, flip pending activity
+    // entries to confirmed/failed once their receipt lands. clientFor maps a
+    // chainId to a viem public client via NetworkService; chains without a
+    // configured network are skipped. Best-effort — a failed poll just waits
+    // for the next tick. (Runs while the SW is alive; the keepalive above and
+    // normal event wakes give it ticks in practice.)
+    setInterval(() => {
+        void (async () => {
+            try {
+                const { ActivityService } = await import('../../services/activityService');
+                const NetworkService = (await import('../../services/networkService')).default;
+                const net = NetworkService.getInstance();
+                const changed = await ActivityService.getInstance().reconcileAllPending(
+                    (chainId) => {
+                        const network = net.getNetworkByChainId(chainId);
+                        return network ? (net.getPublicClient(network) as any) : undefined;
+                    },
+                );
+                if (changed > 0) {
+                    console.log(`[Background] activity reconciler: ${changed} tx finalized`);
+                }
+            } catch (e) {
+                console.warn('[Background] activity reconciler tick failed:', e);
+            }
+        })();
+    }, 30_000);
+
 //     console.log("✅ [Background] All components initialized successfully");
 }
 

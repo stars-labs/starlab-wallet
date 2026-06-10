@@ -126,6 +126,34 @@ export class ActivityService {
   }
 
   /**
+   * One reconciliation pass over EVERY pending tx in the store, across all
+   * accounts and chains. `clientFor` maps a chainId to a receipt-capable
+   * client (or undefined to skip that chain — e.g. no RPC configured).
+   * Returns how many entries changed status. Pure given `clientFor`, so the
+   * background's polling loop is just a timer around this call.
+   */
+  async reconcileAllPending(
+    clientFor: (
+      chainId: number,
+    ) => Pick<PublicClient, "getTransactionReceipt"> | undefined,
+  ): Promise<number> {
+    await this.ensureLoaded();
+    let changed = 0;
+    for (const account of Object.keys(this.byAccount)) {
+      const pending = this.byAccount[account].filter(
+        (x) => x.status === "pending",
+      );
+      for (const a of pending) {
+        const client = clientFor(a.chainId);
+        if (!client) continue;
+        const next = await this.reconcile(account, client, a.hash);
+        if (next !== "pending") changed++;
+      }
+    }
+    return changed;
+  }
+
+  /**
    * Poll a receipt for one pending tx and update its status. Returns the new
    * status, or "pending" if the receipt isn't available yet. Callers loop this
    * over `pending()` on a timer; kept here so the transition logic is tested.

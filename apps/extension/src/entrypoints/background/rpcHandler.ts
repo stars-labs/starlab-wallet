@@ -287,7 +287,12 @@ export class RpcHandler {
             ? this.yubiKeyManager?.getSignerByAddress(fromAddr)
             : undefined;
         if (txYubiSigner) {
-            return await this.signTransactionWithYubiKey(txYubiSigner, transaction);
+            const signed = await this.signTransactionWithYubiKey(txYubiSigner, transaction);
+            // eth_sendTransaction must BROADCAST and return the tx hash —
+            // returning the raw signed tx (old behaviour) left the tx
+            // off-chain and broke the dApp contract. Record it as pending
+            // activity; the background reconciler flips it on receipt.
+            return await this.broadcastAndRecord(signed as `0x${string}`, transaction, fromAddr!);
         }
 
         // Generate a unique transaction signing ID
@@ -871,11 +876,7 @@ export class RpcHandler {
         if (signer.curve !== 'secp256k1') {
             throw new Error('YubiKey account is not an EVM (secp256k1) key');
         }
-        const {
-            serializeTransaction,
-            keccak256,
-            toHex: toHexFn,
-        } = await import('viem');
+        const { serializeTransaction, keccak256 } = await import('viem');
 
         const network = this.networkService.getCurrentNetwork();
         const chainId = network?.id ?? 1;
@@ -910,17 +911,49 @@ export class RpcHandler {
         // Unsigned serialization → keccak256 → 32-byte signing digest.
         const unsigned = serializeTransaction(base);
         const digest = keccak256(unsigned);
-        const { r, s, recovery } = await signer.signSecp256k1(
-            this.hexToBytes(digest),
-        );
+        const sig = await signer.signSecp256k1(this.hexToBytes(digest));
 
-        const signed = serializeTransaction(base, {
-            r: (`0x${this.stripHex(r).padStart(64, '0')}`) as `0x${string}`,
-            s: (`0x${this.stripHex(s).padStart(64, '0')}`) as `0x${string}`,
-            // viem accepts yParity (0/1) directly; it derives v per tx type.
-            yParity: recovery,
-        });
-        return signed;
+        // assembleSignedEvmTx handles the per-type signature form (legacy
+        // needs v via EIP-155, typed txs take yParity) and is byte-for-byte
+        // verified against viem's own signer in its tests.
+        const { assembleSignedEvmTx } = await import('../../services/txBroadcast');
+        return assembleSignedEvmTx(base, sig);
+    }
+
+    /**
+     * Broadcast a signed raw tx on the current EVM network, record it as a
+     * pending activity for `from`, and return the tx hash (the value
+     * eth_sendTransaction owes the caller). Recording is best-effort — a
+     * storage hiccup must not turn a successful broadcast into an RPC error.
+     */
+    private async broadcastAndRecord(
+        signedTxHex: `0x${string}`,
+        transaction: any,
+        from: string,
+    ): Promise<string> {
+        const network = this.networkService.getCurrentNetwork();
+        const rpcUrl = (network as any)?.rpcUrls?.default?.http?.[0];
+        if (!rpcUrl) throw new Error('No EVM RPC configured for broadcast');
+
+        const { broadcastRawTx } = await import('../../services/txBroadcast');
+        const hash = await broadcastRawTx(rpcUrl, signedTxHex);
+
+        try {
+            const { ActivityService } = await import('../../services/activityService');
+            const isContract =
+                typeof transaction.data === 'string' && transaction.data !== '0x' && transaction.data !== '';
+            await ActivityService.getInstance().record(from, {
+                hash,
+                chainId: network?.id ?? 1,
+                from,
+                to: transaction.to ?? '',
+                value: transaction.value ? BigInt(transaction.value).toString() : '0',
+                kind: isContract ? 'contract' : 'send',
+            });
+        } catch (e) {
+            console.warn('[RpcHandler] failed to record activity for', hash, e);
+        }
+        return hash;
     }
 
     private stripHex(hex: string): string {

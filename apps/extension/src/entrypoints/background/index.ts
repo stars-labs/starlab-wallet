@@ -27,6 +27,7 @@ import { WebSocketClient } from "./websocket";
 // Import modular components
 import { SessionManager } from './sessionManager';
 import { RpcHandler, UIRequestHandler } from './rpcHandler';
+import { setupActivityReconciler } from './activityReconciler';
 import { OffscreenManager } from './offscreenManager';
 import { WebSocketManager } from './webSocketManager';
 import { SigningNotifier } from './signingNotification';
@@ -214,31 +215,10 @@ function initializeComponents(): void {
     }, 60_000);
 
     // Receipt-polling reconciler (#11): every 30s, flip pending activity
-    // entries to confirmed/failed once their receipt lands. clientFor maps a
-    // chainId to a viem public client via NetworkService; chains without a
-    // configured network are skipped. Best-effort — a failed poll just waits
-    // for the next tick. (Runs while the SW is alive; the keepalive above and
-    // normal event wakes give it ticks in practice.)
-    setInterval(() => {
-        void (async () => {
-            try {
-                const { ActivityService } = await import('../../services/activityService');
-                const NetworkService = (await import('../../services/networkService')).default;
-                const net = NetworkService.getInstance();
-                const changed = await ActivityService.getInstance().reconcileAllPending(
-                    (chainId) => {
-                        const network = net.getNetworkByChainId(chainId);
-                        return network ? (net.getPublicClient(network) as any) : undefined;
-                    },
-                );
-                if (changed > 0) {
-                    console.log(`[Background] activity reconciler: ${changed} tx finalized`);
-                }
-            } catch (e) {
-                console.warn('[Background] activity reconciler tick failed:', e);
-            }
-        })();
-    }, 30_000);
+    // entries to confirmed/failed once their receipt lands. chrome.alarms,
+    // not setInterval — MV3 kills the SW (and its timers) after ~30s idle;
+    // the alarm survives and re-wakes the worker for the next tick.
+    setupActivityReconciler();
 
 //     console.log("✅ [Background] All components initialized successfully");
 }

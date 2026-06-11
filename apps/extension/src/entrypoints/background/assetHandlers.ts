@@ -152,3 +152,39 @@ export async function handleGetPortfolio(
 export async function handleGetActivity(account: string, chainId?: number) {
   return ActivityService.getInstance().list(account, chainId);
 }
+
+/** What the popup must supply to record a broadcast send (#11). */
+export interface RecordSendInput {
+  hash: string;
+  chainId: number;
+  from: string;
+  to: string;
+  /** Wei, decimal string (bigint-safe). */
+  value: string;
+  kind: "send" | "token-transfer" | "contract";
+  tokenAddress?: string;
+}
+
+/**
+ * Record a freshly broadcast tx as `pending` (popup SendForm path, #11).
+ * Validates the hash up front — a garbage hash would sit "pending" forever
+ * because no receipt can ever match it. Idempotent with the dApp-path record
+ * in RpcHandler.broadcastAndRecord (ActivityService dedupes by chainId+hash).
+ */
+export async function handleRecordActivity(account: string, tx: RecordSendInput) {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(tx.hash)) {
+    throw new Error(`Invalid transaction hash: ${tx.hash}`);
+  }
+  if (!Number.isInteger(tx.chainId) || tx.chainId <= 0) {
+    throw new Error(`Invalid chainId: ${tx.chainId}`);
+  }
+  return ActivityService.getInstance().record(account, {
+    hash: tx.hash,
+    chainId: tx.chainId,
+    from: tx.from,
+    to: tx.to,
+    value: tx.value ?? "0",
+    kind: tx.kind ?? "send",
+    ...(tx.tokenAddress ? { tokenAddress: tx.tokenAddress } : {}),
+  });
+}

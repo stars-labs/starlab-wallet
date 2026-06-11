@@ -36,7 +36,9 @@ export default defineConfig({
     // "com.yubiwallet.host")`) to discover on-card accounts and
     // delegate ECDSA/EdDSA signing to the YubiKey. The host must be
     // installed separately — see integration/native-messaging/README.md.
-    permissions: ['storage', 'tabs', 'activeTab', 'offscreen', 'notifications', 'nativeMessaging'],
+    // `alarms` drives the receipt-polling activity reconciler (#11) —
+    // MV3 SW timers die with the worker; alarms survive and re-wake it.
+    permissions: ['storage', 'tabs', 'activeTab', 'offscreen', 'notifications', 'nativeMessaging', 'alarms'],
     host_permissions: [
       'https://*/*',
       // The signal server (matches TUI's `model.rs` websocket_url).

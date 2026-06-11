@@ -139,6 +139,9 @@
             asset: asset.symbol,
             amount,
             to: review.resolvedTo,
+            // ERC-20 contract for token sends (undefined ⇒ native), so the
+            // parent can record the activity with the right kind (#11).
+            tokenAddress: asset.address,
         });
     }
 

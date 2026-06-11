@@ -1,7 +1,12 @@
 <script lang="ts">
     // Transaction activity feed, fetched from the background (getActivity →
     // ActivityService). Newest first; status badge per tx.
-    import { onMount } from "svelte";
+    //
+    // Status flips live (#11) two ways: the background reconciler broadcasts
+    // `activityChanged` when a receipt lands (instant when the popup is open),
+    // and a light poll re-fetches while any row is still pending (covers a
+    // broadcast lost to popup-open races).
+    import { onMount, onDestroy } from "svelte";
 
     export let address: string | undefined = undefined;
 
@@ -17,7 +22,9 @@
     }[] = [];
 
     async function load() {
-        loading = true;
+        // Only show the loading state when there's nothing on screen yet —
+        // background refreshes (poll / activityChanged) swap data in place.
+        loading = items.length === 0;
         error = "";
         try {
             const res = await chrome.runtime.sendMessage({ type: "getActivity", address });
@@ -41,7 +48,23 @@
         }
     }
 
-    onMount(load);
+    const PENDING_POLL_MS = 15_000;
+    let pollTimer: ReturnType<typeof setInterval> | undefined;
+    function onRuntimeMessage(message: any) {
+        if (message?.type === "activityChanged") load();
+    }
+
+    onMount(() => {
+        load();
+        chrome.runtime.onMessage.addListener(onRuntimeMessage);
+        pollTimer = setInterval(() => {
+            if (items.some((a) => a.status === "pending")) load();
+        }, PENDING_POLL_MS);
+    });
+    onDestroy(() => {
+        chrome.runtime.onMessage.removeListener(onRuntimeMessage);
+        if (pollTimer) clearInterval(pollTimer);
+    });
 </script>
 
 <div class="activity">

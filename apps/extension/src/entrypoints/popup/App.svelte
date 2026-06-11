@@ -149,7 +149,7 @@
         loadHeroFiat(appState.dkgAddress);
     }
     async function handleSendSubmit(e: CustomEvent) {
-        const { tx, asset, amount, to } = e.detail;
+        const { tx, asset, amount, to, tokenAddress } = e.detail;
         sendStatus = "Submitting…";
         try {
             const res = await chrome.runtime.sendMessage({
@@ -167,10 +167,34 @@
                 // Hardware path broadcasts and returns the tx hash — show it
                 // so the user can match the pending entry in the activity feed.
                 const hash = typeof res?.result === "string" ? res.result : "";
-                sendStatus =
-                    hash.startsWith("0x") && hash.length === 66
-                        ? `Submitted ${amount} ${asset} → ${to.slice(0, 8)}… (tx ${hash.slice(0, 10)}…)`
-                        : `Sent ${amount} ${asset} → ${to.slice(0, 8)}…`;
+                const broadcast = hash.startsWith("0x") && hash.length === 66;
+                if (broadcast) {
+                    // Record the send as pending activity (#11) under the
+                    // signing account, with the exact broadcast fields. Best
+                    // effort: the background dedupes by (chainId, hash), and
+                    // a record failure must not look like a failed send.
+                    try {
+                        await chrome.runtime.sendMessage({
+                            type: "recordActivity",
+                            address: displayAddress,
+                            activity: {
+                                hash,
+                                chainId: currentEvmNetworkId ?? 1,
+                                from: tx.from ?? displayAddress,
+                                to: tx.to,
+                                value: tx.value ? BigInt(tx.value).toString() : "0",
+                                kind: tokenAddress ? "token-transfer" : "send",
+                                tokenAddress,
+                            },
+                        });
+                        refreshWalletData(); // remount the feed so the pending row shows now
+                    } catch (recErr) {
+                        console.warn("[UI] recordActivity failed:", recErr);
+                    }
+                }
+                sendStatus = broadcast
+                    ? `Submitted ${amount} ${asset} → ${to.slice(0, 8)}… (tx ${hash.slice(0, 10)}…)`
+                    : `Sent ${amount} ${asset} → ${to.slice(0, 8)}…`;
                 showSend = false;
             }
         } catch (err) {

@@ -24,7 +24,7 @@ import { RpcHandler, UIRequestHandler } from "./rpcHandler";
 import AccountService from "../../services/accountService";
 import NetworkService from "../../services/networkService";
 import { KeystoreManager } from "../../services/keystoreManager";
-import { handleGetPortfolio, handleGetActivity } from "./assetHandlers";
+import { handleGetPortfolio, handleGetActivity, handleRecordActivity } from "./assetHandlers";
 import { DkgState } from "@stars-labs/types/dkg";
 
 /**
@@ -306,6 +306,10 @@ export class PopupMessageHandler {
 
                 case "getActivity":
                     await this.handleGetActivityMessage(message, sendResponse);
+                    break;
+
+                case "recordActivity":
+                    await this.handleRecordActivityMessage(message, sendResponse);
                     break;
 
                 default:
@@ -1693,6 +1697,32 @@ export class PopupMessageHandler {
             sendResponse({ success: true, activity });
         } catch (error) {
             console.error("[PopupMessageHandler] getActivity failed:", error);
+            sendResponse({ success: false, error: (error as Error).message });
+        }
+    }
+
+    /**
+     * Record a broadcast send as pending activity (#11) — the popup
+     * SendForm path. The dApp path records inside RpcHandler at broadcast
+     * time; this covers sends the popup initiated, keyed to the account it
+     * actually signed with (BIP-44 account 0 / displayAddress).
+     */
+    private async handleRecordActivityMessage(
+        message: any,
+        sendResponse: (response: any) => void,
+    ): Promise<void> {
+        try {
+            const account: string =
+                message?.address ||
+                AccountService.getInstance().getCurrentAccount()?.address;
+            if (!account) {
+                sendResponse({ success: false, error: "No account selected" });
+                return;
+            }
+            const entry = await handleRecordActivity(account, message?.activity);
+            sendResponse({ success: true, activity: entry });
+        } catch (error) {
+            console.error("[PopupMessageHandler] recordActivity failed:", error);
             sendResponse({ success: false, error: (error as Error).message });
         }
     }

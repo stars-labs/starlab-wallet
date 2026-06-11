@@ -20,6 +20,10 @@ export default defineConfig({
     // a modern MV3 runtime, so the lower targets bought us nothing.
     build: {
       target: 'esnext',
+      // ANALYZE=1 bun run build → emit sourcemaps so bundle attribution
+      // tools (source-map-explorer etc.) can break chunks down per module.
+      // Off by default: maps roughly double output size and slow the build.
+      sourcemap: !!process.env.ANALYZE,
     },
   }),
   manifest: {

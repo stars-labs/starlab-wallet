@@ -1940,8 +1940,7 @@
         {#if canSign && appState.dkgState === DkgState.Complete && appState.dkgAddress}
             {#if showSend}
                 <div class="card card-pad">
-                    <SendForm
-                        from={appState.dkgAddress}
+                    <SendForm                        from={displayAddress}
                         on:submit={handleSendSubmit}
                         on:cancel={() => (showSend = false)}
                     />
@@ -1956,8 +1955,10 @@
                     <button
                         class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
                         on:click={() => { showSend = true; sendStatus = ""; }}
-                        disabled={true}
-                        title="Account-key signing wires in next — sends are momentarily disabled (BIP-44 cutover)"
+                        disabled={selectedAccount !== 0}
+                        title={selectedAccount === 0
+                            ? "Send"
+                            : "Signing currently pins to Account 0 — per-session account selection ships next"}
                     >Send</button>
                     <button
                         class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"

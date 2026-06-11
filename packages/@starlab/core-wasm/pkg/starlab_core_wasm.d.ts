@@ -250,6 +250,13 @@ export class WasmError {
 }
 
 /**
+ * Account `i`'s addresses for one curve's group key — PUBLIC derivation
+ * only (no key share, no password). Returns JSON:
+ * `[{"chain":"Ethereum","path":"m/44'/...","address":"0x…"}, …]`.
+ */
+export function derive_account_addresses(curve: string, group_public_key_hex: string, account: number): string;
+
+/**
  * Derive a child keystore at a BIP-44 path (e.g. "m/44'/60'/0'/0/1").
  * Deterministic across participants (chain code comes from the group
  * key), so every device derives the SAME child account. The output is
@@ -269,6 +276,13 @@ export function derive_child_keystore_secp256k1(keystore_json: string, path: str
 
 export function main(): void;
 
+/**
+ * The pinned standard derivation path for a chain + account index
+ * (ETH m/44'/60'/0'/0/i, BTC m/84'/0'/0'/0/i, SOL m/44'/501'/i'/0',
+ * Sui m/44'/784'/i'/0'/0'). Returns null for unknown chains.
+ */
+export function standard_account_path(chain: string, account: number): string | undefined;
+
 export function start(): void;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
@@ -282,6 +296,7 @@ export interface InitOutput {
     readonly __wbg_frostreshareed25519_free: (a: number, b: number) => void;
     readonly __wbg_frostresharesecp256k1_free: (a: number, b: number) => void;
     readonly __wbg_wasmerror_free: (a: number, b: number) => void;
+    readonly derive_account_addresses: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly derive_child_keystore_ed25519: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly derive_child_keystore_secp256k1: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly frostdkged25519_add_round1_package: (a: number, b: number, c: number, d: number) => [number, number];
@@ -383,6 +398,7 @@ export interface InitOutput {
     readonly frostresharesecp256k1_reshare_round1: (a: number) => [number, number, number, number];
     readonly frostresharesecp256k1_reshare_round2: (a: number) => [number, number, number, number];
     readonly main: () => void;
+    readonly standard_account_path: (a: number, b: number, c: number) => [number, number];
     readonly wasmerror_message: (a: number) => [number, number];
     readonly wasmerror_new: (a: number, b: number) => number;
     readonly frostdkgsecp256k1tr_is_dkg_complete: (a: number) => number;

@@ -4,7 +4,7 @@ import type { WebRTCAppMessage } from "@stars-labs/types/webrtc";
 import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from "@stars-labs/types/websocket";
 
 // Import WASM modules for FROST DKG
-import wasmInit, { FrostDkgEd25519, FrostDkgSecp256k1 } from '@stars-labs/core-wasm';
+import wasmInit, { FrostDkgEd25519, FrostDkgSecp256k1, derive_account_addresses } from '@stars-labs/core-wasm';
 
 console.log("Offscreen script loaded.");
 
@@ -914,6 +914,29 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
             
             // Return true to indicate async response
             return true;
+
+        case "deriveAccounts": {
+            // Account model: PUBLIC-only derivation (no password, no shares).
+            // One wasm call per account; the engine guarantees byte-identical
+            // addresses across CLI / desktop / extension.
+            try {
+                const { curve, groupPublicKey, count } = payload as {
+                    curve: string;
+                    groupPublicKey: string;
+                    count: number;
+                };
+                const accounts: { account: number; addresses: { chain: string; path: string; address: string }[] }[] = [];
+                const n = Math.min(Math.max(count ?? 5, 1), 50);
+                for (let i = 0; i < n; i++) {
+                    const json = derive_account_addresses(curve, groupPublicKey, i);
+                    accounts.push({ account: i, addresses: JSON.parse(json) });
+                }
+                sendResponse({ success: true, accounts });
+            } catch (e) {
+                sendResponse({ success: false, error: (e as Error).message });
+            }
+            return false;
+        }
 
         case "exportKeystore":
             console.log("Offscreen: Received 'exportKeystore' command", payload);

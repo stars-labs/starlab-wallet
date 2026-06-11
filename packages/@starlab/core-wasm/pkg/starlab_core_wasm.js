@@ -1702,6 +1702,38 @@ export class WasmError {
 if (Symbol.dispose) WasmError.prototype[Symbol.dispose] = WasmError.prototype.free;
 
 /**
+ * Account `i`'s addresses for one curve's group key — PUBLIC derivation
+ * only (no key share, no password). Returns JSON:
+ * `[{"chain":"Ethereum","path":"m/44'/...","address":"0x…"}, …]`.
+ * @param {string} curve
+ * @param {string} group_public_key_hex
+ * @param {number} account
+ * @returns {string}
+ */
+export function derive_account_addresses(curve, group_public_key_hex, account) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(curve, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(group_public_key_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.derive_account_addresses(ptr0, len0, ptr1, len1, account);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Derive a child keystore at a BIP-44 path (e.g. "m/44'/60'/0'/0/1").
  * Deterministic across participants (chain code comes from the group
  * key), so every device derives the SAME child account. The output is
@@ -1769,6 +1801,26 @@ export function derive_child_keystore_secp256k1(keystore_json, path) {
 
 export function main() {
     wasm.main();
+}
+
+/**
+ * The pinned standard derivation path for a chain + account index
+ * (ETH m/44'/60'/0'/0/i, BTC m/84'/0'/0'/0/i, SOL m/44'/501'/i'/0',
+ * Sui m/44'/784'/i'/0'/0'). Returns null for unknown chains.
+ * @param {string} chain
+ * @param {number} account
+ * @returns {string | undefined}
+ */
+export function standard_account_path(chain, account) {
+    const ptr0 = passStringToWasm0(chain, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.standard_account_path(ptr0, len0, account);
+    let v2;
+    if (ret[0] !== 0) {
+        v2 = getStringFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    }
+    return v2;
 }
 
 export function start() {

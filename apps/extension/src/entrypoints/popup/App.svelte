@@ -28,6 +28,7 @@
     import TokenList from "./components/TokenList.svelte";
     import ActivityFeed from "./components/ActivityFeed.svelte";
     import NftGallery from "./components/NftGallery.svelte";
+    import AccountPicker from "./components/AccountPicker.svelte";
     import Onboarding from "./components/Onboarding.svelte";
     import SendForm from "./components/SendForm.svelte";
     import ReceiveCard from "./components/ReceiveCard.svelte";
@@ -107,6 +108,23 @@
         }
     }
     onMount(loadNetworkChoices);
+
+    // Account model (BIP-44 all the way): account 0 is the identity; the
+    // root group key is derivation-parent only and never shown.
+    let selectedAccount = 0;
+    let accountAddresses: { chain: string; path: string; address: string }[] = [];
+    function onAccountSelect(e: CustomEvent) {
+        selectedAccount = e.detail.account;
+        accountAddresses = e.detail.addresses;
+        refreshWalletData(); // remount balance/activity panels for the new address
+    }
+    // The address every panel shows: the selected account's address on the
+    // current chain. Falls back to the group-key address ONLY while the
+    // first derivation is still in flight (never user-selectable).
+    $: displayAddress =
+        accountAddresses.find(
+            (a) => a.chain.toLowerCase() === (appState.chain || "ethereum"),
+        )?.address ?? accountAddresses[0]?.address ?? appState.dkgAddress;
 
     // Onboarding wizard dismissal (#26) — session-scoped; the wizard also
     // disappears permanently once a wallet exists.
@@ -1785,10 +1803,18 @@
         {#if appState.dkgState === DkgState.Complete && appState.dkgAddress}
             <div class="hero">
                 <div class="relative flex items-center justify-between">
-                    <span
-                        class="text-xs font-semibold uppercase tracking-wide text-white/80"
-                    >
-                        {chainLabel(appState.chain)}
+                    <span class="flex items-center gap-2">
+                        <span
+                            class="text-xs font-semibold uppercase tracking-wide text-white/80"
+                        >
+                            {chainLabel(appState.chain)}
+                        </span>
+                        <AccountPicker
+                            groupPublicKey={appState.dkgGroupPublicKey}
+                            curve={appState.curve}
+                            selected={selectedAccount}
+                            on:select={onAccountSelect}
+                        />
                     </span>
                     {#if appState.sessionInfo}
                         <span
@@ -1807,11 +1833,11 @@
                 {/if}
                 <button
                     class="relative mt-3 flex items-center gap-2"
-                    on:click={() => copyAddress(appState.dkgAddress)}
+                    on:click={() => copyAddress(displayAddress)}
                     title="Copy address"
                 >
                     <span class="mono text-lg font-semibold tracking-tight">
-                        {shortAddr(appState.dkgAddress)}
+                        {shortAddr(displayAddress)}
                     </span>
                     <Icon name={addrCopied ? "check" : "copy"} size={15} />
                 </button>
@@ -1922,7 +1948,7 @@
                 </div>
             {:else if showReceive}
                 <div class="card card-pad">
-                    <ReceiveCard address={appState.dkgAddress} />
+                    <ReceiveCard address={displayAddress} />
                     <button class="btn-ghost mt-2 w-full" on:click={() => (showReceive = false)}>Close</button>
                 </div>
             {:else}
@@ -1930,6 +1956,8 @@
                     <button
                         class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
                         on:click={() => { showSend = true; sendStatus = ""; }}
+                        disabled={true}
+                        title="Account-key signing wires in next — sends are momentarily disabled (BIP-44 cutover)"
                     >Send</button>
                     <button
                         class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
@@ -1941,13 +1969,13 @@
                 {/if}
                 {#key dataEpoch}
                     <div class="card card-pad">
-                        <TokenList address={appState.dkgAddress} />
+                        <TokenList address={displayAddress} />
                     </div>
                     <div class="card card-pad">
-                        <ActivityFeed address={appState.dkgAddress} />
+                        <ActivityFeed address={displayAddress} />
                     </div>
                     <div class="card card-pad">
-                        <NftGallery address={appState.dkgAddress} />
+                        <NftGallery address={displayAddress} />
                     </div>
                 {/key}
             {/if}

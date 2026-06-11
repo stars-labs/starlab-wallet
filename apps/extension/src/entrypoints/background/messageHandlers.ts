@@ -282,6 +282,24 @@ export class PopupMessageHandler {
                     await this.handleGetActiveKeystoreMessage(sendResponse);
                     break;
 
+                case "deriveAccounts": {
+                    // Account model: pure pass-through to the offscreen wasm
+                    // (public derivation — no password involved anywhere).
+                    try {
+                        await this.offscreenManager.createOffscreenDocument();
+                        const resp = await this.offscreenManager.sendToOffscreen({
+                            type: "deriveAccounts",
+                            curve: (message as any).curve,
+                            groupPublicKey: (message as any).groupPublicKey,
+                            count: (message as any).count ?? 5,
+                        } as any);
+                        sendResponse(resp ?? { success: false, error: "no offscreen response" });
+                    } catch (e) {
+                        sendResponse({ success: false, error: (e as Error).message });
+                    }
+                    break;
+                }
+
                 case "getPortfolio":
                     await this.handleGetPortfolioMessage(message, sendResponse);
                     break;

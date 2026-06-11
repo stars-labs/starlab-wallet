@@ -647,8 +647,3 @@ export class KeystoreService {
         );
     }
 }
-
-// Export singleton getter
-export const getKeystoreService = (): KeystoreService => {
-    return KeystoreService.getInstance();
-};

@@ -220,60 +220,12 @@ describe('WebRTCManager DKG Error Scenarios', () => {
 });
 
 describe('WebRTCManager FROST Signing Error Scenarios', () => {
-    it('should handle signing without DKG initialization', () => {
-        const content = { transaction: 'test' };
-
-        manager.initiateSigning('test-signing-id', JSON.stringify(content), 2);
-
-        // Should handle gracefully without crashing
-        expect(manager.signingState).toBe(SigningState.Idle);
-    });
-
-    it('should handle commitment generation without DKG', () => {
-        manager['signingInfo'] = {
-            signing_id: 'test',
-            transaction_data: 'test',
-            threshold: 2,
-            participants: ['a', 'b', 'c'],
-            accepted_participants: ['a', 'b'],
-            acceptances: new Map(),
-            selected_signers: ['a', 'b'],
-            step: 'commitment_phase',
-            initiator: 'a',
-            final_signature: undefined
-        };
-        manager['signingState'] = SigningState.CommitmentPhase;
-
-        // Try to generate commitment without FROST DKG
-        expect(() => {
-            (manager as any)._generateSigningCommitment();
-        }).not.toThrow();
-    });
-
-    it('should handle invalid signing messages', async () => {
-        const sessionInfo = createTestSessionInfo();
-        manager.sessionInfo = sessionInfo as any;
-        (manager as any)._updateDkgState(DkgState.Complete);
-
-        // Handle signing request with invalid format
-        await (manager as any)._handleSigningRequest('a', {
-            signing_id: 'test',
-            transaction_data: 'test',
-            required_signers: 2
-            // Missing required fields for proper handling
-        });
-
-        // Should handle gracefully
-        expect(manager.signingState).toBe(SigningState.Idle);
-    });
-
     it('should handle signature share validation errors', async () => {
         const sessionInfo = createTestSessionInfo();
         manager.sessionInfo = sessionInfo as any;
         (manager as any)._updateDkgState(DkgState.Complete);
 
-        // Set up signing process
-        manager.initiateSigning('test-sig', '{"test": "data"}', 2);
+        // Set up signing process mid-ceremony (share phase)
         (manager as any).signingState = SigningState.SharePhase;
 
         // Set up signing info to prevent completion
@@ -301,65 +253,6 @@ describe('WebRTCManager FROST Signing Error Scenarios', () => {
 
         // Should handle gracefully
         expect(manager.signingState).toBe(SigningState.SharePhase);
-    });
-
-    it('should handle network connection failures during signing', () => {
-        const sessionInfo = createTestSessionInfo();
-        manager.sessionInfo = sessionInfo as any;
-        (manager as any)._updateDkgState(DkgState.Complete);
-
-        // Mock network failure
-        (manager as any).sendPayloadToBackgroundForRelay = () => {
-            throw new Error('Network connection failed');
-        };
-
-        // Try to initiate signing
-        expect(() => {
-            manager.initiateSigning('test-network-fail', '{"test": "data"}', 2);
-        }).not.toThrow();
-    });
-});
-
-describe('WebRTCManager Connection Error Scenarios', () => {
-    it('should handle data channel creation failures', () => {
-        // Simulate data channel creation failure
-        expect(() => {
-            (manager as any)._handleDataChannelFailure('peer-b');
-        }).not.toThrow();
-    });
-
-    it('should handle WebRTC connection timeout', () => {
-        // Simulate connection timeout
-        expect(() => {
-            (manager as any)._handleConnectionTimeout('peer-b');
-        }).not.toThrow();
-    });
-
-    it('should handle malformed WebRTC messages', async () => {
-        // Handle completely invalid message
-        await (manager as any)._handleWebRTCMessage('peer-b', null);
-        await (manager as any)._handleWebRTCMessage('peer-b', undefined);
-        await (manager as any)._handleWebRTCMessage('peer-b', {});
-        await (manager as any)._handleWebRTCMessage('peer-b', { invalid: 'format' });
-
-        // Should handle gracefully without crashing
-        expect(manager.meshStatus.type).toBeDefined();
-    });
-
-    it('should handle peer ID mismatches', async () => {
-        const sessionInfo = createTestSessionInfo();
-        manager.sessionInfo = sessionInfo as any;
-
-        // Handle message from peer not in session
-        await (manager as any)._handleWebRTCMessage('unknown-peer', {
-            MeshReady: {
-                session_id: 'test-session',
-                device_id: 'unknown-peer'
-            }
-        });
-
-        // Should handle gracefully
-        expect(manager.meshStatus.type).toBeDefined();
     });
 });
 

@@ -1868,7 +1868,7 @@
                 <div class="relative mt-3 flex gap-2">
                     <button
                         class="rounded-lg bg-white/20 px-2.5 py-1.5 text-xs font-semibold text-white backdrop-blur transition hover:bg-white/30"
-                        on:click={() => copyAddress(appState.dkgAddress)}
+                        on:click={() => copyAddress(displayAddress)}
                     >
                         {addrCopied ? "Copied" : "Copy address"}
                     </button>
@@ -1964,7 +1964,8 @@
         {#if canSign && appState.dkgState === DkgState.Complete && appState.dkgAddress}
             {#if showSend}
                 <div class="card card-pad">
-                    <SendForm                        from={displayAddress}
+                    <SendForm
+                        from={displayAddress}
                         on:submit={handleSendSubmit}
                         on:cancel={() => (showSend = false)}
                     />

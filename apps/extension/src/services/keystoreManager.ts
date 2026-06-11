@@ -478,8 +478,3 @@ export class KeystoreManager {
         return migratedCount;
     }
 }
-
-// Export singleton getter
-export const getKeystoreManager = (): KeystoreManager => {
-    return KeystoreManager.getInstance();
-};

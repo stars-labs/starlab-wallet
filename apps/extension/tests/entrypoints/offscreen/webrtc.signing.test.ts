@@ -1,5 +1,5 @@
-import { describe, it, test, expect, beforeAll, beforeEach, afterEach, afterAll, jest } from 'bun:test';
-import { DkgState, WebRTCManager, SigningState } from '../../../src/entrypoints/offscreen/webrtc';
+import { describe, it, expect, beforeAll, afterAll, jest } from 'bun:test';
+import { DkgState, WebRTCManager } from '../../../src/entrypoints/offscreen/webrtc';
 import {
     initializeWasmIfNeeded,
     isWasmInitialized,
@@ -17,12 +17,12 @@ let originalConsoleWarn: any;
 
 beforeAll(async () => {
     await initializeWasmIfNeeded();
-    
+
     // Suppress console output for cleaner test results
     originalConsoleLog = console.log;
     originalConsoleError = console.error;
     originalConsoleWarn = console.warn;
-    
+
     console.log = jest.fn();
     console.error = jest.fn();
     console.warn = jest.fn();
@@ -35,51 +35,28 @@ afterAll(() => {
     console.warn = originalConsoleWarn;
 });
 
+/**
+ * Mid-ceremony signing bookkeeping, as set up by initiateSigningCeremony
+ * (the production sessionReadyForSigning path). The legacy
+ * SigningRequest/acceptance handshake was deleted — every co-signer now
+ * derives the same signingInfo deterministically from the session announce.
+ */
+function makeSigningInfo(signingId: string, transactionData: string) {
+    return {
+        signing_id: signingId,
+        transaction_data: transactionData,
+        threshold: 2,
+        participants: ['a', 'b', 'c'],
+        acceptances: new Map<string, boolean>(),
+        accepted_participants: ['a', 'b'],
+        selected_signers: ['a', 'b'],
+        step: 'commitment_phase' as const,
+        initiator: 'a',
+    };
+}
+
 describe('WebRTCManager FROST Signing Process', () => {
     const sessionInfo = createTestSessionInfo();
-
-    it('should handle signing request initiation', async () => {
-        const manager = new WebRTCManager('a', dummySend);
-        manager.sessionInfo = sessionInfo as any;
-        (manager as any)._updateDkgState(DkgState.Complete);
-
-        // Mock a completed DKG state
-        (manager as any).groupPublicKey = 'mock-group-public-key';
-        (manager as any).solanaAddress = 'mock-solana-address';
-
-        const signingId = 'test-signing-123';
-        const transactionData = '{"transaction": "test-data", "amount": 100}';
-
-        // Initiate signing
-        manager.initiateSigning(signingId, transactionData, 2);
-
-        expect(manager.signingState).toBe(SigningState.AwaitingAcceptances);
-        expect(manager.signingInfo).toBeDefined();
-        expect(manager.signingInfo!.signing_id).toBe(signingId);
-        expect(manager.signingInfo!.transaction_data).toBe(transactionData);
-        expect(manager.signingInfo!.threshold).toBe(2);
-    });
-
-    it('should handle signing acceptance from peers', async () => {
-        const manager = new WebRTCManager('a', dummySend);
-        manager.sessionInfo = sessionInfo as any;
-        (manager as any)._updateDkgState(DkgState.Complete);
-
-        // Set up signing request
-        const signingId = 'test-signing-acceptance';
-        manager.initiateSigning(signingId, '{"test": "data"}', 2);
-
-        // Simulate acceptance from peer 'b'
-        await (manager as any)._handleSigningAcceptance('b', {
-            signing_id: signingId,
-            accepted: true
-        });
-
-        expect(manager.signingInfo!.acceptances.has('b')).toBe(true);
-        expect(manager.signingInfo!.acceptances.get('b')).toBe(true);
-    });
-
-    // Removed failing test: should handle signer selection and transition to commitment phase
 
     it('should complete full FROST signing process with real cryptography', async () => {
         if (!isWasmInitialized()) {
@@ -145,57 +122,24 @@ describe('WebRTCManager FROST Signing Process', () => {
             const signingId = 'complete-flow-test';
             const transactionData = '{"transaction": "complete-flow-test-data", "amount": 1000, "recipient": "recipient-address"}';
 
-            // Step 1: Initiate signing request
-            managerA.initiateSigning(signingId, transactionData, 2);
-            await (managerB as any)._handleSigningRequest('a', {
-                webrtc_msg_type: 'SigningRequest',
-                signing_id: signingId,
-                transaction_data: transactionData,
-                threshold: 2,
-                participants: ['a', 'b', 'c']
-            });
+            // Mid-ceremony state for both signers (commitment phase).
+            (managerA as any).signingInfo = makeSigningInfo(signingId, transactionData);
+            (managerB as any).signingInfo = makeSigningInfo(signingId, transactionData);
 
-            // Step 2: Acceptances
-            await (managerA as any)._handleSigningAcceptance('b', {
-                webrtc_msg_type: 'SigningAcceptance',
-                signing_id: signingId,
-                accepted: true
-            });
-            await (managerB as any)._handleSigningAcceptance('a', {
-                webrtc_msg_type: 'SigningAcceptance',
-                signing_id: signingId,
-                accepted: true
-            });
-
-            // Step 3: Signer selection
-            const signerSelection = {
-                webrtc_msg_type: 'SignerSelection' as const,
-                signing_id: signingId,
-                selected_signers: ['a', 'b']
-            };
-            await (managerA as any)._handleSignerSelection('a', signerSelection);
-            await (managerB as any)._handleSignerSelection('a', signerSelection);
-
-            // Step 4: Commitment phase (using real FROST DKG)
+            // Round 1: commitments (using real FROST DKG)
             const commitmentHexA = frostDkgA.signing_commit();
             const commitmentHexB = frostDkgB.signing_commit();
 
-            const commitmentA = {
+            // Real handlers expect the commitment payload as a hex string.
+            await (managerA as any)._handleSigningCommitment('b', {
                 webrtc_msg_type: 'SigningCommitment' as const,
                 signing_id: signingId,
-                commitment: { nonce: 'real-commitment-A', data: commitmentHexA }
-            };
-            const commitmentB = {
-                webrtc_msg_type: 'SigningCommitment' as const,
-                signing_id: signingId,
-                commitment: { nonce: 'real-commitment-B', data: commitmentHexB }
-            };
+                commitment: commitmentHexB
+            });
 
-            await (managerA as any)._handleSigningCommitment('b', commitmentB);
-            await (managerB as any)._handleSigningCommitment('a', commitmentA);
+            // managerA registered b's commitment under FROST index 2.
+            expect((managerA as any).signingCommitments.has('b')).toBe(true);
 
-            // Step 5: Signature share phase (using real FROST DKG)
-            frostDkgA.add_signing_commitment(2, commitmentHexB);
             frostDkgB.add_signing_commitment(1, commitmentHexA);
 
             // Convert transaction data to hex for FROST signing
@@ -203,120 +147,32 @@ describe('WebRTCManager FROST Signing Process', () => {
                 .map(b => b.toString(16).padStart(2, '0'))
                 .join('');
 
-            // Generate signature shares
+            // Round 2: signature shares
             const signatureShareHexA = frostDkgA.sign(transactionMessageHex);
             const signatureShareHexB = frostDkgB.sign(transactionMessageHex);
 
-            const signatureShareA = {
-                webrtc_msg_type: 'SignatureShare' as const,
-                signing_id: signingId,
-                signature_share: {
-                    signer_id: 'a',
-                    share_data: { share: 'real-frost-share-A' },
-                    signing_id: signingId,
-                    share_hex: signatureShareHexA
-                }
-            };
-            const signatureShareB = {
-                webrtc_msg_type: 'SignatureShare' as const,
-                signing_id: signingId,
-                signature_share: {
-                    signer_id: 'b',
-                    share_data: { share: 'real-frost-share-B' },
-                    signing_id: signingId,
-                    share_hex: signatureShareHexB
-                }
-            };
-
-            await (managerA as any)._handleSignatureShare('b', signatureShareB);
-            await (managerB as any)._handleSignatureShare('a', signatureShareA);
-
-            // Step 6: Aggregated signature (using real FROST aggregation)
+            // Aggregate on A using real FROST aggregation
             frostDkgA.add_signature_share(2, signatureShareHexB);
-
-            // Generate aggregated signature using real FROST DKG
             const aggregatedSignature = frostDkgA.aggregate_signature(transactionMessageHex);
-            const aggSigMsg = {
+
+            // B learns the result via the AggregatedSignature broadcast handler.
+            await (managerB as any)._handleAggregatedSignature('a', {
                 webrtc_msg_type: 'AggregatedSignature' as const,
                 signing_id: signingId,
                 signature: aggregatedSignature
-            };
-
-            await (managerB as any)._handleAggregatedSignature('a', aggSigMsg);
+            });
 
             // Assertions
             expect(managerB.signingInfo).toBeDefined();
             expect(managerB.signingInfo!.final_signature).toBe(aggregatedSignature);
             expect(aggregatedSignature).toMatch(/^[a-f0-9]{128}$/); // Ed25519 signature format
             expect(aggregatedSignature.length).toBe(128); // 64 bytes = 128 hex characters
+            expect(signatureShareHexA.length).toBeGreaterThan(0);
 
             console.log(`✅ Generated authentic FROST signature: ${aggregatedSignature}`);
 
         } finally {
             cleanupDkgInstances(frostDkgA, frostDkgB, frostDkgC);
         }
-    });
-
-    it('should handle signing rejection properly', async () => {
-        const manager = new WebRTCManager('a', dummySend);
-        manager.sessionInfo = sessionInfo as any;
-        (manager as any)._updateDkgState(DkgState.Complete);
-
-        const signingId = 'test-signing-rejection';
-        manager.initiateSigning(signingId, '{"test": "data"}', 2);
-
-        // Simulate rejection from peer 'b'
-        await (manager as any)._handleSigningAcceptance('b', {
-            webrtc_msg_type: 'SigningAcceptance',
-            signing_id: signingId,
-            accepted: false
-        });
-
-        expect(manager.signingInfo!.acceptances.has('b')).toBe(true);
-        expect(manager.signingInfo!.acceptances.get('b')).toBe(false);
-    });
-
-    it('should handle timeout in signing process', () => {
-        const manager = new WebRTCManager('a', dummySend);
-        manager.sessionInfo = sessionInfo as any;
-        (manager as any)._updateDkgState(DkgState.Complete);
-
-        const signingId = 'test-signing-timeout';
-        manager.initiateSigning(signingId, '{"test": "data"}', 2);
-
-        // Simulate timeout by manually transitioning to failed state
-        (manager as any).signingState = SigningState.Failed;
-
-        expect(manager.signingState).toBe(SigningState.Failed);
-    });
-
-    it('should validate signing requests properly', async () => {
-        const manager = new WebRTCManager('b', dummySend);
-        manager.sessionInfo = sessionInfo as any;
-        (manager as any)._updateDkgState(DkgState.Complete);
-
-        // Handle valid signing request
-        await (manager as any)._handleSigningRequest('a', {
-            webrtc_msg_type: 'SigningRequest',
-            signing_id: 'valid-signing-id',
-            transaction_data: '{"valid": "data"}',
-            threshold: 2,
-            participants: ['a', 'b', 'c']
-        });
-
-        expect(manager.signingInfo).toBeDefined();
-        expect(manager.signingInfo!.signing_id).toBe('valid-signing-id');
-
-        // Handle invalid signing request (mismatched signing ID)
-        await (manager as any)._handleSigningRequest('a', {
-            webrtc_msg_type: 'SigningRequest',
-            signing_id: 'different-signing-id',
-            transaction_data: '{"different": "data"}',
-            threshold: 2,
-            participants: ['a', 'b', 'c']
-        });
-
-        // Should still have the original signing info
-        expect(manager.signingInfo!.signing_id).toBe('valid-signing-id');
     });
 });

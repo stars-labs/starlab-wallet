@@ -34,6 +34,13 @@ export type WebRTCAppMessage =
   | { webrtc_msg_type: 'SignatureShare'; signing_id: string; sender_identifier: any; share: any } // FROST signature share
   | { webrtc_msg_type: 'AggregatedSignature'; signing_id: string; signature: string } // Final signature as string
 
+  // M3 Reshare Messages (rotate shares, same group key). Packages are
+  // hex strings straight from the FrostReshare* WASM; sender identity
+  // is derived from the sorted reshare_old_participants list (OLD
+  // cohort FROST indices), not the session participants.
+  | { webrtc_msg_type: 'ReshareRound1Package'; session_id: string; package: string }
+  | { webrtc_msg_type: 'ReshareRound2Package'; session_id: string; package: string }
+
   // DKG Package Request Messages (for handling missing packages)
   | { webrtc_msg_type: 'DkgPackageRequest'; round: 1 | 2; requester: string } // Request a missing DKG package
   | { webrtc_msg_type: 'DkgPackageResend'; round: 1 | 2; package: any }; // Response with requested package

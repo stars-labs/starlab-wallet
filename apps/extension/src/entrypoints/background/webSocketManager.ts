@@ -517,14 +517,16 @@ export class WebSocketManager {
         const sessionType = session.session_type ?? "dkg";
         const joined = session.participants.length;
 
-        // Gate by session type — signing threshold vs DKG total.
+        // Gate by session type — signing needs threshold; DKG and
+        // reshare need the full cohort (every NEW shareholder must
+        // contribute to / receive from the reshare rounds).
         if (sessionType === "signing") {
             if (joined < session.threshold) {
                 return; // Not enough signers yet.
             }
         } else {
             if (joined !== session.total) {
-                return; // DKG needs all N.
+                return; // DKG/reshare need all N.
             }
         }
 
@@ -556,6 +558,23 @@ export class WebSocketManager {
                     blockchain,
                 } as any,
                 `sessionReadyForSigning(${session.session_id})`,
+            );
+            return;
+        }
+
+        if (sessionType === "reshare") {
+            const walletId = session.wallet_name ?? "";
+            console.log(
+                `[WebSocketManager] 🔁 Full new cohort joined (${joined}/${session.total}) for reshare session ${session.session_id} — triggering reshare for wallet ${walletId} (${blockchain})`,
+            );
+            void this.sendToOffscreen(
+                {
+                    type: "sessionReadyForReshare",
+                    sessionInfo: sessionWithAccepted,
+                    blockchain,
+                    walletId,
+                } as any,
+                `sessionReadyForReshare(${session.session_id})`,
             );
             return;
         }

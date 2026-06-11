@@ -566,6 +566,45 @@ export class StateManager {
                 }
                 break;
 
+            case "reshareStateUpdate":
+                // M3 reshare: per-round progress from offscreen.
+                // Stashed in appState so the popup's Devices/Reshare
+                // card can poll it via getState; broadcast too for
+                // any live popup ports.
+                {
+                    const info: any = payload;
+                    (this.appState as any).reshareStatus = {
+                        sessionId: info.sessionId,
+                        walletId: info.walletId,
+                        state: info.state,
+                        round1Received: info.round1Received ?? [],
+                        round2Received: info.round2Received ?? [],
+                        participants: info.participants ?? [],
+                        error: info.error,
+                        saved: false,
+                        updatedAt: Date.now(),
+                    };
+                    this.broadcastToPopupPorts({
+                        type: "reshareStateUpdate",
+                        ...info,
+                    } as any);
+                }
+                break;
+
+            case "reshareComplete":
+                // M3 reshare: ceremony finalized with the group key
+                // verified unchanged. REPLACE the wallet's stored
+                // encrypted share with the new keystore JSON — same
+                // wallet id, same addresses. Requires the keystore to
+                // still be unlocked (it had to be unlocked for the
+                // ceremony to even start; the 15-min session window
+                // normally covers the few seconds of rounds).
+                {
+                    const info: any = payload;
+                    void this.handleReshareComplete(info);
+                }
+                break;
+
             case "signingProgress":
                 // Ext-2d-progress: per-peer roster snapshot.
                 // Stashed in appState so late popup mounts can
@@ -819,6 +858,119 @@ export class StateManager {
     getBlockchain() {
         // Convert curve back to blockchain for backward compatibility
         return this.appState.curve === "secp256k1" ? "ethereum" : "solana";
+    }
+
+    /**
+     * M3 reshare: persist the post-ceremony keystore. Builds the new
+     * KeyShareData by overlaying the engine's fresh share material on
+     * the wallet's existing record (addresses / curve / session_id
+     * are preserved — the group key is verified unchanged upstream)
+     * and replaces the stored encrypted share via
+     * KeystoreManager.updateWalletKeyShare.
+     */
+    private async handleReshareComplete(info: {
+        sessionId: string;
+        walletId: string;
+        newKeystoreJson: string;
+        groupPublicKey: string;
+        threshold: number;
+        total: number;
+        participants: string[];
+        participantIndex: number | null;
+        blockchain: "ethereum" | "solana";
+    }): Promise<void> {
+        let saved = false;
+        let error: string | undefined;
+        try {
+            const parsed = JSON.parse(info.newKeystoreJson);
+            const { KeystoreManager } = await import(
+                "../../services/keystoreManager"
+            );
+            const km = KeystoreManager.getInstance();
+            if (km.isLocked()) {
+                throw new Error(
+                    "Keystore locked before the new share could be saved — unlock and redo the reshare",
+                );
+            }
+            const oldShare: any = await km.getKeyShare(info.walletId);
+            if (!oldShare) {
+                throw new Error(`No stored share for wallet ${info.walletId}`);
+            }
+            // Convention quirk: DKG-created wallets store the FULL
+            // engine keystore JSON in group_public_key (it's what
+            // finalize_dkg() returned). If that's the case, the field
+            // must now carry the NEW keystore JSON — otherwise the
+            // next reshare/keystore-resolution would pick up the old,
+            // now-useless share material. Plain-hex group keys are
+            // kept as the canonical (unchanged) hex.
+            let groupKeyField: string =
+                info.groupPublicKey || oldShare.group_public_key;
+            try {
+                const oldParsed = JSON.parse(oldShare.group_public_key);
+                if (oldParsed && typeof oldParsed.public_key_package === "string") {
+                    groupKeyField = info.newKeystoreJson;
+                }
+            } catch {
+                /* plain hex — keep canonical hex */
+            }
+            const newShare: any = {
+                ...oldShare,
+                key_package: parsed.key_package ?? oldShare.key_package,
+                group_public_key: groupKeyField,
+                participant_index:
+                    parsed.participant_index ??
+                    info.participantIndex ??
+                    oldShare.participant_index,
+                threshold: parsed.min_signers ?? info.threshold,
+                total_participants: parsed.max_signers ?? info.total,
+                participants: info.participants,
+            };
+            const ok = await km.updateWalletKeyShare(info.walletId, newShare);
+            if (!ok) {
+                throw new Error("updateWalletKeyShare returned false");
+            }
+            saved = true;
+            console.log(
+                `[StateManager] ✅ Reshare saved: wallet ${info.walletId} now ${newShare.threshold}-of-${newShare.total_participants} (group key unchanged)`,
+            );
+        } catch (e) {
+            error = (e as Error).message ?? String(e);
+            console.error("[StateManager] Reshare save failed:", e);
+        }
+
+        (this.appState as any).reshareStatus = {
+            sessionId: info.sessionId,
+            walletId: info.walletId,
+            state: saved ? "Complete" : "Failed",
+            round1Received: info.participants,
+            round2Received: info.participants,
+            participants: info.participants,
+            error,
+            saved,
+            updatedAt: Date.now(),
+        };
+
+        // Clear the active reshare session so the user can start the
+        // next ceremony; mirror signingComplete's cleanup.
+        if (
+            this.appState.sessionInfo?.session_type === "reshare" &&
+            this.appState.sessionInfo?.session_id === info.sessionId
+        ) {
+            this.appState.sessionInfo = null;
+            this.appState.dkgState = DkgState.Idle;
+        }
+
+        this.broadcastToPopupPorts({
+            type: "reshareCompleted",
+            sessionId: info.sessionId,
+            walletId: info.walletId,
+            saved,
+            error,
+            threshold: info.threshold,
+            total: info.total,
+            participants: info.participants,
+        } as any);
+        this.broadcastCurrentState();
     }
 
     /**

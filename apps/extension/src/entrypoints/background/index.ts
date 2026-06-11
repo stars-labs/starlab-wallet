@@ -313,6 +313,18 @@ function setupMessageHandlers(): void {
                     return;
                 }
 
+                // Keystore fetches are REQUEST/RESPONSE calls (the
+                // caller awaits {success, keyShare}) regardless of
+                // which context asked. Route them to the popup
+                // handler BEFORE the generic offscreen branch below —
+                // that branch replies a bare {success:true} and would
+                // swallow the keyShare the offscreen signing/reshare
+                // flows are waiting on.
+                if (message.type === "getActiveKeystore" || message.type === "getWalletKeystore") {
+                    await popupMessageHandler.handlePopupMessage(message as any, sendResponse);
+                    return;
+                }
+
                 // Route messages to appropriate handlers based on sender and message type
                 if (message.type === "fromOffscreen" || senderType === 'offscreen' ||
                     (message.type === 'log' && isOffscreenSender)) {

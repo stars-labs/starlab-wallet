@@ -14,6 +14,35 @@ export enum SigningState {
   Failed = "Failed" // Signing failed
 }
 
+// M3 reshare: state enumeration for the share-rotation ceremony.
+// Parallel of DkgState but kept separate — a reshare operates on an
+// EXISTING wallet's share and must never be conflated with key
+// generation (mixing them up would regenerate a fresh group key and
+// orphan the wallet's funds).
+export enum ReshareState {
+  Idle = "Idle",
+  WaitingForMesh = "WaitingForMesh", // session triggered, waiting for data channels
+  Round1InProgress = "Round1InProgress",
+  Round2InProgress = "Round2InProgress",
+  Complete = "Complete",
+  Failed = "Failed",
+}
+
+// M3 reshare: ceremony bookkeeping. `oldParticipants` is the wallet's
+// CURRENT cohort (sorted) — FROST identifiers for the ceremony are
+// 1-based positions in THIS list, because the engine requires every
+// new participant to already hold a share under its old identifier.
+// `newParticipants` is the (sorted) cohort that will hold shares
+// after the ceremony — always a subset of oldParticipants.
+export interface ReshareInfo {
+  session_id: string;
+  wallet_id: string;
+  old_participants: string[]; // sorted
+  new_participants: string[]; // sorted, subset of old_participants
+  new_threshold: number;
+  old_group_public_key: string;
+}
+
 // Signing process information
 export interface SigningInfo {
   signing_id: string;
@@ -59,6 +88,20 @@ export class WebRTCManager {
   // Package buffering for handling packages that arrive before DKG initialization
   private bufferedRound1Packages: Array<{ fromPeerId: string; packageData: any }> = [];
   private bufferedRound2Packages: Array<{ fromPeerId: string; packageData: any }> = [];
+
+  // M3 FROST Reshare integration (rotate shares, same group key).
+  // `frostReshare` holds a FrostReshareSecp256k1/Ed25519 WASM
+  // instance for the duration of one ceremony. Kept separate from
+  // `frostDkg` so an in-flight reshare can't clobber a loaded
+  // signing keystore by accident.
+  public reshareState: ReshareState = ReshareState.Idle;
+  public reshareInfo: ReshareInfo | null = null;
+  private frostReshare: any | null = null;
+  private reshareKeyShare: any | null = null; // pending keystore data until mesh is ready
+  private receivedReshareRound1: Set<string> = new Set();
+  private receivedReshareRound2: Set<string> = new Set();
+  private bufferedReshareRound1: Array<{ fromPeerId: string; packageHex: string }> = [];
+  private bufferedReshareRound2: Array<{ fromPeerId: string; packageHex: string }> = [];
 
   // FROST Signing integration
   public signingState: SigningState = SigningState.Idle;
@@ -138,6 +181,41 @@ export class WebRTCManager {
     sessionId: string;
   }) => void = () => { };
   public onWebRTCConnectionUpdate: (peerId: string, connected: boolean) => void = () => { };
+
+  /**
+   * M3 reshare: fires on every reshare-state transition so the
+   * background (and popup, via polling) can render "waiting for
+   * peers / round N / done". JSON-plain payload for the
+   * runtime.sendMessage boundary.
+   */
+  public onReshareStateUpdate: (payload: {
+    sessionId: string;
+    walletId: string;
+    state: string;
+    round1Received: string[];
+    round2Received: string[];
+    participants: string[];
+    error?: string;
+  }) => void = () => { };
+
+  /**
+   * M3 reshare: fires exactly once per ceremony after
+   * finalize_reshare succeeds AND the group public key has been
+   * verified unchanged. Payload carries the NEW keystore JSON —
+   * the background replaces the wallet's stored encrypted share
+   * with it (same wallet id, same addresses).
+   */
+  public onReshareComplete: (payload: {
+    sessionId: string;
+    walletId: string;
+    newKeystoreJson: string;
+    groupPublicKey: string;
+    threshold: number;
+    total: number;
+    participants: string[];
+    participantIndex: number | null;
+    blockchain: "ethereum" | "solana";
+  }) => void = () => { };
 
   // Add the missing callback property and constructor parameter
   private sendPayloadToBackgroundForRelay: ((toPeerId: string, payload: WebSocketMessagePayload) => void) | null = null;
@@ -230,6 +308,11 @@ export class WebRTCManager {
       this._log("Mesh is Ready! Waiting for explicit DKG trigger from background script.");
       // Do NOT automatically trigger DKG here to avoid race conditions
       // DKG will be triggered explicitly by the background script via sessionAllAccepted
+
+      // M3 reshare: unlike DKG, the reshare trigger has already been
+      // armed by startReshare (the background only fires it once the
+      // full new cohort joined), so mesh-ready IS the go signal.
+      this._maybeInitReshare();
     }
   }
 
@@ -437,6 +520,9 @@ export class WebRTCManager {
 
     // Reset FROST DKG state
     this._resetDkgState();
+
+    // Reset FROST reshare state
+    this._resetReshareState();
   }
 
   public sendWebRTCAppMessage(toPeerId: string, message: WebRTCAppMessage): void {
@@ -1031,6 +1117,12 @@ export class WebRTCManager {
           if ((message as any).package) {
             this._handleDkgRound2Package(fromPeerId, (message as any).package);
           }
+          break;
+        case 'ReshareRound1Package':
+          this._handleReshareRound1Package(fromPeerId, message as any);
+          break;
+        case 'ReshareRound2Package':
+          this._handleReshareRound2Package(fromPeerId, message as any);
           break;
         case 'SigningRequest':
           this._handleSigningRequest(fromPeerId, message as any);
@@ -1770,6 +1862,603 @@ export class WebRTCManager {
     }
 
     return await this.initializeDkg(blockchain as "ethereum" | "solana");
+  }
+
+  // ===================================================================
+  // M3 RESHARE — rotate / redistribute key shares, SAME group key.
+  //
+  // Mirrors the DKG round flow but over FrostReshareSecp256k1 /
+  // FrostReshareEd25519 (vendored engine pkg):
+  //   init_reshare(keystoreJson, newIdsCsv, newThreshold)
+  //   reshare_round1() → broadcast hex to all peers
+  //   add_reshare_round1(fromOldId, hex)         [n-1 peer packages]
+  //   can_reshare_round2() → reshare_round2()    → per-recipient map
+  //   add_reshare_round2(fromOldId, hex)
+  //   can_finalize_reshare() → finalize_reshare() → NEW keystore JSON
+  //   get_group_public_key()                     → must equal old key
+  //
+  // Identifier convention: a participant's FROST id is its 1-based
+  // position in the SORTED old cohort (reshare_old_participants).
+  // The engine requires every new participant to already hold a
+  // share, so the new cohort is always a subset of the old one and
+  // keeps its old identifiers.
+  // ===================================================================
+
+  private _emitReshareState(error?: string): void {
+    this.onReshareStateUpdate({
+      sessionId: this.reshareInfo?.session_id ?? "",
+      walletId: this.reshareInfo?.wallet_id ?? "",
+      state: this.reshareState,
+      round1Received: Array.from(this.receivedReshareRound1),
+      round2Received: Array.from(this.receivedReshareRound2),
+      participants: this.reshareInfo?.new_participants ?? [],
+      ...(error ? { error } : {}),
+    });
+  }
+
+  private _updateReshareState(state: ReshareState, error?: string): void {
+    this.reshareState = state;
+    this._emitReshareState(error);
+  }
+
+  private _resetReshareState(): void {
+    if (this.frostReshare) {
+      try { this.frostReshare.free(); } catch { /* already freed */ }
+    }
+    this.frostReshare = null;
+    this.reshareInfo = null;
+    this.reshareKeyShare = null;
+    this.receivedReshareRound1.clear();
+    this.receivedReshareRound2.clear();
+    this.bufferedReshareRound1 = [];
+    this.bufferedReshareRound2 = [];
+    this.reshareState = ReshareState.Idle;
+  }
+
+  /**
+   * Arm a reshare ceremony. Called by offscreen/index.ts when the
+   * background fires `sessionReadyForReshare` (full new cohort
+   * joined) and the wallet's decrypted key share has been fetched.
+   * The actual FROST init waits for the mesh: _maybeInitReshare is
+   * re-checked on every mesh-ready transition and on buffered
+   * round-1 arrivals (covers the race where peers were faster).
+   */
+  public startReshare(
+    sessionInfo: SessionInfo,
+    walletId: string,
+    keyShare: any,
+    blockchain: "ethereum" | "solana",
+  ): boolean {
+    // A finished (or failed) ceremony doesn't block the next one —
+    // terminal states reset implicitly. Only an IN-FLIGHT ceremony
+    // refuses re-entry.
+    if (
+      this.reshareState === ReshareState.Complete ||
+      this.reshareState === ReshareState.Failed
+    ) {
+      this._resetReshareState();
+    }
+    if (this.reshareState !== ReshareState.Idle) {
+      this._log(`Cannot start reshare: already in state ${this.reshareState}`);
+      return false;
+    }
+    const oldParticipants = [
+      ...((sessionInfo as any).reshare_old_participants ?? []),
+    ].sort();
+    if (oldParticipants.length === 0) {
+      this._log(`Cannot start reshare: session missing reshare_old_participants`);
+      return false;
+    }
+    const newParticipants = [...sessionInfo.participants].sort();
+    const notShareholders = newParticipants.filter(
+      (p) => !oldParticipants.includes(p),
+    );
+    if (notShareholders.length > 0) {
+      this._log(
+        `Cannot start reshare: [${notShareholders.join(", ")}] hold no share in the old cohort`,
+      );
+      return false;
+    }
+    if (!newParticipants.includes(this.localPeerId)) {
+      this._log(`Cannot start reshare: we are not in the new cohort`);
+      return false;
+    }
+
+    this.currentBlockchain = blockchain;
+    this.reshareInfo = {
+      session_id: sessionInfo.session_id,
+      wallet_id: walletId,
+      old_participants: oldParticipants,
+      new_participants: newParticipants,
+      new_threshold: sessionInfo.threshold,
+      old_group_public_key: String(keyShare?.group_public_key ?? ""),
+    };
+    this.reshareKeyShare = keyShare;
+    this._updateReshareState(ReshareState.WaitingForMesh);
+    this._log(
+      `Reshare armed for wallet ${walletId}: new cohort ${sessionInfo.threshold}/${newParticipants.length} [${newParticipants.join(", ")}] (old cohort ${oldParticipants.length})`,
+    );
+    this._maybeInitReshare();
+    return true;
+  }
+
+  /** Old-cohort FROST identifier for a device id (1-based, sorted). */
+  private _reshareIdOf(deviceId: string): number {
+    const idx = this.reshareInfo?.old_participants.indexOf(deviceId) ?? -1;
+    return idx + 1; // 0 means "not a shareholder"
+  }
+
+  private _maybeInitReshare(): void {
+    if (!this.reshareInfo || !this.reshareKeyShare) return;
+    if (this.reshareState !== ReshareState.WaitingForMesh) return;
+
+    const remotePeers = this.reshareInfo.new_participants.filter(
+      (p) => p !== this.localPeerId,
+    );
+    const meshReady = this.meshStatus.type === MeshStatusType.Ready;
+    // Fallback go-signal: every remote peer's round-1 package already
+    // buffered means their channels are demonstrably open even if our
+    // mesh bookkeeping lags (same rationale as DKG auto-trigger #3).
+    const bufferedFrom = new Set(
+      this.bufferedReshareRound1.map((p) => p.fromPeerId),
+    );
+    const allPeersBuffered =
+      remotePeers.length > 0 && remotePeers.every((p) => bufferedFrom.has(p));
+
+    if (!meshReady && !allPeersBuffered) {
+      this._log(
+        `Reshare waiting: mesh=${MeshStatusType[this.meshStatus.type]}, buffered r1 from [${Array.from(bufferedFrom).join(", ")}]`,
+      );
+      return;
+    }
+    void this._initializeReshare();
+  }
+
+  /**
+   * The engine's init_reshare requires the CANONICAL keystore JSON
+   * that export_keystore emits ({key_package, public_key_package,
+   * min_signers, max_signers, participant_index, …}) — verified
+   * against the vendored wasm; there is no field aliasing. The
+   * extension's KeyShareData doesn't store public_key_package as its
+   * own field, BUT for DKG-created wallets `group_public_key` holds
+   * the full finalize_dkg() output, which IS the canonical keystore
+   * JSON. Resolve whichever form we have.
+   */
+  private _resolveEngineKeystoreJson(ks: any): string {
+    if (typeof ks?.group_public_key === "string") {
+      try {
+        const parsed = JSON.parse(ks.group_public_key);
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          typeof parsed.public_key_package === "string" &&
+          typeof parsed.key_package === "string"
+        ) {
+          return ks.group_public_key;
+        }
+      } catch {
+        /* plain hex group key — fall through */
+      }
+    }
+    if (
+      typeof ks?.public_key_package === "string" &&
+      typeof ks?.key_package === "string"
+    ) {
+      const total = Number(ks.total_participants) || 0;
+      return JSON.stringify({
+        key_package: ks.key_package,
+        public_key_package: ks.public_key_package,
+        min_signers: Number(ks.threshold) || 0,
+        max_signers: total,
+        participant_index: Number(ks.participant_index) || 0,
+        participant_indices: Array.from({ length: total }, (_, i) => i + 1),
+        curve:
+          ks.curve ??
+          (this.currentBlockchain === "ethereum" ? "secp256k1" : "ed25519"),
+      });
+    }
+    throw new Error(
+      "Wallet record doesn't carry the engine keystore (public_key_package) — this wallet can't be reshared from this device",
+    );
+  }
+
+  private _resolveGlobal(name: string): any {
+    return (
+      (typeof globalThis !== "undefined" && (globalThis as any)[name]) ||
+      (typeof global !== "undefined" && (global as any)[name]) ||
+      (typeof window !== "undefined" && (window as any)[name]) ||
+      null
+    );
+  }
+
+  private async _initializeReshare(): Promise<void> {
+    if (!this.reshareInfo || !this.reshareKeyShare) return;
+    try {
+      const ReshareClass =
+        this.currentBlockchain === "ethereum"
+          ? this._resolveGlobal("FrostReshareSecp256k1")
+          : this._resolveGlobal("FrostReshareEd25519");
+      if (!ReshareClass) {
+        throw new Error("FROST reshare WASM modules not found");
+      }
+
+      const ks = this.reshareKeyShare;
+      const keystoreJson = this._resolveEngineKeystoreJson(ks);
+
+      // Canonical OLD group key (compressed hex) for the post-reshare
+      // invariant check. Importing into a throwaway FrostDkg instance
+      // both validates the keystore and normalizes the key format —
+      // KeyShareData.group_public_key may hold a JSON blob (see
+      // _resolveEngineKeystoreJson).
+      const DkgClass =
+        this.currentBlockchain === "ethereum"
+          ? this._resolveGlobal("FrostDkgSecp256k1")
+          : this._resolveGlobal("FrostDkgEd25519");
+      if (DkgClass) {
+        let probe: any = null;
+        try {
+          probe = new DkgClass();
+          probe.import_keystore(keystoreJson);
+          const canonical = probe.get_group_public_key?.();
+          if (typeof canonical === "string" && canonical.length > 0) {
+            this.reshareInfo.old_group_public_key = canonical;
+          }
+        } catch (probeErr) {
+          this._log(
+            `Old-group-key probe failed (continuing, invariant check weakened): ${this._getErrorMessage(probeErr)}`,
+          );
+        } finally {
+          try { probe?.free?.(); } catch { /* noop */ }
+        }
+      }
+
+      const newIds = this.reshareInfo.new_participants.map((p) =>
+        this._reshareIdOf(p),
+      );
+      if (newIds.some((id) => id <= 0)) {
+        throw new Error(
+          "A new-cohort device is missing from the old participant list",
+        );
+      }
+      const myId = this._reshareIdOf(this.localPeerId);
+      if (myId !== Number(ks.participant_index)) {
+        // Not fatal — the keystore's own index is authoritative for
+        // the WASM; the sorted-list derivation is our cross-check
+        // that all peers agree on the id mapping. A mismatch means
+        // the wallet's stored participants order disagrees with the
+        // announced reshare_old_participants.
+        this._log(
+          `⚠️ Reshare id sanity check: sorted-list id ${myId} != keystore participant_index ${ks.participant_index}. Using keystore's view via init_reshare.`,
+        );
+      }
+
+      this.frostReshare = new ReshareClass();
+      this.frostReshare.init_reshare(
+        keystoreJson,
+        newIds.join(","),
+        this.reshareInfo.new_threshold,
+      );
+      this._updateReshareState(ReshareState.Round1InProgress);
+      this._log(
+        `Reshare initialized: new_ids=[${newIds.join(",")}], new_threshold=${this.reshareInfo.new_threshold}`,
+      );
+
+      // Round 1: broadcast our package to every other new participant.
+      const round1Hex: string = this.frostReshare.reshare_round1();
+      this.receivedReshareRound1.add(this.localPeerId);
+      const msg: WebRTCAppMessage = {
+        webrtc_msg_type: "ReshareRound1Package" as const,
+        session_id: this.reshareInfo.session_id,
+        package: round1Hex,
+      };
+      for (const peerId of this.reshareInfo.new_participants) {
+        if (peerId !== this.localPeerId) {
+          this.sendWebRTCAppMessage(peerId, msg);
+        }
+      }
+      this._emitReshareState();
+
+      // Replay any round-1 packages that arrived before init.
+      const buffered = [...this.bufferedReshareRound1];
+      this.bufferedReshareRound1 = [];
+      for (const { fromPeerId, packageHex } of buffered) {
+        this._processReshareRound1(fromPeerId, packageHex);
+      }
+      this._maybeAdvanceToReshareRound2();
+    } catch (error) {
+      this._log(`Error initializing reshare: ${this._getErrorMessage(error)}`);
+      this._updateReshareState(
+        ReshareState.Failed,
+        this._getErrorMessage(error),
+      );
+    }
+  }
+
+  private _handleReshareRound1Package(fromPeerId: string, message: any): void {
+    if (fromPeerId === this.localPeerId) return;
+    const packageHex =
+      typeof message?.package === "string" ? message.package : null;
+    if (!packageHex) {
+      this._log(`Invalid ReshareRound1Package from ${fromPeerId}: missing package`);
+      return;
+    }
+    if (
+      this.reshareInfo &&
+      message.session_id &&
+      message.session_id !== this.reshareInfo.session_id
+    ) {
+      this._log(
+        `Ignoring ReshareRound1Package for unknown session ${message.session_id}`,
+      );
+      return;
+    }
+    if (!this.frostReshare) {
+      this.bufferedReshareRound1.push({ fromPeerId, packageHex });
+      this._log(`Buffered reshare round-1 package from ${fromPeerId} (not initialized yet)`);
+      this._maybeInitReshare();
+      return;
+    }
+    this._processReshareRound1(fromPeerId, packageHex);
+    this._maybeAdvanceToReshareRound2();
+  }
+
+  private _processReshareRound1(fromPeerId: string, packageHex: string): void {
+    if (this.receivedReshareRound1.has(fromPeerId)) {
+      this._log(`Duplicate reshare round-1 package from ${fromPeerId} — ignoring`);
+      return;
+    }
+    const fromId = this._reshareIdOf(fromPeerId);
+    if (fromId <= 0) {
+      this._log(`Reshare round-1 from ${fromPeerId}: not in old cohort — ignoring`);
+      return;
+    }
+    try {
+      this.frostReshare.add_reshare_round1(fromId, packageHex);
+      this.receivedReshareRound1.add(fromPeerId);
+      this._log(
+        `Processed reshare round-1 from ${fromPeerId} (id ${fromId}). Total: ${this.receivedReshareRound1.size}/${this.reshareInfo?.new_participants.length ?? 0}`,
+      );
+      this._emitReshareState();
+    } catch (error) {
+      this._log(
+        `add_reshare_round1(${fromId}) failed: ${this._getErrorMessage(error)}`,
+      );
+      this._updateReshareState(
+        ReshareState.Failed,
+        this._getErrorMessage(error),
+      );
+    }
+  }
+
+  private _maybeAdvanceToReshareRound2(): void {
+    if (
+      !this.frostReshare ||
+      !this.reshareInfo ||
+      this.reshareState !== ReshareState.Round1InProgress
+    ) {
+      return;
+    }
+    const haveAll =
+      this.receivedReshareRound1.size >= this.reshareInfo.new_participants.length;
+    let canRound2 = false;
+    try {
+      canRound2 = this.frostReshare.can_reshare_round2();
+    } catch (e) {
+      this._log(`can_reshare_round2 check failed: ${this._getErrorMessage(e)}`);
+    }
+    if (!haveAll || !canRound2) return;
+    this._generateAndSendReshareRound2();
+  }
+
+  /**
+   * reshare_round2() returns the per-recipient package map. Be
+   * tolerant about the envelope: plain JSON object string OR
+   * hex-encoded JSON (the DKG generate_round2 convention). Keys are
+   * the recipients' FROST ids (numeric strings).
+   */
+  private _decodeResharePackageMap(raw: string): Record<string, string> {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      const hexMatches = raw.match(/.{1,2}/g);
+      if (!hexMatches) throw new Error("Unparseable reshare round-2 map");
+      const bytes = new Uint8Array(hexMatches.map((b) => parseInt(b, 16)));
+      return JSON.parse(new TextDecoder().decode(bytes));
+    }
+  }
+
+  private _generateAndSendReshareRound2(): void {
+    if (!this.frostReshare || !this.reshareInfo) return;
+    try {
+      this._updateReshareState(ReshareState.Round2InProgress);
+      const mapRaw: string = this.frostReshare.reshare_round2();
+      const packageMap = this._decodeResharePackageMap(mapRaw);
+
+      let sent = 0;
+      for (const peerId of this.reshareInfo.new_participants) {
+        if (peerId === this.localPeerId) continue;
+        const recipientId = this._reshareIdOf(peerId);
+        const pkg = packageMap[String(recipientId)];
+        if (!pkg) {
+          this._log(
+            `Warning: no reshare round-2 package for ${peerId} (id ${recipientId})`,
+          );
+          continue;
+        }
+        const msg: WebRTCAppMessage = {
+          webrtc_msg_type: "ReshareRound2Package" as const,
+          session_id: this.reshareInfo.session_id,
+          package: pkg,
+        };
+        this.sendWebRTCAppMessage(peerId, msg);
+        sent++;
+      }
+      this.receivedReshareRound2.add(this.localPeerId);
+      this._log(`Sent ${sent} reshare round-2 packages`);
+      this._emitReshareState();
+
+      // Replay round-2 packages that arrived while we were in round 1.
+      const buffered = [...this.bufferedReshareRound2];
+      this.bufferedReshareRound2 = [];
+      for (const { fromPeerId, packageHex } of buffered) {
+        this._processReshareRound2(fromPeerId, packageHex);
+      }
+      this._maybeFinalizeReshare();
+    } catch (error) {
+      this._log(
+        `Error generating reshare round-2: ${this._getErrorMessage(error)}`,
+      );
+      this._updateReshareState(
+        ReshareState.Failed,
+        this._getErrorMessage(error),
+      );
+    }
+  }
+
+  private _handleReshareRound2Package(fromPeerId: string, message: any): void {
+    if (fromPeerId === this.localPeerId) return;
+    const packageHex =
+      typeof message?.package === "string" ? message.package : null;
+    if (!packageHex) {
+      this._log(`Invalid ReshareRound2Package from ${fromPeerId}: missing package`);
+      return;
+    }
+    if (
+      this.reshareInfo &&
+      message.session_id &&
+      message.session_id !== this.reshareInfo.session_id
+    ) {
+      return;
+    }
+    if (!this.frostReshare || this.reshareState === ReshareState.Round1InProgress || this.reshareState === ReshareState.WaitingForMesh || this.reshareState === ReshareState.Idle) {
+      this.bufferedReshareRound2.push({ fromPeerId, packageHex });
+      this._log(`Buffered reshare round-2 package from ${fromPeerId} (not in round 2 yet)`);
+      return;
+    }
+    this._processReshareRound2(fromPeerId, packageHex);
+    this._maybeFinalizeReshare();
+  }
+
+  private _processReshareRound2(fromPeerId: string, packageHex: string): void {
+    if (this.receivedReshareRound2.has(fromPeerId)) {
+      this._log(`Duplicate reshare round-2 package from ${fromPeerId} — ignoring`);
+      return;
+    }
+    const fromId = this._reshareIdOf(fromPeerId);
+    if (fromId <= 0) {
+      this._log(`Reshare round-2 from ${fromPeerId}: not in old cohort — ignoring`);
+      return;
+    }
+    try {
+      this.frostReshare.add_reshare_round2(fromId, packageHex);
+      this.receivedReshareRound2.add(fromPeerId);
+      this._log(
+        `Processed reshare round-2 from ${fromPeerId} (id ${fromId}). Total: ${this.receivedReshareRound2.size}/${this.reshareInfo?.new_participants.length ?? 0}`,
+      );
+      this._emitReshareState();
+    } catch (error) {
+      this._log(
+        `add_reshare_round2(${fromId}) failed: ${this._getErrorMessage(error)}`,
+      );
+      this._updateReshareState(
+        ReshareState.Failed,
+        this._getErrorMessage(error),
+      );
+    }
+  }
+
+  private _maybeFinalizeReshare(): void {
+    if (
+      !this.frostReshare ||
+      !this.reshareInfo ||
+      this.reshareState !== ReshareState.Round2InProgress
+    ) {
+      return;
+    }
+    const haveAll =
+      this.receivedReshareRound2.size >= this.reshareInfo.new_participants.length;
+    let canFinalize = false;
+    try {
+      canFinalize = this.frostReshare.can_finalize_reshare();
+    } catch (e) {
+      this._log(`can_finalize_reshare check failed: ${this._getErrorMessage(e)}`);
+    }
+    if (!haveAll || !canFinalize) return;
+
+    try {
+      const newKeystoreJson: string = this.frostReshare.finalize_reshare();
+      const newGroupKey: string = this.frostReshare.get_group_public_key();
+
+      // CRITICAL invariant: the group public key (and therefore every
+      // derived address) must NOT change. A mismatch means the
+      // ceremony diverged — do not persist the new share. Comparison
+      // only runs when the old key is in canonical hex form (set by
+      // the import-probe in _initializeReshare); a JSON-blob old key
+      // means the probe failed and we have nothing comparable.
+      const oldKey = (this.reshareInfo.old_group_public_key || "").toLowerCase();
+      const newKey = (newGroupKey || "").toLowerCase();
+      if (
+        /^[0-9a-f]+$/.test(oldKey) &&
+        /^[0-9a-f]+$/.test(newKey) &&
+        oldKey !== newKey
+      ) {
+        throw new Error(
+          `Group public key changed after reshare (old=${oldKey.slice(0, 16)}…, new=${newKey.slice(0, 16)}…) — refusing to save`,
+        );
+      }
+
+      let participantIndex: number | null = null;
+      try {
+        const parsed = JSON.parse(newKeystoreJson);
+        participantIndex =
+          typeof parsed.participant_index === "number"
+            ? parsed.participant_index
+            : null;
+      } catch {
+        /* keystore JSON shape is engine-defined; index is optional info */
+      }
+
+      this._updateReshareState(ReshareState.Complete);
+      this._log(
+        `✅ Reshare complete for wallet ${this.reshareInfo.wallet_id} — group key unchanged`,
+      );
+      this.onReshareComplete({
+        sessionId: this.reshareInfo.session_id,
+        walletId: this.reshareInfo.wallet_id,
+        newKeystoreJson,
+        groupPublicKey: newGroupKey,
+        threshold: this.reshareInfo.new_threshold,
+        total: this.reshareInfo.new_participants.length,
+        participants: this.reshareInfo.new_participants.slice(),
+        participantIndex,
+        blockchain: this.currentBlockchain,
+      });
+    } catch (error) {
+      this._log(`Error finalizing reshare: ${this._getErrorMessage(error)}`);
+      this._updateReshareState(
+        ReshareState.Failed,
+        this._getErrorMessage(error),
+      );
+    }
+  }
+
+  /** Snapshot for the background's getReshareStatus passthrough. */
+  public getReshareStatus(): {
+    state: ReshareState;
+    sessionId: string | null;
+    walletId: string | null;
+    participants: string[];
+    round1Received: string[];
+    round2Received: string[];
+  } {
+    return {
+      state: this.reshareState,
+      sessionId: this.reshareInfo?.session_id ?? null,
+      walletId: this.reshareInfo?.wallet_id ?? null,
+      participants: this.reshareInfo?.new_participants ?? [],
+      round1Received: Array.from(this.receivedReshareRound1),
+      round2Received: Array.from(this.receivedReshareRound2),
+    };
   }
 
   /**

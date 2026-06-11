@@ -144,6 +144,42 @@ export class KeystoreService {
         
         console.log("[KeystoreService] Added wallet:", walletId);
     }
+
+    /**
+     * M3 reshare: REPLACE an existing wallet's encrypted key share
+     * in place. Same wallet id, same group public key, same
+     * addresses — only the FROST share material (and possibly the
+     * cohort parameters) change. Mirrors addWallet's
+     * encrypt-and-save path but updates the index entry instead of
+     * appending a duplicate.
+     */
+    public async updateWalletKeyShare(
+        walletId: string,
+        keyShareData: KeyShareData
+    ): Promise<void> {
+        if (!this.isUnlocked || !this.password) {
+            throw new Error("Keystore is locked");
+        }
+        if (!this.keystoreIndex) {
+            throw new Error("Keystore not initialized");
+        }
+        const existing = this.keystoreIndex.wallets.find(w => w.id === walletId);
+        if (!existing) {
+            throw new Error(`Wallet ${walletId} not found — refusing to create via update`);
+        }
+
+        // Encrypt and overwrite the stored share.
+        const encrypted = await this.encryptKeyShare(walletId, keyShareData);
+        await this.saveEncryptedShare(walletId, encrypted);
+
+        this.keystoreIndex.lastModified = Date.now();
+        await this.saveKeystoreIndex();
+
+        // Refresh decrypted cache.
+        this.keyShares.set(walletId, keyShareData);
+
+        console.log("[KeystoreService] Replaced key share for wallet:", walletId);
+    }
     
     /**
      * Import wallet from CLI-compatible format

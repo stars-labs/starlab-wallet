@@ -4,7 +4,7 @@ import type { WebRTCAppMessage } from "@stars-labs/types/webrtc";
 import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from "@stars-labs/types/websocket";
 
 // Import WASM modules for FROST DKG
-import wasmInit, { FrostDkgEd25519, FrostDkgSecp256k1, derive_account_addresses } from '@stars-labs/core-wasm';
+import wasmInit, { FrostDkgEd25519, FrostDkgSecp256k1, FrostReshareEd25519, FrostReshareSecp256k1, derive_account_addresses } from '@stars-labs/core-wasm';
 
 console.log("Offscreen script loaded.");
 
@@ -24,6 +24,9 @@ async function initializeWasmModules() {
         // Make WASM classes available globally for WebRTCManager
         (globalThis as any).FrostDkgEd25519 = FrostDkgEd25519;
         (globalThis as any).FrostDkgSecp256k1 = FrostDkgSecp256k1;
+        // M3 reshare classes — same pattern as the DKG classes.
+        (globalThis as any).FrostReshareEd25519 = FrostReshareEd25519;
+        (globalThis as any).FrostReshareSecp256k1 = FrostReshareSecp256k1;
         
         console.log("🔧 WASM Init: Set (globalThis as any).FrostDkgEd25519 to:", typeof (globalThis as any).FrostDkgEd25519);
         console.log("🔧 WASM Init: Set (globalThis as any).FrostDkgSecp256k1 to:", typeof (globalThis as any).FrostDkgSecp256k1);
@@ -32,6 +35,8 @@ async function initializeWasmModules() {
         if (typeof global !== 'undefined') {
             (global as any).FrostDkgEd25519 = FrostDkgEd25519;
             (global as any).FrostDkgSecp256k1 = FrostDkgSecp256k1;
+            (global as any).FrostReshareEd25519 = FrostReshareEd25519;
+            (global as any).FrostReshareSecp256k1 = FrostReshareSecp256k1;
             console.log("🔧 WASM Init: Also set on global for Node.js compatibility");
         }
 
@@ -302,6 +307,28 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                     sendToBackground({
                         type: "fromOffscreen",
                         payload: { type: "signingProgress", ...payload },
+                    });
+                };
+
+                // M3 reshare: progress + completion events. Same
+                // propagation style as dkgComplete — background's
+                // StateManager stashes/broadcasts, and on
+                // reshareComplete replaces the wallet's stored share.
+                webRTCManager.onReshareStateUpdate = (payload) => {
+                    sendToBackground({
+                        type: "fromOffscreen",
+                        payload: { type: "reshareStateUpdate", ...payload },
+                    });
+                };
+                webRTCManager.onReshareComplete = (payload) => {
+                    console.log("Offscreen: Reshare complete:", {
+                        sessionId: payload.sessionId,
+                        walletId: payload.walletId,
+                        groupPublicKey: payload.groupPublicKey,
+                    });
+                    sendToBackground({
+                        type: "fromOffscreen",
+                        payload: { type: "reshareComplete", ...payload },
                     });
                 };
 
@@ -636,6 +663,100 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                     success: false,
                     error: "WebRTCManager not ready or missing sessionInfo",
                 });
+            }
+            break;
+
+        // M3 reshare: the full NEW cohort has joined the reshare
+        // session (webSocketManager.maybeTriggerCeremony gate:
+        // joined === total, like DKG — a reshare needs EVERY member
+        // of the new cohort, not just threshold). Parallel of
+        // sessionReadyForSigning, but the keystore is fetched by
+        // wallet id (the wallet being reshared may not be the
+        // "active" wallet).
+        case "sessionReadyForReshare":
+            console.log("🔁 Offscreen: Received 'sessionReadyForReshare'", payload);
+            if (webRTCManager && payload.sessionInfo && payload.walletId) {
+                const blockchain = payload.blockchain || "ethereum";
+                webRTCManager.setBlockchain(blockchain);
+                webRTCManager.updateSessionInfo(payload.sessionInfo);
+
+                // Set up the WebRTC mesh: initiate offers to peers with
+                // lexicographically larger ids (same politeness rule as
+                // sessionAccepted). Peers with smaller ids will offer
+                // to us.
+                if (localdeviceId) {
+                    const peersToOffer: string[] = (payload.sessionInfo.participants || [])
+                        .filter((d: string) => d !== localdeviceId && d > localdeviceId!);
+                    peersToOffer.forEach((deviceId: string) => {
+                        console.log(`Offscreen: [reshare] initiating WebRTC connection to ${deviceId}`);
+                        webRTCManager!.initiatePeerConnection(deviceId);
+                    });
+                }
+
+                // Fetch the wallet's decrypted key share from background
+                // and arm the reshare. Fire-and-forget — progress flows
+                // back via reshareStateUpdate events.
+                (async () => {
+                    const keyShare = await new Promise<any | null>((resolve) => {
+                        chrome.runtime.sendMessage(
+                            { type: "getWalletKeystore", walletId: payload.walletId },
+                            (resp: any) => {
+                                if (!resp || !resp.success || !resp.keyShare) {
+                                    console.warn(
+                                        "[sessionReadyForReshare] getWalletKeystore failed:",
+                                        chrome.runtime.lastError?.message,
+                                        resp?.error,
+                                    );
+                                    resolve(null);
+                                    return;
+                                }
+                                resolve(resp.keyShare);
+                            },
+                        );
+                    });
+                    if (!keyShare) {
+                        sendToBackground({
+                            type: "fromOffscreen",
+                            payload: {
+                                type: "reshareStateUpdate",
+                                sessionId: payload.sessionInfo.session_id,
+                                walletId: payload.walletId,
+                                state: "Failed",
+                                round1Received: [],
+                                round2Received: [],
+                                participants: payload.sessionInfo.participants ?? [],
+                                error: "Could not load wallet key share — is the keystore unlocked?",
+                            },
+                        });
+                        return;
+                    }
+                    const ok = webRTCManager!.startReshare(
+                        payload.sessionInfo,
+                        payload.walletId,
+                        keyShare,
+                        blockchain,
+                    );
+                    console.log(`[sessionReadyForReshare] startReshare → ${ok}`);
+                })();
+
+                sendResponse({
+                    success: true,
+                    message: "Reshare session registered. Ceremony starts when mesh is ready.",
+                });
+            } else {
+                console.warn("❌ Offscreen: Cannot handle sessionReadyForReshare — missing manager/sessionInfo/walletId");
+                sendResponse({
+                    success: false,
+                    error: "WebRTCManager not ready or missing sessionInfo/walletId",
+                });
+            }
+            break;
+
+        case "getReshareStatus":
+            if (webRTCManager) {
+                sendResponse({ success: true, data: webRTCManager.getReshareStatus() });
+            } else {
+                sendResponse({ success: true, data: { initialized: false } });
             }
             break;
 

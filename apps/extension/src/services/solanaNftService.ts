@@ -12,7 +12,6 @@
  * RPC is a thin injected (method, params) → result function so tests mock
  * it without any network or web3.js Connection machinery.
  */
-import { PublicKey } from "@solana/web3.js";
 import { normalizeUri, type NftItem } from "./nftService";
 
 /** Metaplex Token Metadata program (mainnet/devnet — same id everywhere). */
@@ -68,8 +67,18 @@ export async function discoverSolanaNftMints(
   return [...new Set(mints)];
 }
 
-/** Metadata PDA for a mint: ["metadata", program, mint] under the program. */
-export function metadataPda(mint: string): string {
+/**
+ * Metadata PDA for a mint: ["metadata", program, mint] under the program.
+ *
+ * Async because @solana/web3.js is loaded lazily here (M4 perf): a static
+ * `import { PublicKey }` was the one edge that pulled the whole web3.js
+ * stack (~220 kB min with bn.js/buffer/borsh) into BOTH the popup chunk
+ * (via NftGallery) and the background SW (via nftService) — and it also
+ * defeated rpcHandler's own `await import('@solana/web3.js')`, since a
+ * module that is statically reachable can't be split into a lazy chunk.
+ */
+export async function metadataPda(mint: string): Promise<string> {
+  const { PublicKey } = await import("@solana/web3.js");
   const program = new PublicKey(METAPLEX_METADATA_PROGRAM);
   const [pda] = PublicKey.findProgramAddressSync(
     [new TextEncoder().encode("metadata"), program.toBytes(), new PublicKey(mint).toBytes()],
@@ -120,7 +129,7 @@ export async function fetchSolanaNft(
 ): Promise<NftItem> {
   const item: NftItem = { contract: mint, tokenId: 0n, standard: "metaplex" };
   try {
-    const info = await rpc("getAccountInfo", [metadataPda(mint), { encoding: "base64" }]);
+    const info = await rpc("getAccountInfo", [await metadataPda(mint), { encoding: "base64" }]);
     const b64 = info?.value?.data?.[0];
     if (!b64) return item; // no metadata account — bare mint
     const meta = decodeMetaplexMetadata(b64ToBytes(b64));

@@ -43,13 +43,13 @@ describe("discoverSolanaNftMints", () => {
 });
 
 describe("metadataPda", () => {
-  it('derives ["metadata", program, mint] under the Token Metadata program', () => {
+  it('derives ["metadata", program, mint] under the Token Metadata program', async () => {
     // Snapshot: the canonical metadata PDA for the wSOL mint.
-    expect(metadataPda(MINT)).toBe("6dM4TqWyWJsbx7obrdLcviBkTafD5E8av61zfU6jq57X");
+    expect(await metadataPda(MINT)).toBe("6dM4TqWyWJsbx7obrdLcviBkTafD5E8av61zfU6jq57X");
   });
 
-  it("different mints derive different PDAs", () => {
-    expect(metadataPda(MINT2)).not.toBe(metadataPda(MINT));
+  it("different mints derive different PDAs", async () => {
+    expect(await metadataPda(MINT2)).not.toBe(await metadataPda(MINT));
   });
 });
 
@@ -94,7 +94,7 @@ describe("fetchSolanaNft", () => {
   it("PDA account → borsh → uri JSON, ipfs-normalized", async () => {
     const rpc = jest.fn(async (method: string, params: any[]) => {
       expect(method).toBe("getAccountInfo");
-      expect(params[0]).toBe(metadataPda(MINT));
+      expect(params[0]).toBe(await metadataPda(MINT));
       return { value: { data: [b64(metadataFixture("Lad", "MAD", "ipfs://QmMeta/1.json")), "base64"] } };
     });
     const fetched: string[] = [];

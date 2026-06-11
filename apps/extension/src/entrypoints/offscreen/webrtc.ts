@@ -7,7 +7,6 @@ export { DkgState, MeshStatusType }; // Export DkgState and MeshStatusType
 // Signing state enumeration to track signing process
 export enum SigningState {
   Idle = "Idle",
-  AwaitingAcceptances = "AwaitingAcceptances", // Waiting for peers to accept signing request
   CommitmentPhase = "CommitmentPhase", // FROST Round 1 - collecting commitments
   SharePhase = "SharePhase", // FROST Round 2 - collecting signature shares
   Complete = "Complete", // Signing completed successfully
@@ -52,7 +51,7 @@ export interface SigningInfo {
   acceptances: Map<string, boolean>; // Map peer ID to acceptance status
   accepted_participants: string[];
   selected_signers: string[];
-  step: "pending_acceptance" | "signer_selection" | "commitment_phase" | "share_phase" | "complete";
+  step: "commitment_phase" | "share_phase" | "complete";
   initiator: string;
   final_signature?: string; // Final aggregated signature as string
 }
@@ -1046,52 +1045,6 @@ export class WebRTCManager {
     }
   }
 
-  // Add the initiateSigning method that tests are expecting
-  public initiateSigning(signingId: string, content: any, threshold: number): void {
-    this._log(`Initiating signing process: ${signingId}`);
-
-    if (!this.sessionInfo) {
-      this._log(`Cannot initiate signing: no session info`);
-      return;
-    }
-
-    if (this.signingState !== SigningState.Idle) {
-      this._log(`Cannot initiate signing: signing already in progress (state: ${this.signingState})`);
-      return;
-    }
-
-    // Create signing info
-    this.signingInfo = {
-      signing_id: signingId,
-      transaction_data: typeof content === 'string' ? content : JSON.stringify(content),
-      threshold: threshold,
-      participants: this.sessionInfo.participants.slice(),
-      acceptances: new Map<string, boolean>(), // Initialize empty acceptances map
-      accepted_participants: [this.localPeerId], // Initiator auto-accepts
-      selected_signers: [],
-      step: "pending_acceptance",
-      initiator: this.localPeerId
-    };
-
-    this._updateSigningState(SigningState.AwaitingAcceptances, this.signingInfo);
-
-    // Broadcast signing request to all participants
-    const message: WebRTCAppMessage = {
-      webrtc_msg_type: 'SigningRequest' as const,
-      signing_id: signingId,
-      transaction_data: typeof content === 'string' ? content : JSON.stringify(content),
-      required_signers: threshold
-    };
-
-    this.sessionInfo.participants.forEach(peerId => {
-      if (peerId !== this.localPeerId) {
-        this.sendWebRTCAppMessage(peerId, message);
-      }
-    });
-
-    this._log(`Signing request broadcast to ${this.sessionInfo.participants.length - 1} peers`);
-  }
-
   public handleWebRTCAppMessage(fromPeerId: string, message: WebRTCAppMessage): void {
     this._log(`Handling WebRTC app message from ${fromPeerId}: ${JSON.stringify(message)}`);
 
@@ -1123,15 +1076,6 @@ export class WebRTCManager {
           break;
         case 'ReshareRound2Package':
           this._handleReshareRound2Package(fromPeerId, message as any);
-          break;
-        case 'SigningRequest':
-          this._handleSigningRequest(fromPeerId, message as any);
-          break;
-        case 'SigningAcceptance':
-          this._handleSigningAcceptance(fromPeerId, message as any);
-          break;
-        case 'SignerSelection':
-          this._handleSignerSelection(fromPeerId, message as any);
           break;
         case 'SigningCommitment':
           this._handleSigningCommitment(fromPeerId, message as any);
@@ -1175,70 +1119,6 @@ export class WebRTCManager {
     } else {
       this._log(`Not the initiator, waiting for aggregated signature from ${this.signingInfo.initiator}`);
     }
-  }
-
-  private _selectSignersAndProceed(): void {
-    this._log(`Selecting signers and proceeding with signing process`);
-
-    if (!this.signingInfo) {
-      this._log(`Cannot select signers: no signing info`);
-      return;
-    }
-
-    // Simple signer selection - use the first 'threshold' number of accepted participants
-    const availableSigners = this.signingInfo.accepted_participants.slice(0, this.signingInfo.threshold);
-    this.signingInfo.selected_signers = availableSigners;
-    this.signingInfo.step = "signer_selection";
-
-    // Broadcast signer selection to all participants
-    const message: WebRTCAppMessage = {
-      webrtc_msg_type: 'SignerSelection' as const,
-      signing_id: this.signingInfo.signing_id,
-      selected_signers: this.signingInfo.selected_signers
-    };
-
-    if (this.sessionInfo) {
-      this.sessionInfo.participants.forEach(peerId => {
-        if (peerId !== this.localPeerId) {
-          this.sendWebRTCAppMessage(peerId, message);
-        }
-      });
-    }
-
-    this._log(`Selected signers: [${this.signingInfo.selected_signers.join(', ')}]`);
-
-    // Check if we are selected as a signer
-    const isSelectedSigner = this.signingInfo.selected_signers.includes(this.localPeerId);
-
-    if (isSelectedSigner) {
-      this._log(`We are selected as a signer. Transitioning to CommitmentPhase.`);
-      this._updateSigningState(SigningState.CommitmentPhase, this.signingInfo);
-      this._generateAndSendCommitment();
-    } else {
-      this._log(`We are not selected as a signer. Monitoring signing process.`);
-      this._updateSigningState(SigningState.CommitmentPhase, this.signingInfo);
-    }
-  }
-
-  private _handleSigningTimeout(): void {
-    this._log(`Handling signing timeout`);
-
-    if (this.signingInfo) {
-      this._log(`Signing process ${this.signingInfo.signing_id} timed out`);
-    }
-
-    // Reset signing state to idle
-    this._resetSigningState();
-  }
-
-  // Add all the missing private methods that tests are calling
-  private _resetSigningState(): void {
-    this._log(`Resetting signing state`);
-    this.signingState = SigningState.Idle;
-    this.signingInfo = null;
-    this.signingCommitments.clear();
-    this.signingShares.clear();
-    this.onSigningStateUpdate(this.signingState, this.signingInfo);
   }
 
   private _processPeerMeshReady(fromPeerId: string): void {
@@ -2578,10 +2458,7 @@ export class WebRTCManager {
 
   /**
    * Ext-2d-offscreen: kick off a signing ceremony announced via the
-   * session-discovery protocol (sessionReadyForSigning). This is the
-   * real-FROST version; the older `_handleSigningRequest` + mock-
-   * commitment path is a separate legacy flow that we're leaving
-   * in place for now.
+   * session-discovery protocol (sessionReadyForSigning).
    *
    * Flow:
    *   1. Ensure `this.frostDkg` is loaded (caller must run
@@ -2597,9 +2474,6 @@ export class WebRTCManager {
    *      self).
    *   5. Record our own commitment locally so we can match on it
    *      when aggregating later.
-   *
-   * Rounds 2 (signature share) + aggregation land in follow-up
-   * commits — `_handleSigningCommitment` still uses mocks.
    */
   public async initiateSigningCeremony(
     sessionInfo: SessionInfo,
@@ -2751,85 +2625,6 @@ export class WebRTCManager {
   }
 
   // Signing-related handler methods
-  private _handleSigningRequest(fromPeerId: string, message: any): void {
-    this._log(`Handling signing request from ${fromPeerId}`);
-
-    if (this.signingState !== SigningState.Idle || this.signingInfo !== null) {
-      this._log(`Ignoring signing request: already in signing process`);
-      return;
-    }
-
-    // Initialize signing info for the request
-    this.signingInfo = {
-      signing_id: message.signing_id,
-      transaction_data: message.transaction_data,
-      threshold: message.threshold,
-      participants: message.participants,
-      acceptances: new Map<string, boolean>(),
-      accepted_participants: [],
-      selected_signers: [],
-      step: "pending_acceptance",
-      initiator: fromPeerId
-    };
-
-    // Auto-accept the signing request (in real implementation, this might require user confirmation)
-    const response: WebRTCAppMessage = {
-      webrtc_msg_type: 'SigningAcceptance' as const,
-      signing_id: message.signing_id,
-      accepted: true
-    };
-
-    this.sendWebRTCAppMessage(fromPeerId, response);
-    this._log(`Accepted signing request ${message.signing_id} from ${fromPeerId}`);
-  }
-
-  private _handleSigningAcceptance(fromPeerId: string, message: any): void {
-    this._log(`Handling signing acceptance from ${fromPeerId}: ${message.accepted}`);
-
-    if (!this.signingInfo || this.signingInfo.signing_id !== message.signing_id) {
-      this._log(`Ignoring signing acceptance: no matching signing process`);
-      return;
-    }
-
-    // Record the acceptance in the map
-    this.signingInfo.acceptances.set(fromPeerId, message.accepted);
-
-    if (message.accepted && !this.signingInfo.accepted_participants.includes(fromPeerId)) {
-      this.signingInfo.accepted_participants.push(fromPeerId);
-      this._log(`${fromPeerId} accepted signing. Total acceptances: ${this.signingInfo.accepted_participants.length}`);
-
-      // Check if we have enough acceptances to proceed
-      if (this.signingInfo.accepted_participants.length >= this.signingInfo.threshold) {
-        this._log(`Sufficient acceptances received. Proceeding with signer selection.`);
-        this._selectSignersAndProceed();
-      }
-    }
-  }
-
-  private _handleSignerSelection(fromPeerId: string, message: any): void {
-    this._log(`Handling signer selection from ${fromPeerId}`);
-
-    if (!this.signingInfo || this.signingInfo.signing_id !== message.signing_id) {
-      this._log(`Ignoring signer selection: no matching signing process`);
-      return;
-    }
-
-    this.signingInfo.selected_signers = message.selected_signers;
-    this.signingInfo.step = "commitment_phase";
-
-    // Check if we are selected as a signer
-    const isSelectedSigner = this.signingInfo.selected_signers.includes(this.localPeerId);
-
-    if (isSelectedSigner) {
-      this._log(`We are selected as a signer. Generating commitment.`);
-      this._updateSigningState(SigningState.CommitmentPhase, this.signingInfo);
-      this._generateAndSendCommitment();
-    } else {
-      this._log(`We are not selected as a signer. Monitoring signing process.`);
-      this._updateSigningState(SigningState.CommitmentPhase, this.signingInfo);
-    }
-  }
-
   /**
    * Ext-2d-offscreen-rounds: real FROST round-1 commitment handler.
    * Replaces the pre-existing mock that just stored opaque blobs.
@@ -2897,8 +2692,8 @@ export class WebRTCManager {
     this._emitSigningProgress();
 
     // When we've collected commitments from all selected signers
-    // (including our own, which was recorded in initiateSigningCeremony
-    // or _generateAndSendCommitment), move to the share phase.
+    // (including our own, which was recorded in initiateSigningCeremony),
+    // move to the share phase.
     if (
       this.signingCommitments.size >= this.signingInfo.selected_signers.length
     ) {
@@ -3012,35 +2807,6 @@ export class WebRTCManager {
     this._log(
       `Signing process ${this.signingInfo.signing_id} completed (received aggregated sig from ${fromPeerId})`,
     );
-  }
-
-  private _generateAndSendCommitment(): void {
-    this._log(`Generating and sending commitment`);
-
-    if (!this.signingInfo) return;
-
-    // Mock commitment generation
-    const commitment = {
-      data: `commitment-${this.localPeerId}-${Date.now()}`,
-      participant: this.localPeerId
-    };
-
-    // Send commitment to all selected signers
-    const message: WebRTCAppMessage = {
-      webrtc_msg_type: 'SigningCommitment' as const,
-      signing_id: this.signingInfo.signing_id,
-      sender_identifier: this.localPeerId,
-      commitment: commitment
-    };
-
-    this.signingInfo.selected_signers.forEach(peerId => {
-      if (peerId !== this.localPeerId) {
-        this.sendWebRTCAppMessage(peerId, message);
-      }
-    });
-
-    // Add our own commitment
-    this.signingCommitments.set(this.localPeerId, commitment);
   }
 
   /**
@@ -3195,66 +2961,6 @@ export class WebRTCManager {
       receivedRound2Packages: Array.from(this.receivedRound2Packages),
       frostDkgInitialized: this.frostDkg !== null
     };
-  }
-
-  // --- Test Support Methods ---
-  // These methods are added to support error handling tests
-
-  private _handleDataChannelFailure(peerId: string): void {
-    this._log(`Handling data channel failure for ${peerId}`);
-    // Clean up any existing connection state
-    this.dataChannels.delete(peerId);
-    this.peerConnections.delete(peerId);
-    this.onWebRTCConnectionUpdate(peerId, false);
-  }
-
-  private _handleConnectionTimeout(peerId: string): void {
-    this._log(`Handling connection timeout for ${peerId}`);
-    // Clean up any existing connection state and notify about timeout
-    const pc = this.peerConnections.get(peerId);
-    if (pc) {
-      pc.close();
-      this.peerConnections.delete(peerId);
-    }
-    this.dataChannels.delete(peerId);
-    this.onWebRTCConnectionUpdate(peerId, false);
-  }
-
-  private async _handleWebRTCMessage(fromPeerId: string, message: any): Promise<void> {
-    this._log(`Handling WebRTC message from ${fromPeerId}: ${JSON.stringify(message)}`);
-
-    if (!message) {
-      this._log(`Received null/undefined message from ${fromPeerId}`);
-      return;
-    }
-
-    // Delegate to existing message handler
-    // Check if it's a valid WebRTCAppMessage (Rust enum format)
-    if (message && typeof message === 'object' && Object.keys(message).length > 0) {
-      this.handleWebRTCAppMessage(fromPeerId, message);
-    } else {
-      this._log(`Unknown message format from ${fromPeerId}: ${JSON.stringify(message)}`);
-    }
-  }
-
-  // Add the missing method that tests expect
-  private _generateSigningCommitment(): void {
-    this._log(`Generating signing commitment`);
-
-    if (!this.signingInfo) {
-      this._log(`Cannot generate commitment: no signing info`);
-      return;
-    }
-
-    // This is just the commitment generation part without sending
-    const commitment = {
-      data: `commitment-${this.localPeerId}-${Date.now()}`,
-      participant: this.localPeerId
-    };
-
-    // Add our own commitment
-    this.signingCommitments.set(this.localPeerId, commitment);
-    this._log(`Generated commitment for local peer`);
   }
 
   // Add the missing initiatePeerConnection method that offscreen/index.ts calls

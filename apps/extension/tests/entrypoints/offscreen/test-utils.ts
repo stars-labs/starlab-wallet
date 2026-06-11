@@ -29,10 +29,6 @@ export function isWasmInitialized(): boolean {
     return wasmInitialized;
 }
 
-export function hexEncode(str: string): string {
-    return Buffer.from(str, 'utf8').toString('hex');
-}
-
 // Extract package from DKG package map for specific recipient.
 //
 // The WASM's generate_round2 output layout:
@@ -66,15 +62,6 @@ export const createTestSessionInfo = () => ({
 
 // Dummy send function for WebRTCManager
 export const dummySend = (_todeviceId: string, _message: any) => { };
-
-// Create mock data channel for testing
-export const createMockDataChannel = () => ({
-    readyState: 'open',
-    send: () => { },
-    close: () => { },
-    addEventListener: () => { },
-    removeEventListener: () => { }
-});
 
 // Create and initialize FROST DKG instances for testing
 export async function createTestDkgInstances(isSecp256k1: boolean = false): Promise<{

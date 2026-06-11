@@ -15,13 +15,10 @@
 // ===================================================================
 
 import { defineBackground } from '#imports';
-import { MESSAGE_PREFIX, MessageType } from '../../constants';
 import AccountService from '../../services/accountService';
 import NetworkService from '../../services/networkService';
 import WalletClientService from '../../services/walletClient';
 import { KeystoreManager } from '../../services/keystoreManager';
-import { toHex } from 'viem';
-import WalletController from "../../services/walletController";
 import { WebSocketClient } from "./websocket";
 
 // Import modular components
@@ -37,33 +34,16 @@ import { KeepaliveController } from './keepaliveController';
 import { YubiKeyManager } from './yubikeyManager';
 
 // Import types
-import { AppState, INITIAL_APP_STATE } from "@stars-labs/types/appstate";
-import { SessionProposal, SessionResponse, SessionInfo } from "@stars-labs/types/session";
+import { INITIAL_APP_STATE } from "@stars-labs/types/appstate";
 import { getSignalServerUrl } from "../../config/signal-server";
-import { MeshStatusType, MeshStatus } from "@stars-labs/types/mesh";
 import { DkgState } from "@stars-labs/types/dkg";
 import {
-    type JsonRpcRequest,
     type PopupToBackgroundMessage,
-    type BackgroundToOffscreenMessage,
-    type BackgroundToPopupMessage,
     type OffscreenToBackgroundMessage,
-    type BackgroundToOffscreenWrapper,
-    type InitialStateMessage,
     validateMessage,
-    validateSessionProposal,
-    validateSessionAcceptance,
     isRpcMessage,
-    isAccountManagement,
-    isNetworkManagement,
-    isUIRequest,
     MESSAGE_TYPES,
-    // Legacy aliases for backward compatibility
-    type BackgroundMessage,
-    type OffscreenMessage,
-    type PopupMessage,
 } from "@stars-labs/types/messages";
-import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from "@stars-labs/types/websocket";
 
 // ===================================================================
 // SERVICE INITIALIZATION AND GLOBAL STATE

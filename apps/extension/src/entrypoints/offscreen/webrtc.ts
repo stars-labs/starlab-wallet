@@ -1826,24 +1826,42 @@ export class WebRTCManager {
       `Loading keystore for signing: ${blockchain} / participant ${keyShareData.participant_index} / session ${keyShareData.session_id}`,
     );
 
-    const { FrostDkgSecp256k1, FrostDkgEd25519 } = await import(
-      "@stars-labs/core-wasm"
-    );
+    const {
+      FrostDkgSecp256k1,
+      FrostDkgEd25519,
+      derive_child_keystore_secp256k1,
+      derive_child_keystore_ed25519,
+      standard_account_path,
+    } = await import("@stars-labs/core-wasm");
     const instance =
       blockchain === "ethereum"
         ? new FrostDkgSecp256k1()
         : new FrostDkgEd25519();
-    instance.import_keystore(
-      JSON.stringify({
-        key_package: keyShareData.key_package,
-        group_public_key: keyShareData.group_public_key,
-        session_id: keyShareData.session_id,
-        device_id: keyShareData.device_id,
-        participant_index: keyShareData.participant_index,
-        threshold: keyShareData.threshold,
-        total_participants: keyShareData.total_participants,
-      }),
-    );
+    const parentJson = JSON.stringify({
+      key_package: keyShareData.key_package,
+      group_public_key: keyShareData.group_public_key,
+      session_id: keyShareData.session_id,
+      device_id: keyShareData.device_id,
+      participant_index: keyShareData.participant_index,
+      threshold: keyShareData.threshold,
+      total_participants: keyShareData.total_participants,
+    });
+    // BIP-44 all the way: the ROOT key never signs. Derive ACCOUNT 0's child
+    // keystore (pinned standard path) and sign with that — deterministic, so
+    // every co-signer derives the same child from its own share and the
+    // ceremony aggregates under the account-0 group key, matching the
+    // account-0 address the popup displays. Per-session account selection
+    // (account N) needs the path carried in the session announce — follow-up.
+    const accountPath = standard_account_path(
+      blockchain === "ethereum" ? "ethereum" : "solana",
+      0,
+    )!;
+    const childJson =
+      blockchain === "ethereum"
+        ? derive_child_keystore_secp256k1(parentJson, accountPath)
+        : derive_child_keystore_ed25519(parentJson, accountPath);
+    this._log(`Signing with account 0 (${accountPath}) — root key never signs`);
+    instance.import_keystore(childJson);
 
     this.frostDkg = instance;
     this.groupPublicKey = keyShareData.group_public_key;

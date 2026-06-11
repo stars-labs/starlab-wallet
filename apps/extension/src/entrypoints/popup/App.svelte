@@ -2066,7 +2066,14 @@
         {#if !appState.sessionInfo && appState.invites && appState.invites.length > 0}
             {@const joinable = appState.invites.filter(
                 (inv) =>
-                    (inv.session_type ?? "dkg") === "dkg" &&
+                    ((inv.session_type ?? "dkg") === "dkg" ||
+                        // M3 reshare: only show if we hold a share in
+                        // the wallet's current cohort — outsiders
+                        // can't participate in a reshare.
+                        (inv.session_type === "reshare" &&
+                            (inv.reshare_old_participants ?? []).includes(
+                                appState.deviceId,
+                            ))) &&
                     inv.proposer_id !== appState.deviceId &&
                     (inv.participants?.length ?? 0) <
                         (inv.total ?? Number.POSITIVE_INFINITY),
@@ -2087,12 +2094,24 @@
                                                 ? "solana"
                                                 : "ethereum",
                                         )}
+                                        {#if inv.session_type === "reshare"}
+                                            <span class="badge badge-info"
+                                                >Reshare</span
+                                            >
+                                        {/if}
                                     </p>
                                     <p class="truncate text-xs text-muted">
                                         from {inv.proposer_id} ·
                                         {inv.participants?.length ?? 0}/{inv.total}
                                         joined
                                     </p>
+                                    {#if inv.session_type === "reshare"}
+                                        <p class="truncate text-xs text-muted">
+                                            Rotates shares of wallet
+                                            {inv.wallet_name ?? "(unknown)"} —
+                                            addresses stay the same
+                                        </p>
+                                    {/if}
                                 </div>
                                 <Button
                                     size="sm"

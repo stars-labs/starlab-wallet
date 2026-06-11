@@ -772,6 +772,140 @@ export class SessionManager {
             return { success: false, error: (error as Error).message };
         }
     }
+
+    /**
+     * M3 reshare: announce a share-rotation ceremony for an existing
+     * wallet. Sibling of `createSigningSession` on the announce side:
+     *
+     *   - session_type: "reshare"
+     *   - threshold/total describe the NEW cohort
+     *   - wallet_name carries the wallet id (the joiners use it to
+     *     locate their own share for the same wallet)
+     *   - reshare_old_participants carries the CURRENT cohort so all
+     *     devices derive identical FROST identifiers (sorted order)
+     *
+     * The engine's reshare requires every NEW participant to already
+     * hold a share, so newParticipants must be a subset of
+     * oldParticipants and must include this device. The ceremony
+     * itself starts when ALL newTotal devices have joined
+     * (maybeTriggerCeremony fires sessionReadyForReshare).
+     */
+    async createReshareSession(config: {
+        walletId: string;
+        walletName?: string;
+        groupPublicKey: string;
+        blockchain: "ethereum" | "solana";
+        newThreshold: number;
+        oldParticipants: string[];
+        newParticipants: string[];
+    }): Promise<{ success: boolean; sessionId?: string; error?: string }> {
+        if (!this.wsClient || this.wsClient.getReadyState() !== WebSocket.OPEN) {
+            return { success: false, error: "WebSocket not connected" };
+        }
+        if (!config.walletId || !config.groupPublicKey) {
+            return { success: false, error: "walletId and groupPublicKey required" };
+        }
+        const oldParticipants = [...new Set(config.oldParticipants)].sort();
+        const newParticipants = [...new Set(config.newParticipants)].sort();
+        if (oldParticipants.length < 2) {
+            return {
+                success: false,
+                error: "Wallet metadata doesn't carry the full cohort — cannot reshare",
+            };
+        }
+        const outsiders = newParticipants.filter(
+            (p) => !oldParticipants.includes(p),
+        );
+        if (outsiders.length > 0) {
+            return {
+                success: false,
+                error: `New cohort members must already hold a share: ${outsiders.join(", ")}`,
+            };
+        }
+        const currentDeviceId = this.stateManager
+            ? this.stateManager.getState().deviceId
+            : this.appState.deviceId;
+        if (!newParticipants.includes(currentDeviceId)) {
+            return {
+                success: false,
+                error: "This device must be part of the new cohort",
+            };
+        }
+        if (newParticipants.length < 2) {
+            return { success: false, error: "New cohort must have ≥2 devices" };
+        }
+        if (
+            !Number.isInteger(config.newThreshold) ||
+            config.newThreshold < 1 ||
+            config.newThreshold > newParticipants.length
+        ) {
+            return {
+                success: false,
+                error: "newThreshold must be 1..newTotal",
+            };
+        }
+
+        const sessionId = `reshare_${cryptoHex(12)}`;
+        const curveType =
+            config.blockchain === "ethereum" ? "secp256k1" : "ed25519";
+
+        const sessionInfo: SessionInfo = {
+            session_id: sessionId,
+            proposer_id: currentDeviceId,
+            total: newParticipants.length,
+            threshold: config.newThreshold,
+            participants: [currentDeviceId],
+            session_type: "reshare",
+            curve_type: curveType,
+            coordination_type: "Network",
+            wallet_name: config.walletId,
+            group_public_key: config.groupPublicKey,
+            blockchain: config.blockchain,
+            reshare_old_participants: oldParticipants,
+            accepted_devices: [currentDeviceId],
+        };
+
+        this.appState.sessionInfo = sessionInfo;
+        this.appState.invites = [
+            ...(this.appState.invites ?? []).filter(
+                (s) => s.session_id !== sessionId,
+            ),
+            sessionInfo,
+        ];
+        this.appState.dkgState = DkgState.Initializing;
+        if (this.stateManager) {
+            this.stateManager.updateState({
+                sessionInfo,
+                invites: this.appState.invites,
+                dkgState: DkgState.Initializing,
+                blockchain: config.blockchain,
+            });
+        }
+
+        try {
+            const wire = buildWireSessionInfo(sessionInfo);
+            this.wsClient.announceSession(wire);
+            console.log(
+                `[SessionManager] Created reshare session ${sessionId} for wallet ${config.walletId} (${config.newThreshold}/${newParticipants.length} ${curveType}, old cohort ${oldParticipants.length})`,
+            );
+            this.broadcastToPopup({
+                type: "reshareSessionCreated",
+                sessionInfo,
+            } as any);
+            return { success: true, sessionId };
+        } catch (error) {
+            console.error("[SessionManager] createReshareSession failed:", error);
+            this.appState.sessionInfo = null;
+            this.appState.dkgState = DkgState.Idle;
+            if (this.stateManager) {
+                this.stateManager.updateState({
+                    sessionInfo: null,
+                    dkgState: DkgState.Idle,
+                });
+            }
+            return { success: false, error: (error as Error).message };
+        }
+    }
 }
 
 /**

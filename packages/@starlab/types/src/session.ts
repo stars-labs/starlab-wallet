@@ -24,8 +24,15 @@
  * ceremony-specific fields (wallet_name, group_public_key,
  * blockchain, signing_message_hex) live as top-level siblings of
  * `session_type`, not inside a nested content object.
+ *
+ * "reshare" (M3 device rotation): rotate / redistribute the key
+ * shares of an EXISTING wallet without changing the group public
+ * key. Carries the same wallet-identifying siblings as signing
+ * (wallet_name, group_public_key, blockchain) plus
+ * `reshare_old_participants` (the wallet's current cohort, so every
+ * joiner maps device ids → FROST identifiers consistently).
  */
-export type SessionTypeTag = "dkg" | "signing";
+export type SessionTypeTag = "dkg" | "signing" | "reshare";
 
 /**
  * Represents a session in the MPC wallet system.
@@ -74,6 +81,14 @@ export interface SessionInfo {
     blockchain?: string;
     /** Signing-only: hex-encoded payload to sign. `undefined` on DKG. */
     signing_message_hex?: string;
+
+    // ----- Reshare-only field (top-level sibling, like signing's) -----
+    /** Reshare-only: the wallet's CURRENT cohort (sorted device ids).
+     *  Every member of the NEW cohort must appear here — the engine's
+     *  reshare requires every new participant to already hold a
+     *  share. FROST identifiers are derived from the sorted position
+     *  in THIS list (old indices), not the session's participants. */
+    reshare_old_participants?: string[];
 
     // ----- Extension-local bookkeeping (not on the TUI wire) -----
 

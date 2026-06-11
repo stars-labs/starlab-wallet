@@ -105,6 +105,11 @@ export type BackgroundToOffscreenMessage = BaseMessage & (
     // session reaches threshold (see webSocketManager.maybeTriggerCeremony);
     // offscreen loads keystore + kicks off FROST round 1.
     | { type: 'sessionReadyForSigning'; sessionInfo: SessionInfo; blockchain?: "ethereum" | "solana" }
+    // M3 reshare: ceremony trigger. Fires when a reshare session's
+    // full NEW cohort has joined (maybeTriggerCeremony); offscreen
+    // fetches the wallet's keystore (getWalletKeystore) and runs
+    // the FROST reshare rounds over the mesh.
+    | { type: 'sessionReadyForReshare'; sessionInfo: SessionInfo; blockchain?: "ethereum" | "solana"; walletId: string }
     // Keystore WASM export: background requests offscreen dump the
     // serialized keystore JSON after DKG finalize or import, so it
     // can be encrypted + persisted via KeystoreManager.
@@ -169,6 +174,34 @@ export type OffscreenToBackgroundMessage = BaseMessage & (
         sessionId?: string;
       }
     | { type: 'signingError'; signingId: string; error: string }
+    // M3 reshare: per-round progress. `state` is the ReshareState
+    // string name; received counts let the popup render "round N
+    // (k/n packages)".
+    | {
+        type: 'reshareStateUpdate';
+        sessionId: string;
+        walletId: string;
+        state: string;
+        round1Received: string[];
+        round2Received: string[];
+        participants: string[];
+        error?: string;
+      }
+    // M3 reshare: ceremony finalized. Carries the NEW keystore JSON
+    // (same group public key, fresh shares) — stateManager replaces
+    // the wallet's stored encrypted share with this.
+    | {
+        type: 'reshareComplete';
+        sessionId: string;
+        walletId: string;
+        newKeystoreJson: string;
+        groupPublicKey: string;
+        threshold: number;
+        total: number;
+        participants: string[];
+        participantIndex: number | null;
+        blockchain: 'ethereum' | 'solana';
+      }
     | { type: 'messageSignatureComplete'; signingId: string; signature: string }
     | { type: 'messageSignatureError'; signingId: string; error: string }
 );
@@ -336,6 +369,19 @@ export const MESSAGE_TYPES = {
     // the signal server to the proposer so they see a toast
     // (not a silent timeout). Payload: {session_id}.
     DECLINE_SIGNING_SESSION: "declineSigningSession",
+    // M3 reshare: rotate / redistribute an existing wallet's key
+    // shares without changing the group public key. Mirror of
+    // CREATE_SIGNING_SESSION on the announce side: builds
+    // session_info with session_type="reshare", wallet_name,
+    // group_public_key, blockchain, and reshare_old_participants,
+    // then announces. Payload:
+    // {walletId, newThreshold?, removeDeviceIds?}.
+    CREATE_RESHARE_SESSION: "createReshareSession",
+    // M3 reshare: popup → background "what cohort does wallet X
+    // have?" — returns {threshold, total, participants, deviceId,
+    // groupPublicKey, curve} from the decrypted key share (keystore
+    // must be unlocked). Payload: {walletId}.
+    GET_WALLET_COHORT: "getWalletCohort",
     RELAY: "relay",
     FROM_OFFSCREEN: "fromOffscreen",
     OFFSCREEN_READY: "offscreenReady",

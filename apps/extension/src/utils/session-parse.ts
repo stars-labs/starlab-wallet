@@ -52,12 +52,14 @@ export function parseSessionInfoFromWire(raw: unknown): SessionInfo | null {
         typeof r.coordination_type === "string" ? r.coordination_type : "Network";
 
     // session_type on the wire is a flat lowercase string ("dkg" /
-    // "signing"). We accept any string but narrow to the union when
-    // the match succeeds; unknown tags degrade to undefined so
-    // consumers treat them as "legacy payload" rather than DKG.
+    // "signing" / "reshare"). We accept any string but narrow to the
+    // union when the match succeeds; unknown tags degrade to undefined
+    // so consumers treat them as "legacy payload" rather than DKG.
     const tagRaw = typeof r.session_type === "string" ? r.session_type : "dkg";
     const session_type: SessionTypeTag | undefined =
-        tagRaw === "dkg" || tagRaw === "signing" ? tagRaw : undefined;
+        tagRaw === "dkg" || tagRaw === "signing" || tagRaw === "reshare"
+            ? tagRaw
+            : undefined;
 
     const wallet_name =
         typeof r.wallet_name === "string" ? r.wallet_name : undefined;
@@ -73,6 +75,14 @@ export function parseSessionInfoFromWire(raw: unknown): SessionInfo | null {
             : typeof r.message_hex === "string"
               ? (r.message_hex as string)
               : undefined;
+
+    // Reshare-only: the wallet's CURRENT cohort. Required for every
+    // joiner to derive consistent FROST identifiers (old indices).
+    const reshare_old_participants = Array.isArray(r.reshare_old_participants)
+        ? r.reshare_old_participants.filter(
+              (v): v is string => typeof v === "string",
+          )
+        : undefined;
 
     // accepted_devices: extension-local bookkeeping. If the sender
     // included one (another extension peer, or a re-sent
@@ -96,6 +106,7 @@ export function parseSessionInfoFromWire(raw: unknown): SessionInfo | null {
         group_public_key,
         blockchain,
         signing_message_hex,
+        reshare_old_participants,
         accepted_devices,
         status,
     };
@@ -120,14 +131,21 @@ export function buildWireSessionInfo(s: SessionInfo): Record<string, unknown> {
         curve_type: s.curve_type ?? "secp256k1",
         coordination_type: s.coordination_type ?? "Network",
     };
-    if (s.session_type === "signing") {
+    if (s.session_type === "signing" || s.session_type === "reshare") {
         if (s.wallet_name !== undefined) base.wallet_name = s.wallet_name;
         if (s.group_public_key !== undefined) {
             base.group_public_key = s.group_public_key;
         }
         if (s.blockchain !== undefined) base.blockchain = s.blockchain;
+    }
+    if (s.session_type === "signing") {
         if (s.signing_message_hex !== undefined) {
             base.signing_message_hex = s.signing_message_hex;
+        }
+    }
+    if (s.session_type === "reshare") {
+        if (s.reshare_old_participants !== undefined) {
+            base.reshare_old_participants = s.reshare_old_participants;
         }
     }
     return base;

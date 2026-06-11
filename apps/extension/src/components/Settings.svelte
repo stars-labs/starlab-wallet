@@ -14,6 +14,7 @@
     import { themeMode, setTheme, type ThemeMode } from "../lib/theme";
     import Button from "../lib/ui/Button.svelte";
     import Icon from "../lib/ui/Icon.svelte";
+    import ReshareCard from "./ReshareCard.svelte";
     import {
         getRoom,
         setRoom,
@@ -740,6 +741,9 @@
             <p class="text-xs text-muted">{backupStatus}</p>
         {/if}
     </div>
+
+    <!-- Devices / Reshare (M3 #23): rotate shares or retire a device -->
+    <ReshareCard />
 
     <!-- Tokens (#21): tracked list + custom add + auto-discovery -->
     <div class="card card-pad space-y-2">

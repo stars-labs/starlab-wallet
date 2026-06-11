@@ -202,6 +202,22 @@ export class PopupMessageHandler {
                     await this.handleCreateSigningSessionRequest(message, sendResponse);
                     break;
 
+                case MESSAGE_TYPES.CREATE_RESHARE_SESSION:
+                    console.log("🔁 [PopupMessageHandler] CREATE_RESHARE_SESSION: Initiating share rotation");
+                    await this.handleCreateReshareSessionRequest(message, sendResponse);
+                    break;
+
+                case MESSAGE_TYPES.GET_WALLET_COHORT:
+                    await this.handleGetWalletCohortRequest(message, sendResponse);
+                    break;
+
+                case "getWalletKeystore":
+                    // Offscreen → background: decrypted key share for a
+                    // SPECIFIC wallet (a reshare may target a non-active
+                    // wallet). Sibling of getActiveKeystore.
+                    await this.handleGetWalletKeystoreMessage(message, sendResponse);
+                    break;
+
                 case MESSAGE_TYPES.ACCEPT_SESSION:
                     console.log("🔐 [PopupMessageHandler] ACCEPT_SESSION: Accepting MPC session invite");
                     await this.handleAcceptSessionRequest(message, sendResponse);
@@ -865,6 +881,215 @@ export class PopupMessageHandler {
             sendResponse({
                 success: false,
                 error: (err as Error).message ?? String(err),
+            });
+        }
+    }
+
+    /**
+     * M3 reshare: popup → background "rotate the shares of wallet X"
+     * or "replace a lost device". Payload:
+     *   {walletId, newThreshold?, removeDeviceIds?: string[]}
+     *
+     * The wallet's decrypted key share is the source of truth for the
+     * CURRENT cohort (participants/threshold/total/group key) — the
+     * popup is never trusted to supply cryptographic parameters. The
+     * new cohort is the old cohort minus `removeDeviceIds` (the
+     * engine's reshare can only redistribute among devices that
+     * already hold a share — onboarding a brand-new device needs
+     * engine support, see issue follow-up).
+     */
+    private async handleCreateReshareSessionRequest(
+        message: any,
+        sendResponse: (response: any) => void,
+    ): Promise<void> {
+        try {
+            const walletId = message.walletId;
+            if (typeof walletId !== "string" || !walletId) {
+                sendResponse({ success: false, error: "walletId required" });
+                return;
+            }
+            const removeDeviceIds: string[] = Array.isArray(message.removeDeviceIds)
+                ? message.removeDeviceIds.filter((v: unknown) => typeof v === "string")
+                : [];
+
+            const { KeystoreManager } = await import(
+                "../../services/keystoreManager"
+            );
+            const km = KeystoreManager.getInstance();
+            if (km.isLocked()) {
+                sendResponse({
+                    success: false,
+                    error: "Keystore is locked — unlock before resharing",
+                });
+                return;
+            }
+            const keyShare: any = await km.getKeyShare(walletId);
+            if (!keyShare) {
+                sendResponse({
+                    success: false,
+                    error: `No key share stored for wallet ${walletId}`,
+                });
+                return;
+            }
+
+            const oldParticipants: string[] = Array.isArray(keyShare.participants)
+                ? [...keyShare.participants].sort()
+                : [];
+            if (oldParticipants.length < 2) {
+                sendResponse({
+                    success: false,
+                    error:
+                        "This wallet's record doesn't list its full cohort (e.g. CLI import) — resharing needs the complete device list",
+                });
+                return;
+            }
+            const myDeviceId = this.stateManager.getState().deviceId;
+            if (!oldParticipants.includes(myDeviceId)) {
+                sendResponse({
+                    success: false,
+                    error: `This device (${myDeviceId}) is not in the wallet's cohort`,
+                });
+                return;
+            }
+            if (removeDeviceIds.includes(myDeviceId)) {
+                sendResponse({
+                    success: false,
+                    error: "Cannot remove this device — run the reshare from a device that stays",
+                });
+                return;
+            }
+            const unknownRemovals = removeDeviceIds.filter(
+                (d) => !oldParticipants.includes(d),
+            );
+            if (unknownRemovals.length > 0) {
+                sendResponse({
+                    success: false,
+                    error: `Not in the cohort: ${unknownRemovals.join(", ")}`,
+                });
+                return;
+            }
+
+            const newParticipants = oldParticipants.filter(
+                (d) => !removeDeviceIds.includes(d),
+            );
+            const newThreshold = Number.isInteger(message.newThreshold)
+                ? Number(message.newThreshold)
+                : Math.min(Number(keyShare.threshold) || 2, newParticipants.length);
+
+            const blockchain: "ethereum" | "solana" =
+                keyShare.curve === "ed25519" ? "solana" : "ethereum";
+            const wallet = km
+                .getWallets()
+                .find((w: any) => w.id === walletId) as any;
+
+            const result = await this.sessionManager.createReshareSession({
+                walletId,
+                walletName: wallet?.name ?? walletId,
+                groupPublicKey: keyShare.group_public_key ?? "",
+                blockchain,
+                newThreshold,
+                oldParticipants,
+                newParticipants,
+            });
+            sendResponse(result);
+        } catch (err) {
+            console.error(
+                "[PopupMessageHandler] CREATE_RESHARE_SESSION failed:",
+                err,
+            );
+            sendResponse({
+                success: false,
+                error: (err as Error).message ?? String(err),
+            });
+        }
+    }
+
+    /**
+     * M3 reshare: cohort metadata for the popup's Devices/Reshare
+     * card. Read-only view over the decrypted key share — no key
+     * material leaves the background.
+     */
+    private async handleGetWalletCohortRequest(
+        message: any,
+        sendResponse: (response: any) => void,
+    ): Promise<void> {
+        try {
+            const walletId = message.walletId;
+            if (typeof walletId !== "string" || !walletId) {
+                sendResponse({ success: false, error: "walletId required" });
+                return;
+            }
+            const { KeystoreManager } = await import(
+                "../../services/keystoreManager"
+            );
+            const km = KeystoreManager.getInstance();
+            if (km.isLocked()) {
+                sendResponse({ success: false, error: "Keystore is locked" });
+                return;
+            }
+            const keyShare: any = await km.getKeyShare(walletId);
+            if (!keyShare) {
+                sendResponse({
+                    success: false,
+                    error: `No key share stored for wallet ${walletId}`,
+                });
+                return;
+            }
+            sendResponse({
+                success: true,
+                cohort: {
+                    walletId,
+                    deviceId: this.stateManager.getState().deviceId,
+                    threshold: keyShare.threshold,
+                    total: keyShare.total_participants,
+                    participants: Array.isArray(keyShare.participants)
+                        ? [...keyShare.participants].sort()
+                        : [],
+                    curve: keyShare.curve,
+                    groupPublicKey: keyShare.group_public_key ?? "",
+                },
+            });
+        } catch (err) {
+            sendResponse({
+                success: false,
+                error: (err as Error).message ?? String(err),
+            });
+        }
+    }
+
+    /**
+     * M3 reshare: offscreen requests the decrypted key share of a
+     * specific wallet to feed FrostReshare*.init_reshare. Same trust
+     * boundary as getActiveKeystore (offscreen is extension-owned).
+     */
+    private async handleGetWalletKeystoreMessage(
+        message: any,
+        sendResponse: (response: any) => void,
+    ): Promise<void> {
+        try {
+            const walletId = message.walletId;
+            if (typeof walletId !== "string" || !walletId) {
+                sendResponse({ success: false, error: "walletId required" });
+                return;
+            }
+            const keystoreManager = KeystoreManager.getInstance();
+            if (keystoreManager.isLocked()) {
+                sendResponse({ success: false, error: "Keystore is locked" });
+                return;
+            }
+            const keyShare = await keystoreManager.getKeyShare(walletId);
+            if (!keyShare) {
+                sendResponse({
+                    success: false,
+                    error: `No key share for wallet ${walletId}`,
+                });
+                return;
+            }
+            sendResponse({ success: true, keyShare });
+        } catch (error) {
+            sendResponse({
+                success: false,
+                error: (error as Error).message ?? String(error),
             });
         }
     }

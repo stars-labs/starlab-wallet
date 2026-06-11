@@ -260,6 +260,28 @@ export class KeystoreManager {
     }
     
     /**
+     * M3 reshare: replace an existing wallet's key share in place
+     * (same wallet id / group key / addresses, fresh share material).
+     */
+    public async updateWalletKeyShare(
+        walletId: string,
+        keyShareData: KeyShareData
+    ): Promise<boolean> {
+        if (this.isLocked()) {
+            console.error('[KeystoreManager] Cannot update key share - keystore is locked');
+            return false;
+        }
+
+        try {
+            await this.keystoreService.updateWalletKeyShare(walletId, keyShareData);
+            return true;
+        } catch (error) {
+            console.error('[KeystoreManager] Failed to update key share:', error);
+            return false;
+        }
+    }
+
+    /**
      * Get all wallets
      */
     public getWallets(): ExtensionWalletMetadata[] {

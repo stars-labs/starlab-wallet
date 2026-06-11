@@ -1976,7 +1976,7 @@
                         <ActivityFeed address={displayAddress} />
                     </div>
                     <div class="card card-pad">
-                        <NftGallery address={displayAddress} />
+                        <NftGallery address={displayAddress} chain={appState.chain || "ethereum"} />
                     </div>
                 {/key}
             {/if}

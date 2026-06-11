@@ -1,32 +1,65 @@
 <script lang="ts">
-    // NFT gallery (#20): lazy-loaded ERC-721 grid. Scanning logs + metadata is
-    // network-heavy, so nothing runs until the user asks.
+    // NFT gallery (#20): lazy-loaded grid across ERC-721, ERC-1155 and
+    // Solana/Metaplex. Scanning logs + metadata is network-heavy, so nothing
+    // runs until the user asks.
     import NetworkService from "../../../services/networkService";
     import {
         discoverNfts,
+        discoverErc1155,
         fetchNftMetadata,
+        fetchErc1155Metadata,
         type NftItem,
     } from "../../../services/nftService";
+    import { makeSolanaRpc, loadSolanaNfts } from "../../../services/solanaNftService";
 
     export let address: string;
+    /** "ethereum" (EVM: 721 + 1155) or "solana" (Metaplex). */
+    export let chain: string = "ethereum";
 
     let items: NftItem[] = [];
     let loading = false;
     let loaded = false;
     let error = "";
 
+    const BADGE: Record<string, string> = {
+        erc721: "721",
+        erc1155: "1155",
+        metaplex: "SOL",
+    };
+
+    async function loadEvm(): Promise<NftItem[]> {
+        const net = NetworkService.getInstance();
+        const network = net.getCurrentNetwork("ethereum");
+        if (!network) throw new Error("No EVM network selected");
+        const client = net.getPublicClient(network) as any;
+        const latest: bigint = await client.getBlockNumber();
+        const fromBlock = latest > 100_000n ? latest - 100_000n : 0n;
+        // 721 and 1155 scans are independent — run them in parallel; one
+        // standard failing must not blank the other.
+        const [erc721, erc1155] = await Promise.all([
+            discoverNfts(client, address, { fromBlock })
+                .then((refs) => Promise.all(refs.map((r) => fetchNftMetadata(client, r))))
+                .catch(() => [] as NftItem[]),
+            discoverErc1155(client, address, { fromBlock })
+                .then((held) => Promise.all(held.map((h) => fetchErc1155Metadata(client, h))))
+                .catch(() => [] as NftItem[]),
+        ]);
+        return [...erc721, ...erc1155];
+    }
+
+    async function loadSolana(): Promise<NftItem[]> {
+        const net = NetworkService.getInstance();
+        const url =
+            net.getCurrentNetwork("solana")?.rpcUrls?.default?.http?.[0] ??
+            "https://api.mainnet-beta.solana.com";
+        return loadSolanaNfts(makeSolanaRpc(url), address);
+    }
+
     async function load() {
         loading = true;
         error = "";
         try {
-            const net = NetworkService.getInstance();
-            const network = net.getCurrentNetwork("ethereum");
-            if (!network) throw new Error("No EVM network selected");
-            const client = net.getPublicClient(network) as any;
-            const latest: bigint = await client.getBlockNumber();
-            const fromBlock = latest > 100_000n ? latest - 100_000n : 0n;
-            const refs = await discoverNfts(client, address, { fromBlock });
-            items = await Promise.all(refs.map((r) => fetchNftMetadata(client, r)));
+            items = chain === "solana" ? await loadSolana() : await loadEvm();
             loaded = true;
         } catch (e) {
             error = (e as Error).message;
@@ -52,11 +85,19 @@
         <div class="ng-grid">
             {#each items as nft (nft.contract + nft.tokenId)}
                 <figure class="ng-card" title={nft.collection ?? nft.contract}>
-                    {#if nft.image}
-                        <img src={nft.image} alt={nft.name ?? `#${nft.tokenId}`} loading="lazy" />
-                    {:else}
-                        <div class="ng-placeholder">#{nft.tokenId}</div>
-                    {/if}
+                    <div class="ng-media">
+                        {#if nft.image}
+                            <img src={nft.image} alt={nft.name ?? `#${nft.tokenId}`} loading="lazy" />
+                        {:else}
+                            <div class="ng-placeholder">#{nft.tokenId}</div>
+                        {/if}
+                        {#if nft.standard}
+                            <span class="ng-badge">{BADGE[nft.standard] ?? nft.standard}</span>
+                        {/if}
+                        {#if nft.balance && nft.balance > 1n}
+                            <span class="ng-count">×{nft.balance}</span>
+                        {/if}
+                    </div>
                     <figcaption>{nft.name ?? `#${nft.tokenId}`}</figcaption>
                 </figure>
             {/each}
@@ -71,7 +112,11 @@
     .ng-btn:disabled { opacity: 0.5; }
     .ng-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
     .ng-card { margin: 0; display: flex; flex-direction: column; gap: 4px; }
-    .ng-card img, .ng-placeholder { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: rgba(127,127,127,0.15); }
+    .ng-media { position: relative; }
+    .ng-badge, .ng-count { position: absolute; bottom: 4px; font-size: 9px; line-height: 1; padding: 2px 4px; border-radius: 6px; background: rgba(0,0,0,0.6); color: #fff; }
+    .ng-badge { left: 4px; }
+    .ng-count { right: 4px; }
+    .ng-card img, .ng-placeholder { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: rgba(127,127,127,0.15); display: block; }
     .ng-placeholder { display: flex; align-items: center; justify-content: center; font-size: 12px; opacity: 0.7; }
     .ng-card figcaption { font-size: 11px; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ng-muted { opacity: 0.6; font-size: 13px; }

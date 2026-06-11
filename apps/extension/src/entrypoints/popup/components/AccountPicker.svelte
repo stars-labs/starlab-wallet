@@ -3,14 +3,15 @@
     // addresses from PINNED standard paths. Listing is passwordless — public
     // derivation runs in the engine wasm (byte-identical to the CLI).
     //
-    // "Root" keeps the wallet's group-key address visible (existing funds
-    // live there); derived accounts are the way forward.
+    // BIP-44 all the way (product decision): there is NO root entry — the
+    // group key exists only as the derivation parent. Account 0 is the
+    // default identity.
     import { createEventDispatcher, onMount } from "svelte";
 
     export let groupPublicKey: string;
     export let curve: string; // "secp256k1" | "ed25519" | "unified"
-    /** Currently selected: -1 = Root, 0.. = derived account index. */
-    export let selected: number = -1;
+    /** Currently selected account index (account 0 = default identity). */
+    export let selected: number = 0;
 
     const dispatch = createEventDispatcher();
 
@@ -37,8 +38,15 @@
                 groupPublicKey,
                 count,
             });
-            if (res?.success) accounts = res.accounts;
-            else error = res?.error ?? "derivation failed";
+            if (res?.success) {
+                accounts = res.accounts;
+                // First load: push account 0's addresses up so the hero shows
+                // the BIP-44 identity immediately (root is never displayed).
+                const current = accounts.find((a) => a.account === selected);
+                if (current) {
+                    dispatch("select", { account: selected, addresses: current.addresses });
+                }
+            } else error = res?.error ?? "derivation failed";
         } catch (e) {
             error = (e as Error).message;
         } finally {
@@ -47,8 +55,7 @@
     }
 
     function pick(idx: number) {
-        // idx -1 = Root (the group-key address itself, no derivation).
-        const acct = idx >= 0 ? accounts.find((a) => a.account === idx) : undefined;
+        const acct = accounts.find((a) => a.account === idx);
         dispatch("select", { account: idx, addresses: acct?.addresses ?? [] });
         open = false;
     }
@@ -64,14 +71,11 @@
 
 <div class="acct-picker">
     <button class="acct-btn" on:click={() => (open = !open)} title="Switch account">
-        {selected < 0 ? "Root" : `Account ${selected}`} ▾
+        Account {selected} ▾
     </button>
 
     {#if open}
         <div class="acct-menu">
-            <button class="acct-item" class:active={selected === -1} on:click={() => pick(-1)}>
-                Root <span class="acct-hint">group-key address (legacy)</span>
-            </button>
             {#if loading}
                 <div class="acct-hint" style="padding:6px 10px">deriving…</div>
             {:else if error}

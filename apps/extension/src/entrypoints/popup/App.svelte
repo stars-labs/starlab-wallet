@@ -109,22 +109,22 @@
     }
     onMount(loadNetworkChoices);
 
-    // Account model: -1 = Root (group-key address), 0.. = derived account.
-    let selectedAccount = -1;
+    // Account model (BIP-44 all the way): account 0 is the identity; the
+    // root group key is derivation-parent only and never shown.
+    let selectedAccount = 0;
     let accountAddresses: { chain: string; path: string; address: string }[] = [];
     function onAccountSelect(e: CustomEvent) {
         selectedAccount = e.detail.account;
         accountAddresses = e.detail.addresses;
         refreshWalletData(); // remount balance/activity panels for the new address
     }
-    // The address every panel shows: Root → the wallet's group-key address;
-    // derived → the account's address on the currently-selected chain.
+    // The address every panel shows: the selected account's address on the
+    // current chain. Falls back to the group-key address ONLY while the
+    // first derivation is still in flight (never user-selectable).
     $: displayAddress =
-        selectedAccount < 0
-            ? appState.dkgAddress
-            : accountAddresses.find(
-                  (a) => a.chain.toLowerCase() === (appState.chain || "ethereum"),
-              )?.address ?? accountAddresses[0]?.address ?? appState.dkgAddress;
+        accountAddresses.find(
+            (a) => a.chain.toLowerCase() === (appState.chain || "ethereum"),
+        )?.address ?? accountAddresses[0]?.address ?? appState.dkgAddress;
 
     // Onboarding wizard dismissal (#26) — session-scoped; the wizard also
     // disappears permanently once a wallet exists.
@@ -1956,10 +1956,8 @@
                     <button
                         class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
                         on:click={() => { showSend = true; sendStatus = ""; }}
-                        disabled={selectedAccount >= 0}
-                        title={selectedAccount >= 0
-                            ? "Sending from derived accounts ships next — switch to Root to send"
-                            : "Send"}
+                        disabled={true}
+                        title="Account-key signing wires in next — sends are momentarily disabled (BIP-44 cutover)"
                     >Send</button>
                     <button
                         class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"

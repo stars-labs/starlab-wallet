@@ -123,31 +123,39 @@ export async function discoverLedgerAccounts(
 
   const signers: LedgerSigner[] = [];
 
-  // EVM (secp256k1). getAddress returns a checksummed 0x… string.
   try {
-    const eth = new Eth(t);
-    const { address } = await eth.getAddress(LEDGER_DEFAULT_EVM_PATH);
-    signers.push(
-      new LedgerSigner("secp256k1", address, LEDGER_DEFAULT_EVM_PATH, t),
-    );
-  } catch (e) {
-    console.warn("[ledger] EVM account discovery skipped:", e);
-  }
+    // EVM (secp256k1). getAddress returns a checksummed 0x… string.
+    try {
+      const eth = new Eth(t);
+      const { address } = await eth.getAddress(LEDGER_DEFAULT_EVM_PATH);
+      signers.push(
+        new LedgerSigner("secp256k1", address, LEDGER_DEFAULT_EVM_PATH, t),
+      );
+    } catch (e) {
+      console.warn("[ledger] EVM account discovery skipped:", e);
+    }
 
-  // Solana (ed25519). getAddress returns the 32-byte pubkey; base58 it.
-  try {
-    const solana = new Solana(t);
-    const { address } = await solana.getAddress(LEDGER_DEFAULT_SOLANA_PATH);
-    signers.push(
-      new LedgerSigner(
-        "ed25519",
-        bs58.encode(new Uint8Array(address)),
-        LEDGER_DEFAULT_SOLANA_PATH,
-        t,
-      ),
-    );
-  } catch (e) {
-    console.warn("[ledger] Solana account discovery skipped:", e);
+    // Solana (ed25519). getAddress returns the 32-byte pubkey; base58 it.
+    try {
+      const solana = new Solana(t);
+      const { address } = await solana.getAddress(LEDGER_DEFAULT_SOLANA_PATH);
+      signers.push(
+        new LedgerSigner(
+          "ed25519",
+          bs58.encode(new Uint8Array(address)),
+          LEDGER_DEFAULT_SOLANA_PATH,
+          t,
+        ),
+      );
+    } catch (e) {
+      console.warn("[ledger] Solana account discovery skipped:", e);
+    }
+  } finally {
+    try {
+      await t.close();
+    } catch (e) {
+      console.warn("[ledger] Failed to close transport:", e);
+    }
   }
 
   return signers;

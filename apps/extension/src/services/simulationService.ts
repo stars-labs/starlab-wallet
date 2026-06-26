@@ -200,7 +200,7 @@ async function parseLogs(
     } else if (topic0 === TOPIC_APPROVAL_FOR_ALL && topics.length >= 3) {
       const owner = topicToAddress(topics[1]);
       if (owner !== me) continue;
-      const approved = log.data && BigInt(log.data) !== 0n;
+      const approved = log.data && log.data !== "0x" && BigInt(log.data) !== 0n;
       if (!approved) continue; // a revocation is not a risk to flag
       approvals.push({
         token: await tokenMeta(rpcUrl, log.address, known, metaCache),

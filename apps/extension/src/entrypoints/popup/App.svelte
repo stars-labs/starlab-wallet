@@ -382,6 +382,12 @@
             appState.chain = signers[0].curve === "ed25519" ? "solana" : "ethereum";
             appState.blockchain = protocolChainFor(appState.chain);
             appState = { ...appState };
+            // Persist the chain selection to the background StateManager so the
+            // next initialState broadcast does not overwrite it back.
+            await chrome.runtime.sendMessage({
+                type: "setBlockchain",
+                blockchain: appState.chain,
+            });
             refreshExternalAccountFlags(accountService);
             accountSetupStatus = `Added ${signers.length} Ledger account${signers.length === 1 ? "" : "s"}.`;
         } catch (err) {

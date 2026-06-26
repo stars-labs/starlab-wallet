@@ -7,9 +7,17 @@
     // group key exists only as the derivation parent. Account 0 is the
     // default identity.
     import { createEventDispatcher, onMount } from "svelte";
+    import {
+        getProtocolBlockchainForChain,
+        isSupportedChain,
+        normalizeDerivedAddressChain,
+        type ProtocolBlockchain,
+        type SupportedChain,
+    } from "@stars-labs/types/appstate";
 
     export let groupPublicKey: string;
     export let curve: string; // "secp256k1" | "ed25519" | "unified"
+    export let chain: SupportedChain = "ethereum";
     /** Currently selected account index (account 0 = default identity). */
     export let selected: number = 0;
 
@@ -23,6 +31,28 @@
     let loading = false;
     let error = "";
     let count = 3;
+
+    function normalizeAddresses(addresses: ChainAddr[]): ChainAddr[] {
+        return addresses
+            .map((addr) => {
+                const normalized = normalizeDerivedAddressChain(addr.chain);
+                return normalized ? { ...addr, chain: normalized } : addr;
+            })
+            .filter((addr) => !addr.chain || isSupportedChain(addr.chain));
+    }
+
+    function addressForChain(addresses: ChainAddr[], desired: SupportedChain): ChainAddr | undefined {
+        const exact = addresses.find((addr) => addr.chain === desired);
+        if (exact) return exact;
+
+        const protocolChain: ProtocolBlockchain = getProtocolBlockchainForChain(desired);
+        return addresses.find((addr) => addr.chain === protocolChain);
+    }
+
+    function addressHint(addresses: ChainAddr[]): string {
+        const addr = addressForChain(addresses, chain)?.address ?? addresses[0]?.address;
+        return addr ? `${addr.slice(0, 10)}…` : "";
+    }
 
     async function load() {
         if (!groupPublicKey) return;
@@ -39,7 +69,10 @@
                 count,
             });
             if (res?.success) {
-                accounts = res.accounts;
+                accounts = res.accounts.map((account: Account) => ({
+                    ...account,
+                    addresses: normalizeAddresses(account.addresses ?? []),
+                }));
                 // First load: push account 0's addresses up so the hero shows
                 // the BIP-44 identity immediately (root is never displayed).
                 const current = accounts.find((a) => a.account === selected);
@@ -88,7 +121,7 @@
                         on:click={() => pick(a.account)}
                     >
                         Account {a.account}
-                        <span class="acct-hint">{a.addresses[0]?.address.slice(0, 10)}…</span>
+                        <span class="acct-hint">{addressHint(a.addresses)}</span>
                     </button>
                 {/each}
                 <button class="acct-item acct-add" on:click={addAccount}>＋ Add account</button>

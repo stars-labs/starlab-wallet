@@ -1,6 +1,7 @@
 import { Account } from "@stars-labs/types/account";
 import { KeystoreManager } from './keystoreManager';
 import type { NewAccountSession } from "@stars-labs/types/keystore";
+import type { SupportedChain } from "@stars-labs/types/appstate";
 
 type AccountChangeCallback = (account: Account | null) => void;
 
@@ -51,7 +52,8 @@ class AccountService {
                 // Defensive: corrupted storage (non-array) must reset to [].
                 const raw = result[this.STORAGE_KEY];
                 this.accounts = Array.isArray(raw) ? raw : [];
-                this.currentAccountId = result[this.CURRENT_ACCOUNT_KEY];
+                const current = result[this.CURRENT_ACCOUNT_KEY];
+                this.currentAccountId = typeof current === 'string' ? current : undefined;
             } else {
                 // Fallback for test environment
                 this.accounts = [];
@@ -189,7 +191,7 @@ class AccountService {
         return this.accounts.find(acc => acc.id === id) || null;
     }
 
-    public getAccountsByBlockchain(blockchain: 'ethereum' | 'solana'): Account[] {
+    public getAccountsByBlockchain(blockchain: SupportedChain): Account[] {
         return this.accounts.filter(acc => acc.blockchain === blockchain);
     }
 
@@ -245,7 +247,7 @@ class AccountService {
      * Generate a new account by initiating a new DKG session
      * Each account requires its own DKG session since FROST doesn't support HD derivation
      */
-    public async generateNewAccount(name?: string, blockchain: 'ethereum' | 'solana' = 'ethereum'): Promise<NewAccountSession> {
+    public async generateNewAccount(name?: string, blockchain: SupportedChain = 'ethereum'): Promise<NewAccountSession> {
         try {
             const existingAccountsCount = this.getAccountsByBlockchain(blockchain).length;
             
@@ -375,7 +377,10 @@ class AccountService {
             if (typeof chrome !== 'undefined' && chrome.storage) {
                 const key = `pending_session_${sessionId}`;
                 const result = await chrome.storage.local.get(key);
-                return result[key] || null;
+                const stored = result[key];
+                return stored && typeof stored === 'object'
+                    ? (stored as NewAccountSession)
+                    : null;
             }
             return null;
         } catch (error) {

@@ -18,6 +18,7 @@
     {type}
     {disabled}
     {title}
+    {...$$restProps}
     class="btn btn-{variant} {size === 'sm' ? 'btn-sm' : ''} {block
         ? 'btn-block'
         : ''} {cls}"

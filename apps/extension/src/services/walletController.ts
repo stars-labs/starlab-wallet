@@ -1,6 +1,7 @@
 import NetworkService from "./networkService";
 import AccountService from "./accountService";
 import WalletClientService from "./walletClient";
+import type { SupportedChain } from "@stars-labs/types/appstate";
 
 class WalletController {
     private static instance: WalletController;
@@ -76,7 +77,7 @@ class WalletController {
         return this.accountService.setCurrentAccount(accountId);
     }
 
-    public async getAccountsByBlockchain(blockchain: 'ethereum' | 'solana') {
+    public async getAccountsByBlockchain(blockchain: SupportedChain) {
         return this.accountService.getAccountsByBlockchain(blockchain);
     }
 

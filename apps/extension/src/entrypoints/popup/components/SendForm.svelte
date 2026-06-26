@@ -22,9 +22,12 @@
         simulateTransaction,
         type SimulationResult,
     } from "../../../services/simulationService";
+    import { SANDBOX_EVM_ID } from "../../../services/sandboxService";
     import { TokenRegistry, formatTokenAmount } from "../../../services/tokenService";
+    import type { SupportedChain } from "@stars-labs/types/appstate";
 
     export let from: string;
+    export let chain: SupportedChain = "ethereum";
 
     const dispatch = createEventDispatcher();
 
@@ -41,13 +44,13 @@
     // Address book + ENS (#25).
     let contacts: Contact[] = [];
     async function loadContacts() {
-        contacts = await AddressBookService.getInstance().list("ethereum");
+        contacts = await AddressBookService.getInstance().list(chain);
     }
 
     async function loadAssets() {
         loadingAssets = true;
         try {
-            const res = await chrome.runtime.sendMessage({ type: "getPortfolio", address: from });
+            const res = await chrome.runtime.sendMessage({ type: "getPortfolio", address: from, chain });
             if (res?.success && res.portfolio) {
                 assets = [
                     { symbol: res.portfolio.native.symbol, decimals: 18, balance: res.portfolio.native.balance },
@@ -86,7 +89,9 @@
         error = "";
         try {
             const net = NetworkService.getInstance();
-            const client = net.getPublicClient(net.getCurrentNetwork("ethereum")) as any;
+            const network = net.getCurrentNetworkForChain(chain);
+            if (!network) throw new Error("No EVM network selected");
+            const client = net.getPublicClient(network) as any;
             // ENS lives on mainnet — resolve against mainnet when available,
             // falling back to the current network's client.
             const mainnet = net.getNetworkByChainId(1);
@@ -120,9 +125,21 @@
         preflightRunning = true;
         try {
             const net = NetworkService.getInstance();
-            const chainId = net.getCurrentNetwork("ethereum")?.id ?? 1;
+            const network = net.getCurrentNetworkForChain(chain);
+            const chainId = network?.id ?? 1;
             const tokens = await TokenRegistry.getInstance().list(chainId);
-            preflight = await simulateTransaction("http://127.0.0.1:8545", tx, tokens);
+            // When the wallet is pointed at the sandbox, the active network IS
+            // the anvil fork — simulate against its own RPC. Otherwise fall back
+            // to a local fork node on the conventional port (scripts/sandbox.sh).
+            const rpcUrl =
+                (network?.id === SANDBOX_EVM_ID
+                    ? net.getNetworkRPCUrls(network)[0]
+                    : undefined) ?? "http://127.0.0.1:8545";
+            preflight = await simulateTransaction(
+                rpcUrl,
+                { ...tx, from: tx.from ?? from },
+                tokens,
+            );
         } catch {
             preflight = { available: false };
         } finally {
@@ -218,11 +235,21 @@
                     <span class="sf-pf-bad">⛔ Would REVERT{preflight.revertReason ? `: ${preflight.revertReason}` : ""}</span>
                 {:else if preflight && preflight.success}
                     <span class="sf-pf-ok">✓ Simulated OK (gas {preflight.gasUsed})</span>
-                    {#if preflight.nativeDiff !== undefined}
+                    {#each preflight.warnings ?? [] as w}
+                        <span class="sf-pf-warn">⚠ {w}</span>
+                    {/each}
+                    {#if preflight.nativeDiff !== undefined && preflight.nativeDiff !== 0n}
                         <span>ETH: {formatTokenAmount(preflight.nativeDiff < 0n ? -preflight.nativeDiff : preflight.nativeDiff, 18)} {preflight.nativeDiff < 0n ? "out" : "in"}</span>
                     {/if}
                     {#each preflight.tokenDiffs ?? [] as d}
                         <span>{d.token.symbol}: {formatTokenAmount(d.diff < 0n ? -d.diff : d.diff, d.token.decimals)} {d.diff < 0n ? "out" : "in"}</span>
+                    {/each}
+                    {#each preflight.approvals ?? [] as a}
+                        <span class:sf-pf-warn={a.unlimited}>
+                            Approve {a.token.symbol}
+                            {a.amount === null ? "(all)" : a.unlimited ? "(unlimited)" : formatTokenAmount(a.amount, a.token.decimals)}
+                            → {a.spender.slice(0, 6)}…{a.spender.slice(-4)}
+                        </span>
                     {/each}
                 {/if}
             </div>
@@ -258,6 +285,7 @@
     .sf-preflight { display: flex; flex-direction: column; gap: 2px; border-top: 1px dashed rgba(127,127,127,0.25); padding-top: 6px; font-size: 12px; }
     .sf-pf-ok { color: #27ae60; font-weight: 600; }
     .sf-pf-bad { color: #c0392b; font-weight: 600; }
+    .sf-pf-warn { color: #d68910; font-weight: 600; }
     .sf-row { display: flex; justify-content: space-between; gap: 8px; }
     .sf-row code { font-size: 12px; }
 </style>

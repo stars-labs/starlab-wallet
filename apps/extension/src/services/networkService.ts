@@ -1,55 +1,86 @@
-import { mainnet, sepolia } from 'viem/chains';
+import {
+    arbitrum,
+    arbitrumSepolia,
+    base,
+    baseSepolia,
+    mainnet,
+    optimism,
+    optimismSepolia,
+    polygon,
+    polygonAmoy,
+    sepolia,
+} from "viem/chains";
 import type { Chain } from "@stars-labs/types/network";
-import type { SupportedChain } from "@stars-labs/types/appstate";
-import { createPublicClient, http } from 'viem';
+import type {
+    ProtocolBlockchain,
+    SupportedChain,
+} from "@stars-labs/types/appstate";
+import {
+    SUPPORTED_CHAINS,
+    getProtocolBlockchainForChain,
+    isEvmChain,
+    isSupportedChain,
+} from "@stars-labs/types/appstate";
+import { createPublicClient, http } from "viem";
 
+type LegacyBlockchain = ProtocolBlockchain;
+type NetworkStore = Record<SupportedChain, Chain[]>;
+type CurrentNetworkStore = Partial<Record<SupportedChain, Chain | undefined>>;
 type NetworkChangeCallback = (network: Chain | undefined) => void;
-type LegacyBlockchain = 'ethereum' | 'solana';
 
-/**
- * Maps supported chains to their underlying blockchain infrastructure.
- * This enables backward compatibility while supporting Layer 2 chains.
- */
-const CHAIN_TO_BLOCKCHAIN: Record<SupportedChain, LegacyBlockchain> = {
-    // secp256k1-based chains -> use ethereum infrastructure
-    ethereum: 'ethereum',
-    polygon: 'ethereum',
-    arbitrum: 'ethereum',
-    optimism: 'ethereum',
-    base: 'ethereum',
-    // ed25519-based chains -> use solana infrastructure  
-    solana: 'solana',
-    sui: 'solana',
+const NETWORK_KEYS = [...SUPPORTED_CHAINS] as SupportedChain[];
+
+const SOLANA_MAINNET: Chain = {
+    id: 101,
+    name: "Solana Mainnet",
+    network: "solana-mainnet",
+    nativeCurrency: { name: "Solana", symbol: "SOL", decimals: 9 },
+    rpcUrls: {
+        default: { http: ["https://api.mainnet-beta.solana.com"] },
+        public: { http: ["https://api.mainnet-beta.solana.com"] },
+    },
+    blockExplorers: {
+        default: { name: "Solscan", url: "https://solscan.io" },
+    },
 };
 
-/**
- * Helper function to get the blockchain type for a given chain.
- */
-function getBlockchainForChain(chain: SupportedChain): LegacyBlockchain {
-    return CHAIN_TO_BLOCKCHAIN[chain];
-}
+const SOLANA_DEVNET: Chain = {
+    id: 102,
+    name: "Solana Devnet",
+    network: "solana-devnet",
+    nativeCurrency: { name: "Solana", symbol: "SOL", decimals: 9 },
+    rpcUrls: {
+        default: { http: ["https://api.devnet.solana.com"] },
+        public: { http: ["https://api.devnet.solana.com"] },
+    },
+    blockExplorers: {
+        default: { name: "Solscan", url: "https://solscan.io/?cluster=devnet" },
+    },
+    testnet: true,
+};
 
 class NetworkService {
     private static instance: NetworkService;
-    private networks: Record<string, Chain[]> = {
-        ethereum: [],
-        solana: []
-    };
-    private currentBlockchain: 'ethereum' | 'solana' = 'ethereum';
-    private currentNetworks: Record<string, Chain | undefined> = {
-        ethereum: undefined,
-        solana: undefined
-    };
-    private readonly STORAGE_KEY = 'wallet_networks';
-    private readonly CURRENT_NETWORK_KEY = 'wallet_current_networks';
-    private readonly CURRENT_BLOCKCHAIN_KEY = 'wallet_current_blockchain';
+    private networks: NetworkStore = NetworkService.emptyNetworkStore();
+    private currentBlockchain: LegacyBlockchain = "ethereum";
+    private currentChain: SupportedChain = "ethereum";
+    private currentNetworks: CurrentNetworkStore = {};
+    private readonly STORAGE_KEY = "wallet_networks";
+    private readonly CURRENT_NETWORK_KEY = "wallet_current_networks";
+    private readonly CURRENT_BLOCKCHAIN_KEY = "wallet_current_blockchain";
+    private readonly CURRENT_CHAIN_KEY = "wallet_current_chain";
     private changeCallbacks: NetworkChangeCallback[] = [];
-    private initialized: boolean = false;
+    private initialized = false;
 
-    // Protected network chainIds by blockchain
-    private static readonly PROTECTED_NETWORK_IDS: Record<string, number[]> = {
+    private static readonly PROTECTED_NETWORK_IDS: Record<SupportedChain, number[]> = {
         ethereum: [mainnet.id, sepolia.id],
-        solana: []
+        polygon: [polygon.id, polygonAmoy.id],
+        arbitrum: [arbitrum.id, arbitrumSepolia.id],
+        optimism: [optimism.id, optimismSepolia.id],
+        base: [base.id, baseSepolia.id],
+        solana: [SOLANA_MAINNET.id, SOLANA_DEVNET.id],
+        bitcoin: [],
+        sui: [],
     };
 
     private constructor() {
@@ -61,6 +92,21 @@ class NetworkService {
             NetworkService.instance = new NetworkService();
         }
         return NetworkService.instance;
+    }
+
+    public static resetInstance(): void {
+        NetworkService.instance = undefined as any;
+    }
+
+    private static emptyNetworkStore(): NetworkStore {
+        return NETWORK_KEYS.reduce((acc, chain) => {
+            acc[chain] = [];
+            return acc;
+        }, {} as NetworkStore);
+    }
+
+    private static defaultCurrentStore(): CurrentNetworkStore {
+        return {};
     }
 
     private async initializeAsync(): Promise<void> {
@@ -76,290 +122,317 @@ class NetworkService {
         }
     }
 
-    // Testing utility method to reset singleton instance
-    public static resetInstance(): void {
-        NetworkService.instance = undefined as any;
+    private isLegacyBlockchain(value: unknown): value is LegacyBlockchain {
+        return value === "ethereum" || value === "solana";
+    }
+
+    private normalizeChain(value: unknown, fallback: SupportedChain = "ethereum"): SupportedChain {
+        return isSupportedChain(value) ? value : fallback;
+    }
+
+    private chainFromNetworkId(chainId: number): SupportedChain | undefined {
+        for (const chain of NETWORK_KEYS) {
+            if (NetworkService.PROTECTED_NETWORK_IDS[chain].includes(chainId)) {
+                return chain;
+            }
+        }
+        return undefined;
+    }
+
+    private addNetworkInMemory(chain: SupportedChain, network: Chain): void {
+        if (!this.networks[chain].some((n) => n.id === network.id)) {
+            this.networks[chain].push(network);
+        }
+    }
+
+    private normalizeStoredNetworks(storedNetworks: unknown): NetworkStore {
+        const next = NetworkService.emptyNetworkStore();
+        if (!storedNetworks || typeof storedNetworks !== "object") return next;
+
+        const stored = storedNetworks as Record<string, unknown>;
+        for (const chain of NETWORK_KEYS) {
+            const value = stored[chain];
+            if (Array.isArray(value)) {
+                for (const network of value) {
+                    if (network && typeof network === "object" && typeof (network as Chain).id === "number") {
+                        this.addNetworkTo(next, chain, network as Chain);
+                    }
+                }
+            }
+        }
+
+        // Migration: older builds only stored ethereum/solana buckets. Known
+        // L2 ids are copied into their product-chain buckets while unknown EVM
+        // custom networks remain under Ethereum for legacy callers.
+        const legacyEthereum = stored.ethereum;
+        if (Array.isArray(legacyEthereum)) {
+            for (const network of legacyEthereum) {
+                if (!network || typeof network !== "object") continue;
+                const typed = network as Chain;
+                if (typeof typed.id !== "number") continue;
+                const target = this.chainFromNetworkId(typed.id) ?? "ethereum";
+                this.addNetworkTo(next, target, typed);
+                this.addNetworkTo(next, "ethereum", typed);
+            }
+        }
+
+        const legacySolana = stored.solana;
+        if (Array.isArray(legacySolana)) {
+            for (const network of legacySolana) {
+                if (!network || typeof network !== "object") continue;
+                const typed = network as Chain;
+                if (typeof typed.id === "number") this.addNetworkTo(next, "solana", typed);
+            }
+        }
+
+        return next;
+    }
+
+    private addNetworkTo(store: NetworkStore, chain: SupportedChain, network: Chain): void {
+        if (!store[chain].some((n) => n.id === network.id)) {
+            store[chain].push(network);
+        }
+    }
+
+    private normalizeStoredCurrentNetworks(storedNetworks: unknown): CurrentNetworkStore {
+        const next = NetworkService.defaultCurrentStore();
+        if (!storedNetworks || typeof storedNetworks !== "object") return next;
+
+        const stored = storedNetworks as Record<string, unknown>;
+        for (const chain of NETWORK_KEYS) {
+            const network = stored[chain] as Chain | undefined;
+            if (network && typeof network.id === "number") {
+                next[chain] = network;
+            }
+        }
+
+        const legacyEthereum = stored.ethereum as Chain | undefined;
+        if (legacyEthereum && typeof legacyEthereum.id === "number") {
+            const target = this.chainFromNetworkId(legacyEthereum.id) ?? "ethereum";
+            next[target] = legacyEthereum;
+            next.ethereum ??= legacyEthereum;
+        }
+
+        const legacySolana = stored.solana as Chain | undefined;
+        if (legacySolana && typeof legacySolana.id === "number") {
+            next.solana = legacySolana;
+        }
+
+        return next;
     }
 
     private async loadNetworks(): Promise<void> {
         try {
-            if (typeof chrome !== 'undefined' && chrome.storage) {
+            if (typeof chrome !== "undefined" && chrome.storage) {
                 const result = await chrome.storage.local.get([
                     this.STORAGE_KEY,
                     this.CURRENT_BLOCKCHAIN_KEY,
-                    this.CURRENT_NETWORK_KEY
+                    this.CURRENT_CHAIN_KEY,
+                    this.CURRENT_NETWORK_KEY,
                 ]);
-                const storedNetworks = result[this.STORAGE_KEY];
 
-                // Defensive: corrupted storage (non-object) resets to empty.
-                if (!storedNetworks || typeof storedNetworks !== 'object') {
-                    this.networks = { ethereum: [], solana: [] };
-                } else {
-                    this.networks = {
-                        ethereum: Array.isArray(storedNetworks.ethereum) ? storedNetworks.ethereum : [],
-                        solana: Array.isArray(storedNetworks.solana) ? storedNetworks.solana : []
-                    };
-                }
+                this.networks = this.normalizeStoredNetworks(result[this.STORAGE_KEY]);
+                this.currentNetworks = this.normalizeStoredCurrentNetworks(
+                    result[this.CURRENT_NETWORK_KEY],
+                );
 
-                // Validate currentBlockchain against allowed values.
                 const storedBlockchain = result[this.CURRENT_BLOCKCHAIN_KEY];
-                this.currentBlockchain = (storedBlockchain === 'ethereum' || storedBlockchain === 'solana')
+                this.currentBlockchain = this.isLegacyBlockchain(storedBlockchain)
                     ? storedBlockchain
-                    : 'ethereum';
+                    : "ethereum";
 
-                this.currentNetworks = result[this.CURRENT_NETWORK_KEY] || { ethereum: undefined, solana: undefined };
+                const storedChain = result[this.CURRENT_CHAIN_KEY];
+                this.currentChain = this.normalizeChain(
+                    storedChain,
+                    this.currentBlockchain === "solana" ? "solana" : "ethereum",
+                );
             } else {
-                // No chrome.storage (test environment or non-extension context):
-                // start from empty — defaults get seeded below.
-                this.networks = { ethereum: [], solana: [] };
-                this.currentBlockchain = 'ethereum';
-                this.currentNetworks = { ethereum: undefined, solana: undefined };
+                this.networks = NetworkService.emptyNetworkStore();
+                this.currentBlockchain = "ethereum";
+                this.currentChain = "ethereum";
+                this.currentNetworks = NetworkService.defaultCurrentStore();
             }
         } catch (error) {
-            console.error('Failed to load networks:', error);
-            this.networks = { ethereum: [], solana: [] };
-            this.currentBlockchain = 'ethereum';
-            this.currentNetworks = { ethereum: undefined, solana: undefined };
+            console.error("Failed to load networks:", error);
+            this.networks = NetworkService.emptyNetworkStore();
+            this.currentBlockchain = "ethereum";
+            this.currentChain = "ethereum";
+            this.currentNetworks = NetworkService.defaultCurrentStore();
         }
 
-        // Seed defaults regardless of storage path — tests expect the
-        // "missing storage API" branch to still have Ethereum defaults.
-        if (!this.networks.ethereum || this.networks.ethereum.length === 0) {
-            const defaultEthNetworks = this.getDefaultNetworks('ethereum');
-            for (const network of defaultEthNetworks) {
-                const exists = this.networks.ethereum.some(n => n.id === network.id);
-                if (!exists) {
-                    try {
-                        await this.addNetwork('ethereum', network);
-                    } catch {
-                        // Ignore persistence failures during default seeding —
-                        // in-memory state is what callers observe via getNetworks().
-                        this.networks.ethereum.push(network);
-                    }
+        let mutatedNetworks = false;
+        let mutatedCurrent = false;
+        for (const chain of NETWORK_KEYS) {
+            for (const network of this.getDefaultNetworks(chain)) {
+                const before = this.networks[chain].length;
+                this.addNetworkInMemory(chain, network);
+                mutatedNetworks ||= this.networks[chain].length !== before;
+            }
+
+            const current = this.currentNetworks[chain];
+            if (current) {
+                const canonical = this.networks[chain].find((n) => n.id === current.id);
+                if (canonical) {
+                    this.currentNetworks[chain] = canonical;
+                    continue;
                 }
+            }
+
+            if (this.networks[chain][0]) {
+                this.currentNetworks[chain] = this.networks[chain][0];
+                mutatedCurrent = true;
             }
         }
 
-        if (!this.currentNetworks.ethereum) {
-            const mainnetNetwork = this.networks.ethereum.find(n => n.id === mainnet.id);
-            if (mainnetNetwork) {
-                try {
-                    await this.setCurrentNetwork('ethereum', mainnetNetwork.id);
-                } catch {
-                    this.currentNetworks.ethereum = mainnetNetwork;
-                }
-            }
+        if (!isSupportedChain(this.currentChain)) {
+            this.currentChain = "ethereum";
+        }
+        this.currentBlockchain = getProtocolBlockchainForChain(this.currentChain);
+
+        if (mutatedNetworks) {
+            await this.saveNetworks().catch(() => {});
+        }
+        if (mutatedCurrent) {
+            await this.saveCurrentNetworks().catch(() => {});
         }
     }
 
-    private getDefaultNetworks(blockchain: 'ethereum' | 'solana'): Chain[] {
-        if (blockchain === 'ethereum') {
-            return [
-                {
-                    id: mainnet.id,
-                    name: mainnet.name,
-                    network: 'mainnet',
-                    nativeCurrency: {
-                        name: mainnet.nativeCurrency.name,
-                        symbol: mainnet.nativeCurrency.symbol,
-                        decimals: mainnet.nativeCurrency.decimals
-                    },
-                    rpcUrls: {
-                        default: {
-                            http: [...(mainnet.rpcUrls.default.http as readonly string[])]
-                        }
-                    },
-                    blockExplorers: {
-                        default: {
-                            name: mainnet.blockExplorers.default.name,
-                            url: mainnet.blockExplorers.default.url
-                        }
-                    }
-                },
-                {
-                    id: sepolia.id,
-                    name: sepolia.name,
-                    network: 'sepolia',
-                    nativeCurrency: {
-                        name: sepolia.nativeCurrency.name,
-                        symbol: sepolia.nativeCurrency.symbol,
-                        decimals: sepolia.nativeCurrency.decimals
-                    },
-                    rpcUrls: {
-                        default: {
-                            http: [...(sepolia.rpcUrls.default.http as readonly string[])]
-                        }
-                    },
-                    blockExplorers: {
-                        default: {
-                            name: sepolia.blockExplorers.default.name,
-                            url: sepolia.blockExplorers.default.url
-                        }
-                    }
-                }
-            ];
+    private chainFromViem(source: any, fallbackNetwork: string): Chain {
+        const defaultHttp = [...((source.rpcUrls?.default?.http ?? []) as readonly string[])];
+        const publicHttp = [...((source.rpcUrls?.public?.http ?? defaultHttp) as readonly string[])];
+        const explorer = source.blockExplorers?.default;
+        return {
+            id: source.id,
+            name: source.name,
+            network: source.network ?? fallbackNetwork,
+            nativeCurrency: source.nativeCurrency
+                ? {
+                      name: source.nativeCurrency.name,
+                      symbol: source.nativeCurrency.symbol,
+                      decimals: source.nativeCurrency.decimals,
+                  }
+                : undefined,
+            rpcUrls: {
+                default: { http: defaultHttp },
+                public: { http: publicHttp },
+            },
+            blockExplorers: explorer
+                ? {
+                      default: {
+                          name: explorer.name,
+                          url: explorer.url,
+                      },
+                  }
+                : undefined,
+            testnet: source.testnet,
+        };
+    }
+
+    private getDefaultNetworks(chain: SupportedChain): Chain[] {
+        switch (chain) {
+            case "ethereum":
+                return [
+                    this.chainFromViem(mainnet, "mainnet"),
+                    this.chainFromViem(sepolia, "sepolia"),
+                ];
+            case "polygon":
+                return [
+                    this.chainFromViem(polygon, "polygon"),
+                    this.chainFromViem(polygonAmoy, "polygon-amoy"),
+                ];
+            case "arbitrum":
+                return [
+                    this.chainFromViem(arbitrum, "arbitrum-one"),
+                    this.chainFromViem(arbitrumSepolia, "arbitrum-sepolia"),
+                ];
+            case "optimism":
+                return [
+                    this.chainFromViem(optimism, "optimism"),
+                    this.chainFromViem(optimismSepolia, "optimism-sepolia"),
+                ];
+            case "base":
+                return [
+                    this.chainFromViem(base, "base"),
+                    this.chainFromViem(baseSepolia, "base-sepolia"),
+                ];
+            case "solana":
+                return [SOLANA_MAINNET, SOLANA_DEVNET];
+            case "bitcoin":
+            case "sui":
+                return [];
         }
-        // Add default Solana networks if needed
-        return [];
     }
 
     private async saveNetworks(): Promise<void> {
-        // Propagate storage failures — callers (addCustomNetwork,
-        // removeCustomNetwork) need to know if persistence failed.
-        // Silently swallowing would leave in-memory state diverged from disk.
-        if (typeof chrome !== 'undefined' && chrome.storage) {
+        if (typeof chrome !== "undefined" && chrome.storage) {
             await chrome.storage.local.set({ [this.STORAGE_KEY]: this.networks });
         }
     }
 
     private async saveCurrentNetworks(): Promise<void> {
-        if (typeof chrome !== 'undefined' && chrome.storage) {
+        if (typeof chrome !== "undefined" && chrome.storage) {
             await chrome.storage.local.set({ [this.CURRENT_NETWORK_KEY]: this.currentNetworks });
         }
     }
 
     private async saveCurrentBlockchain(): Promise<void> {
         try {
-            if (typeof chrome !== 'undefined' && chrome.storage) {
-                await chrome.storage.local.set({ [this.CURRENT_BLOCKCHAIN_KEY]: this.currentBlockchain });
+            if (typeof chrome !== "undefined" && chrome.storage) {
+                await chrome.storage.local.set({
+                    [this.CURRENT_BLOCKCHAIN_KEY]: this.currentBlockchain,
+                    [this.CURRENT_CHAIN_KEY]: this.currentChain,
+                });
             }
         } catch (error) {
-            console.error('Failed to save current blockchain:', error);
+            console.error("Failed to save current blockchain:", error);
         }
     }
 
-    /**
-     * Alias for `addNetwork`. Some callers prefer the "Custom" name
-     * to emphasize that they're adding a user-defined network on
-     * top of the built-in list; semantically identical.
-     */
-    public async addCustomNetwork(blockchain: 'ethereum' | 'solana', network: Chain): Promise<void> {
+    public async addCustomNetwork(blockchain: LegacyBlockchain, network: Chain): Promise<void> {
         return this.addNetwork(blockchain, network);
     }
 
-    /**
-     * Alias for `removeNetwork`. Same semantics — built-in networks
-     * protected via PROTECTED_NETWORK_IDS are rejected, custom ones
-     * (which is in practice what you'd be calling this on) are
-     * removable.
-     */
-    public async removeCustomNetwork(blockchain: 'ethereum' | 'solana', chainId: number): Promise<void> {
+    public async removeCustomNetwork(blockchain: LegacyBlockchain, chainId: number): Promise<void> {
         return this.removeNetwork(blockchain, chainId);
     }
 
-    public async addNetwork(blockchain: 'ethereum' | 'solana', network: Chain): Promise<void> {
-        // Validate network structure
-        if (!network || typeof network !== 'object') {
-            throw new Error('Invalid network: must be an object');
-        }
-
-        if (typeof network.id !== 'number') {
-            throw new Error('Invalid network: id is required and must be a number');
-        }
-
-        if (!network.name || typeof network.name !== 'string') {
-            throw new Error('Invalid network: name is required and must be a string');
-        }
-
-        if (this.networks[blockchain].some(n => n.id === network.id)) {
-            throw new Error('Network with this ID already exists');
-        }
-
-        this.networks[blockchain].push(network);
-        await this.saveNetworks();
+    public async addNetwork(blockchain: LegacyBlockchain, network: Chain): Promise<void> {
+        return this.addNetworkForChain(blockchain, network);
     }
 
-    public async removeNetwork(blockchain: 'ethereum' | 'solana', chainId: number): Promise<void> {
-        const network = this.networks[blockchain].find(n => n.id === chainId);
-        if (!network) {
-            throw new Error('Network not found');
-        }
-
-        // Cannot remove protected networks
-        if (NetworkService.PROTECTED_NETWORK_IDS[blockchain].includes(chainId)) {
-            throw new Error('Cannot remove protected network');
-        }
-
-        // If removing the current network, switch to a default one
-        if (this.currentNetworks[blockchain]?.id === chainId) {
-            if (blockchain === 'ethereum') {
-                const mainnetNetwork = this.networks[blockchain].find(n => n.id === mainnet.id);
-                if (mainnetNetwork) {
-                    await this.setCurrentNetwork(blockchain, mainnetNetwork.id);
-                }
-            }
-        }
-
-        this.networks[blockchain] = this.networks[blockchain].filter(n => n.id !== chainId);
-        await this.saveNetworks();
+    public async removeNetwork(blockchain: LegacyBlockchain, chainId: number): Promise<void> {
+        return this.removeNetworkForChain(blockchain, chainId);
     }
 
-    public async updateNetwork(blockchain: 'ethereum' | 'solana', network: Chain): Promise<void> {
-        const index = this.networks[blockchain].findIndex(n => n.id === network.id);
-        if (index === -1) {
-            throw new Error('Network not found');
-        }
-
-        // Cannot modify protected networks
-        if (NetworkService.PROTECTED_NETWORK_IDS[blockchain].includes(network.id)) {
-            throw new Error('Cannot modify protected network');
-        }
-
-        this.networks[blockchain][index] = network;
-        await this.saveNetworks();
+    public async updateNetwork(blockchain: LegacyBlockchain, network: Chain): Promise<void> {
+        return this.updateNetworkForChain(blockchain, network);
     }
 
-    /**
-     * Function overloads so TypeScript narrows the return type based
-     * on whether a blockchain arg is supplied. Previously the union
-     * return (`Chain[] | Record<string, Chain[]>`) forced every caller
-     * to type-assert; now `getNetworks()` returns the map and
-     * `getNetworks('ethereum')` returns a Chain[] directly.
-     */
-    public getNetworks(): Record<'ethereum' | 'solana', Chain[]>;
-    public getNetworks(blockchain: 'ethereum' | 'solana'): Chain[];
-    public getNetworks(
-        blockchain?: 'ethereum' | 'solana',
-    ): Chain[] | Record<'ethereum' | 'solana', Chain[]> {
+    public getNetworks(): NetworkStore;
+    public getNetworks(blockchain: LegacyBlockchain): Chain[];
+    public getNetworks(blockchain?: LegacyBlockchain): Chain[] | NetworkStore {
         if (blockchain) {
             return this.networks[blockchain];
         }
         return this.networks;
     }
 
-    public getNetwork(blockchain: 'ethereum' | 'solana', chainId: number): Chain | undefined {
-        return this.networks[blockchain].find(n => n.id === chainId);
+    public getNetwork(blockchain: LegacyBlockchain, chainId: number): Chain | undefined {
+        return this.networks[blockchain].find((n) => n.id === chainId);
     }
 
-    /**
-     * Flat list of every registered network across blockchains.
-     * Useful for UIs that show a single unified list (network
-     * picker / search) rather than the map form from getNetworks().
-     */
     public getAllNetworks(): Chain[] {
-        return [...this.networks.ethereum, ...this.networks.solana];
+        return NETWORK_KEYS.flatMap((chain) => this.networks[chain]);
     }
 
-    /**
-     * Find a network by chainId across both blockchains (ethereum
-     * first, then solana). Handy when callers have only a chainId
-     * and don't know which blockchain it belongs to — e.g. dApps
-     * that use chainId for routing without caring about the curve.
-     * Returns undefined when the chainId isn't registered anywhere.
-     */
     public getNetworkByChainId(chainId: number): Chain | undefined {
-        return (
-            this.networks.ethereum.find(n => n.id === chainId) ||
-            this.networks.solana.find(n => n.id === chainId)
-        );
+        for (const chain of NETWORK_KEYS) {
+            const network = this.networks[chain].find((n) => n.id === chainId);
+            if (network) return network;
+        }
+        return undefined;
     }
 
-    /**
-     * Collect all configured HTTP RPC URLs for a given network —
-     * flattens default + public lists into a single array. Handy
-     * for UI display / fallback rotation. Returns [] when the
-     * chain has no rpcUrls populated (sketch networks).
-     */
     public getNetworkRPCUrls(network: Chain): string[] {
         if (!network.rpcUrls) return [];
         const defaultHttp = network.rpcUrls.default?.http ?? [];
@@ -367,105 +440,81 @@ class NetworkService {
         return [...defaultHttp, ...publicHttp];
     }
 
-    /**
-     * Predicate counterpart to getNetworkByChainId. Cheaper than
-     * the full find when the caller only needs a bool (e.g. for
-     * validating user input before a setCurrentNetwork call).
-     */
     public networkExists(chainId: number): boolean {
-        return (
-            this.networks.ethereum.some(n => n.id === chainId) ||
-            this.networks.solana.some(n => n.id === chainId)
-        );
+        return NETWORK_KEYS.some((chain) => this.networks[chain].some((n) => n.id === chainId));
     }
 
-    public getCurrentNetwork(blockchain?: 'ethereum' | 'solana'): Chain | undefined {
+    public getCurrentNetwork(blockchain?: LegacyBlockchain): Chain | undefined {
         if (blockchain) {
             return this.currentNetworks[blockchain];
         }
-        return this.currentNetworks[this.currentBlockchain];
+        return this.currentNetworks[this.currentChain];
     }
 
-    public getCurrentBlockchain(): 'ethereum' | 'solana' {
+    public getCurrentBlockchain(): LegacyBlockchain {
         return this.currentBlockchain;
     }
 
-    public async setCurrentBlockchain(blockchain: 'ethereum' | 'solana'): Promise<void> {
-        this.currentBlockchain = blockchain;
-        await this.saveCurrentBlockchain();
-        this.notifyNetworkChange(this.currentNetworks[blockchain]);
+    public getCurrentChain(): SupportedChain {
+        return this.currentChain;
     }
 
-    /**
-     * Overloads so callers can pass either a chainId (legacy — the
-     * original signature was `chainId: number`) or a full Chain
-     * object (more ergonomic when you just pulled one from
-     * getNetworks().find(...)). Both paths look up via id and
-     * validate the network is registered for this blockchain.
-     */
-    public async setCurrentNetwork(blockchain: 'ethereum' | 'solana', chainId: number): Promise<void>;
-    public async setCurrentNetwork(blockchain: 'ethereum' | 'solana', network: Chain): Promise<void>;
+    public async setCurrentBlockchain(blockchain: LegacyBlockchain): Promise<void> {
+        await this.setCurrentChain(blockchain);
+    }
+
+    public async setCurrentChain(chain: SupportedChain): Promise<void> {
+        this.currentChain = chain;
+        this.currentBlockchain = getProtocolBlockchainForChain(chain);
+        await this.saveCurrentBlockchain();
+        this.notifyNetworkChange(this.currentNetworks[chain]);
+    }
+
+    public async setCurrentNetwork(blockchain: LegacyBlockchain, chainId: number): Promise<void>;
+    public async setCurrentNetwork(blockchain: LegacyBlockchain, network: Chain): Promise<void>;
     public async setCurrentNetwork(
-        blockchain: 'ethereum' | 'solana',
+        blockchain: LegacyBlockchain,
         chainIdOrNetwork: number | Chain,
     ): Promise<void> {
         const chainId =
-            typeof chainIdOrNetwork === 'number'
+            typeof chainIdOrNetwork === "number"
                 ? chainIdOrNetwork
                 : chainIdOrNetwork.id;
-        const network = this.networks[blockchain].find(n => n.id === chainId);
+        const network = this.networks[blockchain].find((n) => n.id === chainId);
         if (!network) {
-            throw new Error('Network not found');
+            throw new Error("Network not found");
         }
 
         this.currentNetworks[blockchain] = network;
+        this.currentChain = blockchain;
+        this.currentBlockchain = blockchain;
         await this.saveCurrentNetworks();
-        this.notifyNetworkChange(this.currentNetworks[blockchain]);
+        await this.saveCurrentBlockchain();
+        this.notifyNetworkChange(network);
     }
 
-    public async clearNetworks(blockchain: 'ethereum' | 'solana'): Promise<void> {
-        // Only keep protected networks for the specified blockchain
-        this.networks[blockchain] = this.networks[blockchain].filter(n =>
-            NetworkService.PROTECTED_NETWORK_IDS[blockchain].includes(n.id)
-        );
-        await this.saveNetworks();
+    public async clearNetworks(blockchain: LegacyBlockchain): Promise<void> {
+        await this.clearNetworksForChain(blockchain);
     }
 
     public onNetworkChange(callback: NetworkChangeCallback): void {
         this.changeCallbacks.push(callback);
     }
 
-    /**
-     * Symmetric with onNetworkChange. Delegates to
-     * removeNetworkChangeListener — same naming pattern as the
-     * offAccountChange alias on AccountService (af416a3).
-     */
     public offNetworkChange(callback: NetworkChangeCallback): void {
         this.removeNetworkChangeListener(callback);
     }
 
     public removeNetworkChangeListener(callback: NetworkChangeCallback): void {
-        this.changeCallbacks = this.changeCallbacks.filter(cb => cb !== callback);
+        this.changeCallbacks = this.changeCallbacks.filter((cb) => cb !== callback);
     }
 
     private notifyNetworkChange(network: Chain | undefined): void {
-        this.changeCallbacks.forEach(callback => callback(network));
+        this.changeCallbacks.forEach((callback) => callback(network));
     }
 
-    /**
-     * viem PublicClient cache keyed by chain id. Tests rely on
-     * repeated calls with the same network returning the same
-     * client instance; without caching, a fresh HTTP transport
-     * would spin up per call and invalidate connection reuse.
-     */
     private publicClientCache: Map<number, ReturnType<typeof createPublicClient>> = new Map();
 
-    /**
-     * Probe network connectivity by issuing a cheap RPC call
-     * (getBlockNumber). Returns true if the call resolves, false
-     * on any exception. Used by the Settings UI to show live
-     * connection indicators per configured chain.
-     */
     public async testNetworkConnectivity(network: Chain): Promise<boolean> {
         try {
             const client = this.getPublicClient(network);
@@ -476,112 +525,148 @@ class NetworkService {
         }
     }
 
-    /**
-     * Shallow Chain-shape validator. Rejects obvious garbage:
-     * non-numeric id, empty name, zero RPC URLs. Callers that
-     * want stricter validation should combine this with chainlist
-     * lookup or a getBlockNumber probe.
-     */
     public validateNetworkConfig(network: unknown): network is Chain {
-        if (!network || typeof network !== 'object') return false;
+        if (!network || typeof network !== "object") return false;
         const n = network as Partial<Chain>;
-        if (typeof n.id !== 'number') return false;
-        if (typeof n.name !== 'string' || n.name.length === 0) return false;
+        if (typeof n.id !== "number") return false;
+        if (typeof n.name !== "string" || n.name.length === 0) return false;
         if (!n.rpcUrls || !n.rpcUrls.default) return false;
         const http = n.rpcUrls.default.http;
         if (!Array.isArray(http) || http.length === 0) return false;
         return true;
     }
 
-    /**
-     * Helper method to get a viem PublicClient for either the
-     * current network (when called with no args) or a specific
-     * network (when passed a Chain). Cached per-chain-id so
-     * repeat calls return the same instance.
-     */
     public getPublicClient(network?: Chain): ReturnType<typeof createPublicClient> {
-        const target = network ?? this.currentNetworks.ethereum;
+        const target = network ?? this.currentNetworks[this.currentChain];
         if (!target) {
-            throw new Error('No current Ethereum network selected');
+            throw new Error("No current EVM network selected");
         }
-        // Current-network path still gates on blockchain check; explicit
-        // network overrides the gate (caller knows what they want).
-        if (!network && this.currentBlockchain !== 'ethereum') {
-            throw new Error('Public client is only available for Ethereum networks');
+
+        if (!network && !isEvmChain(this.currentChain)) {
+            throw new Error("Public client is only available for EVM networks");
         }
 
         const cached = this.publicClientCache.get(target.id);
         if (cached) return cached;
 
-        // Convert our Chain to viem's Chain format
         const viemChain: any = {
             id: target.id,
             name: target.name,
             network: target.network,
             nativeCurrency: target.nativeCurrency || {
-                name: 'Ether',
-                symbol: 'ETH',
-                decimals: 18
+                name: "Ether",
+                symbol: "ETH",
+                decimals: 18,
             },
             rpcUrls: target.rpcUrls || {
                 default: { http: [] },
-                public: { http: [] }
+                public: { http: [] },
             },
-            blockExplorers: target.blockExplorers
+            blockExplorers: target.blockExplorers,
         };
 
-        // viem PublicClient return type encodes the full chain
-        // shape via generic inference; our cache declares the
-        // no-arg createPublicClient return which diverges on a
-        // handful of method-signature details. Both types name
-        // themselves the same way ("Client"), causing TS to show
-        // "Two different types with this name exist" — cast to
-        // any to suppress and accept the imperfect alignment.
         const client = createPublicClient({
             chain: viemChain,
-            transport: http()
+            transport: http(),
         }) as any;
         this.publicClientCache.set(target.id, client);
         return client;
     }
 
-    // ===================================================================
-    // ENHANCED METHODS FOR MULTI-CHAIN SUPPORT
-    // These methods provide backward compatibility while supporting
-    // Layer 2 chains and the new SupportedChain type.
-    // ===================================================================
-
-    /**
-     * Get networks for a supported chain (with Layer 2 support).
-     * This method maps Layer 2 chains to their underlying blockchain.
-     */
     public getNetworksForChain(chain: SupportedChain): Chain[] {
-        const blockchain = getBlockchainForChain(chain);
-        return this.networks[blockchain];
+        return this.networks[chain];
     }
 
-    /**
-     * Get current network for a supported chain.
-     */
     public getCurrentNetworkForChain(chain: SupportedChain): Chain | undefined {
-        const blockchain = getBlockchainForChain(chain);
-        return this.currentNetworks[blockchain];
+        return this.currentNetworks[chain];
     }
 
-    /**
-     * Set current network for a supported chain.
-     */
     public async setCurrentNetworkForChain(chain: SupportedChain, chainId: number): Promise<void> {
-        const blockchain = getBlockchainForChain(chain);
-        await this.setCurrentNetwork(blockchain, chainId);
+        const network = this.networks[chain].find((n) => n.id === chainId);
+        if (!network) {
+            throw new Error("Network not found");
+        }
+
+        this.currentNetworks[chain] = network;
+        this.currentChain = chain;
+        this.currentBlockchain = getProtocolBlockchainForChain(chain);
+        await this.saveCurrentNetworks();
+        await this.saveCurrentBlockchain();
+        this.notifyNetworkChange(network);
     }
 
-    /**
-     * Add network for a supported chain.
-     */
     public async addNetworkForChain(chain: SupportedChain, network: Chain): Promise<void> {
-        const blockchain = getBlockchainForChain(chain);
-        await this.addNetwork(blockchain, network);
+        if (!network || typeof network !== "object") {
+            throw new Error("Invalid network: must be an object");
+        }
+        if (typeof network.id !== "number") {
+            throw new Error("Invalid network: id is required and must be a number");
+        }
+        if (!network.name || typeof network.name !== "string") {
+            throw new Error("Invalid network: name is required and must be a string");
+        }
+        if (this.networks[chain].some((n) => n.id === network.id)) {
+            throw new Error("Network with this ID already exists");
+        }
+
+        this.networks[chain].push(network);
+        await this.saveNetworks();
+    }
+
+    public async removeNetworkForChain(chain: SupportedChain, chainId: number): Promise<void> {
+        const network = this.networks[chain].find((n) => n.id === chainId);
+        if (!network) {
+            throw new Error("Network not found");
+        }
+
+        if (NetworkService.PROTECTED_NETWORK_IDS[chain].includes(chainId)) {
+            throw new Error("Cannot remove protected network");
+        }
+
+        this.networks[chain] = this.networks[chain].filter((n) => n.id !== chainId);
+
+        if (this.currentNetworks[chain]?.id === chainId) {
+            this.currentNetworks[chain] = this.networks[chain][0];
+            await this.saveCurrentNetworks();
+        }
+
+        await this.saveNetworks();
+    }
+
+    public async updateNetworkForChain(chain: SupportedChain, network: Chain): Promise<void> {
+        const index = this.networks[chain].findIndex((n) => n.id === network.id);
+        if (index === -1) {
+            throw new Error("Network not found");
+        }
+
+        if (NetworkService.PROTECTED_NETWORK_IDS[chain].includes(network.id)) {
+            throw new Error("Cannot modify protected network");
+        }
+
+        this.networks[chain][index] = network;
+        if (this.currentNetworks[chain]?.id === network.id) {
+            this.currentNetworks[chain] = network;
+            await this.saveCurrentNetworks();
+        }
+        await this.saveNetworks();
+    }
+
+    public async clearNetworksForChain(chain: SupportedChain): Promise<void> {
+        this.networks[chain] = this.networks[chain].filter((n) =>
+            NetworkService.PROTECTED_NETWORK_IDS[chain].includes(n.id),
+        );
+        if (
+            this.currentNetworks[chain] &&
+            !this.networks[chain].some((n) => n.id === this.currentNetworks[chain]?.id)
+        ) {
+            this.currentNetworks[chain] = this.networks[chain][0];
+            await this.saveCurrentNetworks();
+        }
+        await this.saveNetworks();
+    }
+
+    public protocolBlockchainForChain(chain: SupportedChain): ProtocolBlockchain {
+        return getProtocolBlockchainForChain(chain);
     }
 }
 

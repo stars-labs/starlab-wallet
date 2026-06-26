@@ -2,8 +2,10 @@
     // Token + native balances with fiat, fetched from the background
     // (getPortfolio → buildPortfolio). Self-contained; parent just mounts it.
     import { onMount } from "svelte";
+    import type { SupportedChain } from "@stars-labs/types/appstate";
 
     export let address: string | undefined = undefined;
+    export let chain: SupportedChain = "ethereum";
 
     let loading = true;
     let error = "";
@@ -17,7 +19,7 @@
         loading = true;
         error = "";
         try {
-            const res = await chrome.runtime.sendMessage({ type: "getPortfolio", address });
+            const res = await chrome.runtime.sendMessage({ type: "getPortfolio", address, chain });
             if (res?.success) portfolio = res.portfolio;
             else error = res?.error ?? "Failed to load balances";
         } catch (e) {

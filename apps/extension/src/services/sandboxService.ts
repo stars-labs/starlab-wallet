@@ -11,6 +11,12 @@
  */
 import NetworkService from "./networkService";
 import type { Chain } from "@stars-labs/types/network";
+import {
+  EVM_CHAINS,
+  isEvmChain,
+  isSupportedChain,
+  type SupportedChain,
+} from "@stars-labs/types/appstate";
 
 export const SANDBOX_EVM_ID = 31337; // anvil's default chainId
 export const SANDBOX_SOLANA_ID = 31338; // internal id (Solana has no numeric chainId)
@@ -32,16 +38,19 @@ export const SANDBOX_SOLANA: Chain = {
 } as Chain;
 
 const PREV_KEY = "sandbox_prev_networks";
+type SandboxPrev = Partial<Record<SupportedChain, number>> & {
+  currentChain?: SupportedChain;
+};
 
-async function loadPrev(): Promise<Record<string, number | undefined>> {
+async function loadPrev(): Promise<SandboxPrev> {
   if (typeof chrome !== "undefined" && chrome.storage) {
     const res = await chrome.storage.local.get([PREV_KEY]);
-    return (res[PREV_KEY] as Record<string, number | undefined>) ?? {};
+    return (res[PREV_KEY] as SandboxPrev) ?? {};
   }
   return {};
 }
 
-async function savePrev(prev: Record<string, number | undefined>): Promise<void> {
+async function savePrev(prev: SandboxPrev): Promise<void> {
   if (typeof chrome !== "undefined" && chrome.storage) {
     await chrome.storage.local.set({ [PREV_KEY]: prev });
   }
@@ -49,7 +58,10 @@ async function savePrev(prev: Record<string, number | undefined>): Promise<void>
 
 /** Whether the wallet is currently pointed at the sandbox (EVM side decides). */
 export function isSandboxActive(): boolean {
-  return NetworkService.getInstance().getCurrentNetwork("ethereum")?.id === SANDBOX_EVM_ID;
+  const net = NetworkService.getInstance();
+  const chain = net.getCurrentChain();
+  const activeEvmChain = isEvmChain(chain) ? chain : "ethereum";
+  return net.getCurrentNetworkForChain(activeEvmChain)?.id === SANDBOX_EVM_ID;
 }
 
 /**
@@ -85,16 +97,24 @@ export async function enableSandbox(): Promise<void> {
   const net = NetworkService.getInstance();
   await net.ensureInitialized();
 
-  await savePrev({
-    ethereum: net.getCurrentNetwork("ethereum")?.id,
-    solana: net.getCurrentNetwork("solana")?.id,
-  });
+  const currentChain = net.getCurrentChain();
+  const prev: SandboxPrev = {
+    currentChain,
+    solana: net.getCurrentNetworkForChain("solana")?.id,
+  };
+  for (const chain of EVM_CHAINS) {
+    prev[chain] = net.getCurrentNetworkForChain(chain)?.id;
+  }
+  await savePrev(prev);
 
   // addNetwork is effectively upsert-by-id in both lists; ignore "exists".
-  await net.addNetwork("ethereum", SANDBOX_EVM).catch(() => {});
-  await net.addNetwork("solana", SANDBOX_SOLANA).catch(() => {});
-  await net.setCurrentNetwork("ethereum", SANDBOX_EVM_ID);
-  await net.setCurrentNetwork("solana", SANDBOX_SOLANA_ID);
+  for (const chain of EVM_CHAINS) {
+    await net.addNetworkForChain(chain, SANDBOX_EVM).catch(() => {});
+    await net.setCurrentNetworkForChain(chain, SANDBOX_EVM_ID);
+  }
+  await net.addNetworkForChain("solana", SANDBOX_SOLANA).catch(() => {});
+  await net.setCurrentNetworkForChain("solana", SANDBOX_SOLANA_ID);
+  await net.setCurrentChain(currentChain);
 }
 
 /** Switch back to the networks that were active before the sandbox. */
@@ -103,20 +123,28 @@ export async function disableSandbox(): Promise<void> {
   await net.ensureInitialized();
   const prev = await loadPrev();
 
-  if (prev.ethereum && prev.ethereum !== SANDBOX_EVM_ID) {
-    await net.setCurrentNetwork("ethereum", prev.ethereum).catch(() => {});
-  } else {
-    // Fall back to the first non-sandbox EVM network (mainnet by default).
-    const fallback = net
-      .getNetworks("ethereum")
-      .find((n) => n.id !== SANDBOX_EVM_ID);
-    if (fallback) await net.setCurrentNetwork("ethereum", fallback.id).catch(() => {});
+  for (const chain of EVM_CHAINS) {
+    const previous = prev[chain];
+    if (previous && previous !== SANDBOX_EVM_ID) {
+      await net.setCurrentNetworkForChain(chain, previous).catch(() => {});
+    } else {
+      const fallback = net
+        .getNetworksForChain(chain)
+        .find((n) => n.id !== SANDBOX_EVM_ID);
+      if (fallback) await net.setCurrentNetworkForChain(chain, fallback.id).catch(() => {});
+    }
   }
   if (prev.solana && prev.solana !== SANDBOX_SOLANA_ID) {
-    await net.setCurrentNetwork("solana", prev.solana).catch(() => {});
+    await net.setCurrentNetworkForChain("solana", prev.solana).catch(() => {});
   }
 
-  await net.removeNetwork("ethereum", SANDBOX_EVM_ID).catch(() => {});
-  await net.removeNetwork("solana", SANDBOX_SOLANA_ID).catch(() => {});
+  for (const chain of EVM_CHAINS) {
+    await net.removeNetworkForChain(chain, SANDBOX_EVM_ID).catch(() => {});
+  }
+  await net.removeNetworkForChain("solana", SANDBOX_SOLANA_ID).catch(() => {});
+  const previousChain = isSupportedChain(prev.currentChain)
+    ? prev.currentChain
+    : "ethereum";
+  await net.setCurrentChain(previousChain).catch(() => {});
   await savePrev({});
 }

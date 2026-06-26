@@ -1,15 +1,17 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import NetworkService from "../services/networkService";
-    import { mainnet } from "viem/chains";
     import type { Chain } from "@stars-labs/types/network";
     import type { SupportedChain } from "@stars-labs/types/appstate";
     import {
-        CURVE_COMPATIBLE_CHAINS,
+        CHAIN_METADATA,
+        EVM_CHAINS,
+        LIMITED_CHAINS,
         getCompatibleChains,
         getRequiredCurve,
+        isEvmChain,
+        isSupportedChain,
     } from "@stars-labs/types/appstate";
-    import { createPublicClient, http } from "viem";
     import { createEventDispatcher } from "svelte";
     import { themeMode, setTheme, type ThemeMode } from "../lib/theme";
     import Button from "../lib/ui/Button.svelte";
@@ -97,11 +99,15 @@
     // Token approvals (#17): recorded approvals refreshed against the chain.
     let allowances: (AllowanceRecord & { current: bigint })[] = [];
     let allowanceStatus = "";
+    function activeEvmNetwork(): Chain | undefined {
+        if (!isEvmChain(chain)) return undefined;
+        return NetworkService.getInstance().getCurrentNetworkForChain(chain);
+    }
     async function loadAllowances() {
         if (!currentAddress) return;
         try {
             const net = NetworkService.getInstance();
-            const network = net.getCurrentNetwork("ethereum");
+            const network = activeEvmNetwork();
             if (!network) return;
             const client = net.getPublicClient(network) as any;
             allowances = await AllowanceService.getInstance().listLive(
@@ -144,7 +150,7 @@
     let tokenStatus = "";
     let trackedTokens: TokenInfo[] = [];
     function evmChainId(): number | undefined {
-        return NetworkService.getInstance().getCurrentNetwork("ethereum")?.id;
+        return activeEvmNetwork()?.id;
     }
     async function loadTrackedTokens() {
         const chainId = evmChainId();
@@ -159,7 +165,7 @@
         }
         try {
             const net = NetworkService.getInstance();
-            const network = net.getCurrentNetwork("ethereum");
+            const network = activeEvmNetwork();
             if (!network) throw new Error("No EVM network selected");
             const client = net.getPublicClient(network) as any;
             const meta = await fetchTokenMetadata(client, addr);
@@ -192,7 +198,7 @@
         tokenStatus = "Scanning recent Transfer logs…";
         try {
             const net = NetworkService.getInstance();
-            const network = net.getCurrentNetwork("ethereum");
+            const network = activeEvmNetwork();
             if (!network) throw new Error("No EVM network selected");
             const client = net.getPublicClient(network) as any;
             const latest: bigint = await client.getBlockNumber();
@@ -310,8 +316,6 @@
         signalRoom = (await getRoom()) ?? "";
         sandboxActive = isSandboxActive();
         await loadDappPermissions();
-        await loadAllowances();
-        await loadTrackedTokens();
         await loadPolicy();
         await loadContacts();
     });
@@ -329,10 +333,8 @@
             roomStatus = "✗ Save failed — couldn't write to extension storage. Reload the extension and try again.";
             return;
         }
-        // Apply immediately: the startup WS connect is roomless (it ran before a
-        // room existed) and the multi-tenant server rejects it, so without a
-        // reconnect the saved room never takes effect. Ask the background to
-        // re-resolve the URL and reconnect.
+        // Apply immediately: startup skips the signal socket until a room
+        // exists, so ask the background to re-resolve the URL and connect.
         roomStatus = "✓ Saved — reconnecting…";
         try {
             await chrome.runtime.sendMessage({ type: "reconnectSignal" });
@@ -374,22 +376,28 @@
     // Initialize network service and load data
     onMount(async () => {
         networkService = NetworkService.getInstance();
+        await networkService.ensureInitialized();
 
         try {
             // Sync chain with current settings
             const message = await chrome.runtime.sendMessage({
                 type: "getState",
             });
-            if (message && message.blockchain) {
-                chain = message.blockchain;
+            const incomingChain = message?.chain ?? message?.blockchain;
+            if (isSupportedChain(incomingChain)) {
+                chain = incomingChain;
                 // Get curve from state if available, otherwise use sensible default
                 if (message.curve) {
                     curve = message.curve;
                 } else {
                     // Legacy support: default curve for existing chain selection
-                    curve = chain === "ethereum" ? "secp256k1" : "ed25519";
+                    curve = getRequiredCurve(chain);
                 }
             }
+
+            await networkService.setCurrentChain(chain).catch((error) => {
+                console.warn("[Settings] Failed to sync current chain:", error);
+            });
 
             // Get networks for current chain - use new method that supports Layer 2 chains
             const chainNetworks = networkService.getNetworksForChain(chain);
@@ -397,6 +405,8 @@
                 networks = chainNetworks;
                 currentNetwork =
                     networkService.getCurrentNetworkForChain(chain);
+                await loadTrackedTokens();
+                await loadAllowances();
             } else {
                 console.error(
                     "[Settings] Networks is not an array:",
@@ -421,11 +431,11 @@
             console.log("[Settings] Switched to compatible chain:", chain);
         }
 
-        updateBlockchainSelection();
+        void handleChainChange();
     }
 
     // Handle chain change - validate compatibility and set sensible defaults
-    function handleChainChange() {
+    async function handleChainChange() {
         console.log("[Settings] Chain changed to:", chain);
 
         // Ensure curve is compatible with the selected chain
@@ -435,7 +445,7 @@
             console.log("[Settings] Updated curve to compatible:", curve);
         }
 
-        updateBlockchainSelection();
+        void updateBlockchainSelection();
 
         try {
             // Update networks list when chain changes - use new method that supports Layer 2 chains
@@ -444,6 +454,8 @@
                 networks = chainNetworks;
                 currentNetwork =
                     networkService.getCurrentNetworkForChain(chain);
+                await loadTrackedTokens();
+                await loadAllowances();
             } else {
                 console.error(
                     "[Settings] Networks is not an array:",
@@ -460,7 +472,12 @@
     // Update blockchain selection in background
     // Event dispatcher for parent components
 
-    function updateBlockchainSelection() {
+    async function updateBlockchainSelection() {
+        if (networkService) {
+            await networkService.setCurrentChain(chain).catch((error) => {
+                console.warn("[Settings] Failed to sync current chain:", error);
+            });
+        }
         chrome.runtime.sendMessage(
             {
                 type: "setBlockchain",
@@ -745,67 +762,69 @@
     <!-- Devices / Reshare (M3 #23): rotate shares or retire a device -->
     <ReshareCard />
 
-    <!-- Tokens (#21): tracked list + custom add + auto-discovery -->
-    <div class="card card-pad space-y-2">
-        <h3 class="section-title">Tokens</h3>
-        {#if trackedTokens.length > 0}
-            <ul class="space-y-1">
-                {#each trackedTokens as t (t.address)}
-                    <li class="flex items-center justify-between gap-2 text-xs">
-                        <span class="truncate"><strong>{t.symbol}</strong> · {t.address.slice(0, 8)}…{t.address.slice(-4)}</span>
-                        <Button size="sm" variant="ghost" on:click={() => removeToken(t.address)}>Remove</Button>
-                    </li>
-                {/each}
-            </ul>
-        {/if}
-        <div class="flex items-center gap-2">
-            <input
-                type="text"
-                class="input flex-1 text-xs"
-                placeholder="0x… token contract"
-                bind:value={tokenAddrInput}
-            />
-            <Button size="sm" on:click={addCustomToken}>Add</Button>
-            <Button size="sm" variant="ghost" on:click={runDiscovery} disabled={discovering}>
-                {discovering ? "Scanning…" : "Discover"}
-            </Button>
+    {#if isEvmChain(chain)}
+        <!-- Tokens (#21): tracked list + custom add + auto-discovery -->
+        <div class="card card-pad space-y-2">
+            <h3 class="section-title">Tokens</h3>
+            {#if trackedTokens.length > 0}
+                <ul class="space-y-1">
+                    {#each trackedTokens as t (t.address)}
+                        <li class="flex items-center justify-between gap-2 text-xs">
+                            <span class="truncate"><strong>{t.symbol}</strong> · {t.address.slice(0, 8)}…{t.address.slice(-4)}</span>
+                            <Button size="sm" variant="ghost" on:click={() => removeToken(t.address)}>Remove</Button>
+                        </li>
+                    {/each}
+                </ul>
+            {/if}
+            <div class="flex items-center gap-2">
+                <input
+                    type="text"
+                    class="input flex-1 text-xs"
+                    placeholder="0x… token contract"
+                    bind:value={tokenAddrInput}
+                />
+                <Button size="sm" on:click={addCustomToken}>Add</Button>
+                <Button size="sm" variant="ghost" on:click={runDiscovery} disabled={discovering}>
+                    {discovering ? "Scanning…" : "Discover"}
+                </Button>
+            </div>
+            {#if tokenStatus}
+                <p class="text-xs text-muted">{tokenStatus}</p>
+            {/if}
         </div>
-        {#if tokenStatus}
-            <p class="text-xs text-muted">{tokenStatus}</p>
-        {/if}
-    </div>
 
-    <!-- Token approvals (#17): review + revoke ERC-20 allowances -->
-    <div class="card card-pad space-y-2">
-        <h3 class="section-title">Token approvals</h3>
-        {#if allowances.length === 0}
-            <p class="text-xs text-muted">
-                No active approvals recorded. Approvals signed in this wallet
-                appear here for review and revocation.
-            </p>
-        {:else}
-            <ul class="space-y-2">
-                {#each allowances as r (r.chainId + r.token + r.spender)}
-                    <li class="flex items-center justify-between gap-2">
-                        <div class="min-w-0 text-xs">
-                            <div class="truncate font-semibold">
-                                token {shortHexId(r.token)} → spender {shortHexId(r.spender)}
+        <!-- Token approvals (#17): review + revoke ERC-20 allowances -->
+        <div class="card card-pad space-y-2">
+            <h3 class="section-title">Token approvals</h3>
+            {#if allowances.length === 0}
+                <p class="text-xs text-muted">
+                    No active approvals recorded. Approvals signed in this wallet
+                    appear here for review and revocation.
+                </p>
+            {:else}
+                <ul class="space-y-2">
+                    {#each allowances as r (r.chainId + r.token + r.spender)}
+                        <li class="flex items-center justify-between gap-2">
+                            <div class="min-w-0 text-xs">
+                                <div class="truncate font-semibold">
+                                    token {shortHexId(r.token)} → spender {shortHexId(r.spender)}
+                                </div>
+                                <div class="truncate text-muted">
+                                    {r.current === -1n ? "current allowance unknown" : `allowance: ${r.current}`}
+                                </div>
                             </div>
-                            <div class="truncate text-muted">
-                                {r.current === -1n ? "current allowance unknown" : `allowance: ${r.current}`}
-                            </div>
-                        </div>
-                        <Button size="sm" variant="ghost" on:click={() => revokeAllowance(r)}>
-                            Revoke
-                        </Button>
-                    </li>
-                {/each}
-            </ul>
-        {/if}
-        {#if allowanceStatus}
-            <p class="text-xs text-muted">{allowanceStatus}</p>
-        {/if}
-    </div>
+                            <Button size="sm" variant="ghost" on:click={() => revokeAllowance(r)}>
+                                Revoke
+                            </Button>
+                        </li>
+                    {/each}
+                </ul>
+            {/if}
+            {#if allowanceStatus}
+                <p class="text-xs text-muted">{allowanceStatus}</p>
+            {/if}
+        </div>
+    {/if}
 
     <!-- Sandbox mode (#31): one-click switch onto local fork nodes -->
     <div class="card card-pad space-y-2">
@@ -843,20 +862,30 @@
                 class="select"
             >
                 <optgroup label="Ethereum / EVM (secp256k1)">
-                    <option value="ethereum">Ethereum</option>
-                    <option value="polygon">Polygon</option>
-                    <option value="arbitrum">Arbitrum</option>
-                    <option value="optimism">Optimism</option>
-                    <option value="base">Base</option>
+                    {#each EVM_CHAINS as chainId}
+                        <option value={chainId}>{CHAIN_METADATA[chainId].label}</option>
+                    {/each}
                 </optgroup>
                 <optgroup label="ed25519">
                     <option value="solana">Solana</option>
-                    <option value="sui">Sui</option>
+                </optgroup>
+                <optgroup label="Address + threshold signing">
+                    {#each LIMITED_CHAINS as chainId}
+                        <option value={chainId}>
+                            {CHAIN_METADATA[chainId].label} — limited
+                        </option>
+                    {/each}
                 </optgroup>
             </select>
+            <p class="mt-1 text-xs text-muted">
+                {CHAIN_METADATA[chain].family} · {getRequiredCurve(chain)}
+            </p>
+            {#if CHAIN_METADATA[chain].status === "limited"}
+                <p class="mt-1 text-xs text-muted">{CHAIN_METADATA[chain].note}</p>
+            {/if}
         </div>
 
-        {#if ["ethereum", "polygon", "arbitrum", "optimism", "base"].includes(chain) && networks.length > 0}
+        {#if isEvmChain(chain) && networks.length > 0}
             <div>
                 <label class="label" for="network-select">Network</label>
                 <select

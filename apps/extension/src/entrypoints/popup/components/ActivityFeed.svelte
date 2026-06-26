@@ -7,8 +7,10 @@
     // and a light poll re-fetches while any row is still pending (covers a
     // broadcast lost to popup-open races).
     import { onMount, onDestroy } from "svelte";
+    import type { SupportedChain } from "@stars-labs/types/appstate";
 
     export let address: string | undefined = undefined;
+    export let chain: SupportedChain = "ethereum";
 
     let loading = true;
     let error = "";
@@ -27,7 +29,7 @@
         loading = items.length === 0;
         error = "";
         try {
-            const res = await chrome.runtime.sendMessage({ type: "getActivity", address });
+            const res = await chrome.runtime.sendMessage({ type: "getActivity", address, chain });
             if (res?.success) items = res.activity ?? [];
             else error = res?.error ?? "Failed to load activity";
         } catch (e) {

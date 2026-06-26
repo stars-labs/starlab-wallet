@@ -9,7 +9,13 @@
 // - Session state validation
 // ===================================================================
 
-import { AppState } from "@stars-labs/types/appstate";
+import {
+    AppState,
+    getDefaultChainForCurve,
+    getProtocolBlockchainForChain,
+    isSupportedChain,
+    type SupportedChain,
+} from "@stars-labs/types/appstate";
 import { SessionInfo, SessionProposal, SessionResponse } from "@stars-labs/types/session";
 import { MeshStatus } from "@stars-labs/types/mesh";
 import { DkgState } from "@stars-labs/types/dkg";
@@ -288,7 +294,16 @@ export class SessionManager {
         const session = invites[sessionIndex];
         console.log(`[SessionManager] Found session to accept:`, session);
 
-        // Store blockchain selection
+        const sessionCurve =
+            session.curve_type === "ed25519" ? "ed25519" : "secp256k1";
+        const chain =
+            isSupportedChain(session.blockchain)
+                ? session.blockchain
+                : getDefaultChainForCurve(sessionCurve);
+        blockchain = getProtocolBlockchainForChain(chain);
+
+        // Store chain selection for the invite being accepted.
+        this.appState.chain = chain;
         this.appState.blockchain = blockchain;
 
         // Get current device ID
@@ -311,7 +326,8 @@ export class SessionManager {
             this.stateManager.updateState({
                 sessionInfo: newSessionInfo,
                 invites: invites,
-                blockchain: blockchain
+                blockchain,
+                chain,
             });
             // Sync local state with StateManager
             this.appState = this.stateManager.getState();
@@ -450,6 +466,7 @@ export class SessionManager {
         total: number;
         threshold: number;
         curve: "secp256k1" | "ed25519";
+        chain?: SupportedChain;
     }): Promise<{ success: boolean; sessionId?: string; error?: string }> {
         if (!this.wsClient || this.wsClient.getReadyState() !== WebSocket.OPEN) {
             return { success: false, error: "WebSocket not connected" };
@@ -474,6 +491,11 @@ export class SessionManager {
         // here. TUI still parses the id as an opaque string so length
         // doesn't matter to it.)
         const sessionId = `dkg_${cryptoHex(12)}`;
+        const chain =
+            config.chain && isSupportedChain(config.chain)
+                ? config.chain
+                : getDefaultChainForCurve(config.curve);
+        const blockchain = getProtocolBlockchainForChain(chain);
 
         const sessionInfo: SessionInfo = {
             session_id: sessionId,
@@ -483,6 +505,7 @@ export class SessionManager {
             participants: [currentDeviceId],
             session_type: "dkg",
             curve_type: config.curve,
+            blockchain: chain,
             coordination_type: "Network",
             accepted_devices: [currentDeviceId],
         };
@@ -503,8 +526,8 @@ export class SessionManager {
                 sessionInfo,
                 invites: this.appState.invites,
                 dkgState: DkgState.Initializing,
-                blockchain:
-                    config.curve === "secp256k1" ? "ethereum" : "solana",
+                blockchain,
+                chain,
             });
         }
 
@@ -617,13 +640,17 @@ export class SessionManager {
         this.appState.sessionInfo = local;
         this.appState.dkgState = DkgState.Initializing;
         if (this.stateManager) {
+            const curve =
+                local.curve_type === "ed25519" ? "ed25519" : "secp256k1";
+            const chain =
+                isSupportedChain(local.blockchain)
+                    ? local.blockchain
+                    : getDefaultChainForCurve(curve);
             this.stateManager.updateState({
                 sessionInfo: local,
                 dkgState: DkgState.Initializing,
-                blockchain:
-                    (local.curve_type ?? "secp256k1") === "ed25519"
-                        ? "solana"
-                        : "ethereum",
+                blockchain: getProtocolBlockchainForChain(chain),
+                chain,
             });
         }
 

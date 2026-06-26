@@ -83,6 +83,7 @@ export class WebRTCManager {
   private ethereumAddress: string | null = null; // Ethereum address property
   private walletAddress: string | null = null; // Generic address property for current blockchain
   private currentBlockchain: "ethereum" | "solana" = "solana"; // Store current blockchain selection
+  private pendingDkgTriggerBlockchain: "ethereum" | "solana" | null = null;
 
   // Package buffering for handling packages that arrive before DKG initialization
   private bufferedRound1Packages: Array<{ fromPeerId: string; packageData: any }> = [];
@@ -278,6 +279,30 @@ export class WebRTCManager {
     return JSON.stringify(error);
   }
 
+  private _bytesToHex(bytes: Uint8Array): string {
+    return Array.from(bytes)
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
+  private _base64ToHex(base64: string): string {
+    if (typeof atob === 'function') {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return this._bytesToHex(bytes);
+    }
+
+    const BufferCtor = (globalThis as any).Buffer;
+    if (BufferCtor) {
+      return this._bytesToHex(new Uint8Array(BufferCtor.from(base64, 'base64')));
+    }
+
+    throw new Error('No base64 decoder available in this environment');
+  }
+
   /**
    * FROST participant identifiers are derived from the SORTED participant
    * device-id order — this MUST match the Rust core's `canonical_identifier`
@@ -304,9 +329,14 @@ export class WebRTCManager {
     this.onMeshStatusUpdate(this.meshStatus);
 
     if (newStatus.type === MeshStatusType.Ready) {
-      this._log("Mesh is Ready! Waiting for explicit DKG trigger from background script.");
-      // Do NOT automatically trigger DKG here to avoid race conditions
-      // DKG will be triggered explicitly by the background script via sessionAllAccepted
+      this._log("Mesh is Ready.");
+
+      if (this.pendingDkgTriggerBlockchain && this.dkgState === DkgState.Idle) {
+        const blockchain = this.pendingDkgTriggerBlockchain;
+        this.pendingDkgTriggerBlockchain = null;
+        this._log(`Retrying pending DKG trigger now that mesh is ready (${blockchain})`);
+        void this.checkAndTriggerDkg(blockchain);
+      }
 
       // M3 reshare: unlike DKG, the reshare trigger has already been
       // armed by startReshare (the background only fires it once the
@@ -1055,7 +1085,27 @@ export class WebRTCManager {
     if ((message as any).webrtc_msg_type) {
       switch ((message as any).webrtc_msg_type) {
         case 'SimpleMessage':
-          this._log(`Received SimpleMessage from ${fromPeerId}: ${(message as any).text}`);
+          {
+            const text = (message as any).text;
+            this._log(`Received SimpleMessage from ${fromPeerId}: ${text}`);
+            if (typeof text === 'string') {
+              if (text.startsWith('DKG_ROUND1:')) {
+                try {
+                  const packageHex = this._base64ToHex(text.slice('DKG_ROUND1:'.length));
+                  void this._handleDkgRound1Package(fromPeerId, packageHex);
+                } catch (error) {
+                  this._log(`Failed to decode DKG_ROUND1 from ${fromPeerId}: ${this._getErrorMessage(error)}`);
+                }
+              } else if (text.startsWith('DKG_ROUND2:')) {
+                try {
+                  const packageHex = this._base64ToHex(text.slice('DKG_ROUND2:'.length));
+                  void this._handleDkgRound2Package(fromPeerId, packageHex);
+                } catch (error) {
+                  this._log(`Failed to decode DKG_ROUND2 from ${fromPeerId}: ${this._getErrorMessage(error)}`);
+                }
+              }
+            }
+          }
           break;
         case 'MeshReady':
           this._log(`Received MeshReady message from ${fromPeerId}`);
@@ -1705,6 +1755,7 @@ export class WebRTCManager {
     this.groupPublicKey = null;
     this.solanaAddress = null;
     this.ethereumAddress = null;
+    this.pendingDkgTriggerBlockchain = null;
     this.bufferedRound1Packages = [];
     this.bufferedRound2Packages = [];
   }
@@ -1738,9 +1789,11 @@ export class WebRTCManager {
 
     if (this.meshStatus.type !== MeshStatusType.Ready) {
       this._log(`Cannot trigger DKG: mesh not ready (status: ${this.meshStatus.type})`);
+      this.pendingDkgTriggerBlockchain = blockchain as "ethereum" | "solana";
       return false;
     }
 
+    this.pendingDkgTriggerBlockchain = null;
     return await this.initializeDkg(blockchain as "ethereum" | "solana");
   }
 

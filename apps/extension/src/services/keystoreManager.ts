@@ -46,7 +46,7 @@ export class KeystoreManager {
         try {
             const stored = await chrome.storage.session.get(['keystoreSession']);
             if (stored.keystoreSession) {
-                this.session = stored.keystoreSession;
+                this.session = stored.keystoreSession as KeystoreSession;
                 
                 // Check if session is still valid
                 if (this.session && this.session.unlocked && this.session.unlockedAt) {
@@ -415,7 +415,7 @@ export class KeystoreManager {
             );
             
             for (const key of keystoreKeys) {
-                const importedData = storage[key];
+                const importedData = storage[key] as any;
                 if (importedData && importedData.keystoreData) {
                     try {
                         // Parse the keystore data

@@ -1,3 +1,4 @@
+import "../../lib/browser-buffer";
 import Eth from "@ledgerhq/hw-app-eth";
 import Solana from "@ledgerhq/hw-app-solana";
 import type Transport from "@ledgerhq/hw-transport";

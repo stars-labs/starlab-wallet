@@ -1,3 +1,5 @@
+import type { SupportedChain } from './appstate';
+
 // ===================================================================
 // KEYSTORE TYPES - FROST KEY SHARE STORAGE
 // ===================================================================
@@ -237,7 +239,7 @@ export interface KeyDerivationParams {
 export interface NewAccountSession {
     session_id: string;
     name: string;
-    blockchain: 'ethereum' | 'solana';
+    blockchain: SupportedChain;
     threshold: number;
     total_participants: number;
     participants: string[];

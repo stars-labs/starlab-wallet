@@ -1,7 +1,7 @@
 import type { SessionInfo, SessionProposal, SessionResponse } from './session';
 import type { DkgState } from './dkg';
 import type { MeshStatus } from './mesh';
-import type { AppState } from './appstate';
+import type { AppState, ProtocolBlockchain, SupportedChain } from './appstate';
 import type { WebRTCAppMessage as DataChannelMessage } from './webrtc';
 import type { Account as WalletAccount } from './account';
 import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from './websocket';
@@ -58,11 +58,11 @@ export type PopupToBackgroundMessage = BaseMessage & (
     | { type: 'getWebRTCStatus' }
     | { type: 'getEthereumAddress' }
     | { type: 'getSolanaAddress' }
-    | { type: 'setBlockchain'; blockchain: "ethereum" | "solana" }
+    | { type: 'setBlockchain'; blockchain: SupportedChain }
 
     // session management
     | { type: 'proposeSession'; session_id: string; total: number; threshold: number; participants: string[] }
-    | { type: 'acceptSession'; session_id: string; accepted: boolean; blockchain?: "ethereum" | "solana" }
+    | { type: 'acceptSession'; session_id: string; accepted: boolean; blockchain?: ProtocolBlockchain }
     
     // MPC signing operations
     | { type: 'requestSigning'; signingId: string; transactionData: string; requiredSigners: number }
@@ -90,34 +90,34 @@ export type BackgroundToOffscreenMessage = BaseMessage & (
     | { type: 'getWebRTCStatus' }
     | { type: 'init'; deviceId: string; wsUrl: string }
     | { type: 'relayViaWs'; to: string; data: any }
-    | { type: 'sessionAccepted'; sessionInfo: SessionInfo; currentdeviceId: string; blockchain?: "ethereum" | "solana" }
-    | { type: 'sessionAllAccepted'; sessionInfo: SessionInfo; currentdeviceId: string; blockchain?: "ethereum" | "solana" }
+    | { type: 'sessionAccepted'; sessionInfo: SessionInfo; currentdeviceId: string; blockchain?: ProtocolBlockchain }
+    | { type: 'sessionAllAccepted'; sessionInfo: SessionInfo; currentdeviceId: string; blockchain?: ProtocolBlockchain }
     | { type: 'sessionResponseUpdate'; sessionInfo: SessionInfo; currentdeviceId: string }
     | { type: 'getEthereumAddress' }
     | { type: 'getSolanaAddress' }
     | { type: 'getDkgStatus' }
     | { type: 'getGroupPublicKey' }
-    | { type: 'setBlockchain'; blockchain: "ethereum" | "solana" }
+    | { type: 'setBlockchain'; blockchain: ProtocolBlockchain }
     | { type: 'requestSigning'; signingId: string; transactionData: string; requiredSigners: number }
     | { type: 'requestMessageSignature'; signingId: string; message: string; fromAddress: string }
     | { type: 'requestTransactionSignature'; signingId: string; transactionData: string; fromAddress: string }
     // Ext-2d-offscreen: signing-ceremony trigger. Fires when a
     // session reaches threshold (see webSocketManager.maybeTriggerCeremony);
     // offscreen loads keystore + kicks off FROST round 1.
-    | { type: 'sessionReadyForSigning'; sessionInfo: SessionInfo; blockchain?: "ethereum" | "solana" }
+    | { type: 'sessionReadyForSigning'; sessionInfo: SessionInfo; blockchain?: ProtocolBlockchain }
     // M3 reshare: ceremony trigger. Fires when a reshare session's
     // full NEW cohort has joined (maybeTriggerCeremony); offscreen
     // fetches the wallet's keystore (getWalletKeystore) and runs
     // the FROST reshare rounds over the mesh.
-    | { type: 'sessionReadyForReshare'; sessionInfo: SessionInfo; blockchain?: "ethereum" | "solana"; walletId: string }
+    | { type: 'sessionReadyForReshare'; sessionInfo: SessionInfo; blockchain?: ProtocolBlockchain; walletId: string }
     // Keystore WASM export: background requests offscreen dump the
     // serialized keystore JSON after DKG finalize or import, so it
     // can be encrypted + persisted via KeystoreManager.
-    | { type: 'exportKeystore'; chain?: "ethereum" | "solana" }
+    | { type: 'exportKeystore'; chain?: ProtocolBlockchain }
     // Keystore WASM import: background hands offscreen raw keystore
     // JSON (e.g. from CLI .dat conversion) to load into the FROST
     // instance before signing.
-    | { type: 'importKeystore'; chain: "ethereum" | "solana"; keystoreData: string }
+    | { type: 'importKeystore'; chain: ProtocolBlockchain; keystoreData: string }
 );
 
 // --- Offscreen to Background Message Types (Offscreen sends to Background) ---
@@ -139,7 +139,7 @@ export type OffscreenToBackgroundMessage = BaseMessage & (
         type: 'dkgComplete';
         groupPublicKey: string;
         address: string | null;
-        blockchain: 'ethereum' | 'solana';
+        blockchain: ProtocolBlockchain;
         sessionId: string | null;
         threshold: number;
         total: number;
@@ -200,7 +200,7 @@ export type OffscreenToBackgroundMessage = BaseMessage & (
         total: number;
         participants: string[];
         participantIndex: number | null;
-        blockchain: 'ethereum' | 'solana';
+        blockchain: ProtocolBlockchain;
       }
     | { type: 'messageSignatureComplete'; signingId: string; signature: string }
     | { type: 'messageSignatureError'; signingId: string; error: string }
@@ -239,7 +239,7 @@ export type BackgroundToPopupMessage =
     // Ext-1d: account list changed (wallet saved / removed). Popup
     // re-fetches the relevant blockchain's accounts to refresh the
     // picker. Emitted by completeAccountCreation and similar flows.
-    | { type: "accountsUpdated"; blockchain: "ethereum" | "solana"; accounts: WalletAccount[] } & BaseMessage;
+    | { type: "accountsUpdated"; blockchain: ProtocolBlockchain; accounts: WalletAccount[] } & BaseMessage;
 
 // --- Wrapper Message Types for Communication Direction ---
 export type BackgroundToOffscreenWrapper = {
@@ -321,7 +321,7 @@ export function validateSessionProposal(msg: PopupToBackgroundMessage): msg is P
         'participants' in msg && Array.isArray(msg.participants);
 }
 
-export function validateSessionAcceptance(msg: PopupToBackgroundMessage): msg is PopupToBackgroundMessage & { session_id: string; accepted: boolean; blockchain?: "ethereum" | "solana" } {
+export function validateSessionAcceptance(msg: PopupToBackgroundMessage): msg is PopupToBackgroundMessage & { session_id: string; accepted: boolean; blockchain?: ProtocolBlockchain } {
     return msg.type === 'acceptSession' &&
         'session_id' in msg && typeof msg.session_id === 'string' &&
         'accepted' in msg && typeof msg.accepted === 'boolean' &&

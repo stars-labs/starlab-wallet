@@ -18,6 +18,7 @@
         "@stars-labs/types": "workspace:*",
         "@tailwindcss/vite": "^4.3.0",
         "bs58": "6.0.0",
+        "buffer": "6.0.3",
         "qrcode": "1.5.4",
         "tailwindcss": "^4.3.0",
         "uuid": "^14.0.0",

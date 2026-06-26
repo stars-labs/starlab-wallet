@@ -11,10 +11,11 @@
         type NftItem,
     } from "../../../services/nftService";
     import { makeSolanaRpc, loadSolanaNfts } from "../../../services/solanaNftService";
+    import { isEvmChain, type SupportedChain } from "@stars-labs/types/appstate";
 
     export let address: string;
-    /** "ethereum" (EVM: 721 + 1155) or "solana" (Metaplex). */
-    export let chain: string = "ethereum";
+    /** EVM chains scan ERC-721/1155; Solana scans Metaplex. */
+    export let chain: SupportedChain = "ethereum";
 
     let items: NftItem[] = [];
     let loading = false;
@@ -29,7 +30,7 @@
 
     async function loadEvm(): Promise<NftItem[]> {
         const net = NetworkService.getInstance();
-        const network = net.getCurrentNetwork("ethereum");
+        const network = isEvmChain(chain) ? net.getCurrentNetworkForChain(chain) : undefined;
         if (!network) throw new Error("No EVM network selected");
         const client = net.getPublicClient(network) as any;
         const latest: bigint = await client.getBlockNumber();
@@ -50,7 +51,7 @@
     async function loadSolana(): Promise<NftItem[]> {
         const net = NetworkService.getInstance();
         const url =
-            net.getCurrentNetwork("solana")?.rpcUrls?.default?.http?.[0] ??
+            net.getCurrentNetworkForChain("solana")?.rpcUrls?.default?.http?.[0] ??
             "https://api.mainnet-beta.solana.com";
         return loadSolanaNfts(makeSolanaRpc(url), address);
     }

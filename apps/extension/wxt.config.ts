@@ -5,11 +5,22 @@ import wasm from 'vite-plugin-wasm';
 export default defineConfig({
   srcDir: 'src',
   modules: ['@wxt-dev/module-svelte'],
+  dev: {
+    server: {
+      port: 3002,
+      strictPort: true,
+    },
+  },
   vite: () => ({
     plugins: [
       wasm(),
       tailwindcss(),
     ],
+    resolve: {
+      alias: {
+        buffer: 'buffer/',
+      },
+    },
     // Vite 8 + rolldown supports top-level await natively for ESM output
     // (which the MV3 module background/offscreen entrypoints use), so the
     // old vite-plugin-top-level-await is gone — under rolldown its

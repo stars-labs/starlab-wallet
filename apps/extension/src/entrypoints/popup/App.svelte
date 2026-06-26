@@ -14,10 +14,25 @@
     import { guideError } from "../../utils/error-guidance";
     import Collapsible from "../../lib/ui/Collapsible.svelte";
     import { storage } from "#imports";
-    import type { AppState } from "@stars-labs/types/appstate";
+    import type {
+        AppState,
+        ProtocolBlockchain,
+        SupportedChain,
+        WalletCurve,
+    } from "@stars-labs/types/appstate";
     import { MeshStatusType } from "@stars-labs/types/mesh";
     import { DkgState } from "@stars-labs/types/dkg";
-    import { INITIAL_APP_STATE } from "@stars-labs/types/appstate";
+    import {
+        CHAIN_METADATA,
+        INITIAL_APP_STATE,
+        getChainLabel,
+        getDefaultChainForCurve,
+        getProtocolBlockchainForChain,
+        getRequiredCurve,
+        isEvmChain,
+        isSupportedChain,
+        normalizeDerivedAddressChain,
+    } from "@stars-labs/types/appstate";
     import Settings from "../../components/Settings.svelte";
     import AccountManager from "../../components/AccountManager.svelte";
     import SignatureRequest from "../../components/SignatureRequest.svelte";
@@ -35,11 +50,60 @@
     import { MESSAGE_TYPES } from "@stars-labs/types/messages";
     import { hashMessage } from "viem";
     import AccountService from "../../services/accountService";
+    import type { Account } from "@stars-labs/types/account";
+    import { discoverLedgerAccounts } from "../../signers/ledger/ledger-signer";
+    import { requestLedgerTransport } from "../../signers/ledger/transport";
+    import { getRoom, ROOM_STORAGE_KEY } from "../../config/signal-server";
 
-    // YubiKey hardware accounts are mirrored into AccountService by the
-    // background (yubikeyManager). Surface them even when no FROST wallet
-    // exists yet, so a YubiKey-only user still sees their account list.
-    let hasHardwareAccounts = false;
+    // Hardware/simulation accounts are mirrored into AccountService. Surface
+    // them even when no FROST wallet exists yet, so non-MPC first-run paths
+    // still show the account list.
+    let hasExternalAccounts = false;
+    let accountSetupStatus = "";
+    let createdDkgSessionId = "";
+    let hasSignalRoom = false;
+    let signalRoom = "";
+    let removeSignalRoomStorageListener: (() => void) | null = null;
+
+    async function refreshSignalRoomState() {
+        signalRoom = (await getRoom()) ?? "";
+        hasSignalRoom = signalRoom.length > 0;
+    }
+
+    async function reconnectSignalAfterRoomSave() {
+        await refreshSignalRoomState();
+        await chrome.runtime.sendMessage({ type: "reconnectSignal" });
+    }
+
+    $: signalStatusBadge = appState.wsConnected
+        ? "badge-success"
+        : hasSignalRoom
+          ? "badge-danger"
+          : "badge-warning";
+    $: signalStatusLabel = appState.wsConnected
+        ? "Online"
+        : hasSignalRoom
+          ? "Offline"
+          : "No room";
+    $: signalStatusTitle = appState.wsConnected
+        ? "Connected to the signal server"
+        : hasSignalRoom
+          ? "Not connected to the signal server"
+          : "Generate or enter a signal room to connect";
+    $: activeShareSessionId = appState.sessionInfo?.session_id ?? createdDkgSessionId;
+    $: setupInviteText = activeShareSessionId
+        ? [
+              "Starlab Wallet setup",
+              `Room: ${signalRoom || "(not set)"}`,
+              `Session ID: ${activeShareSessionId}`,
+              appState.sessionInfo
+                  ? `Wallet: ${appState.sessionInfo.threshold}-of-${appState.sessionInfo.total}`
+                  : "",
+              `Network: ${chainLabel(appState.chain)}`,
+          ]
+              .filter(Boolean)
+              .join("\n")
+        : "";
 
     // Theme (system | light | dark). initTheme() applies the saved mode
     // and live-tracks the OS preference while in "system". The cycle
@@ -90,18 +154,32 @@
     import NetworkServicePopup from "../../services/networkService";
     let evmNetworks: { id: number; name: string }[] = [];
     let currentEvmNetworkId: number | undefined = undefined;
-    async function loadNetworkChoices() {
+    let networkChoicesFor: string = "";
+    function activeEvmChain(): SupportedChain {
+        return isEvmChain(appState.chain) ? appState.chain : "ethereum";
+    }
+    async function loadNetworkChoices(chain: SupportedChain = activeEvmChain()) {
         const net = NetworkServicePopup.getInstance();
         await net.ensureInitialized();
-        evmNetworks = net.getNetworks("ethereum").map((n) => ({ id: n.id, name: n.name }));
-        currentEvmNetworkId = net.getCurrentNetwork("ethereum")?.id;
+        if (!isEvmChain(chain)) {
+            evmNetworks = [];
+            currentEvmNetworkId = undefined;
+            networkChoicesFor = chain;
+            return;
+        }
+        await net.setCurrentChain(chain);
+        evmNetworks = net.getNetworksForChain(chain).map((n) => ({ id: n.id, name: n.name }));
+        currentEvmNetworkId = net.getCurrentNetworkForChain(chain)?.id;
+        networkChoicesFor = chain;
     }
     async function switchEvmNetwork(e: Event) {
         const id = Number((e.target as HTMLSelectElement).value);
         try {
             const net = NetworkServicePopup.getInstance();
-            await net.setCurrentNetwork("ethereum", id);
+            const chain = activeEvmChain();
+            await net.setCurrentNetworkForChain(chain, id);
             currentEvmNetworkId = id;
+            networkChoicesFor = chain;
             refreshWalletData();
         } catch (err) {
             console.error("[UI] network switch failed:", err);
@@ -122,9 +200,9 @@
     // current chain. Falls back to the group-key address ONLY while the
     // first derivation is still in flight (never user-selectable).
     $: displayAddress =
-        accountAddresses.find(
-            (a) => a.chain.toLowerCase() === (appState.chain || "ethereum"),
-        )?.address ?? accountAddresses[0]?.address ?? appState.dkgAddress;
+        addressForChain(accountAddresses, appState.chain) ??
+        accountAddresses[0]?.address ??
+        appState.dkgAddress;
 
     // Onboarding wizard dismissal (#26) — session-scoped; the wizard also
     // disappears permanently once a wallet exists.
@@ -132,21 +210,21 @@
 
     // Hero-card portfolio fiat total (#13). null = not loaded / unavailable.
     let heroFiat: number | null = null;
-    let heroFiatFor = ""; // address the current value belongs to
-    async function loadHeroFiat(address: string) {
+    let heroFiatFor = ""; // chain:address the current value belongs to
+    async function loadHeroFiat(address: string, chain: SupportedChain) {
         try {
-            const res = await chrome.runtime.sendMessage({ type: "getPortfolio", address });
+            const res = await chrome.runtime.sendMessage({ type: "getPortfolio", address, chain });
             if (res?.success && typeof res.portfolio?.totalFiat === "number") {
                 heroFiat = res.portfolio.totalFiat;
-                heroFiatFor = address;
+                heroFiatFor = `${chain}:${address}`;
             }
         } catch {
             /* price feed down — keep whatever we had */
         }
     }
     // Refresh whenever the displayed address changes (wallet switch / DKG done).
-    $: if (appState.dkgAddress && appState.dkgAddress !== heroFiatFor) {
-        loadHeroFiat(appState.dkgAddress);
+    $: if (isEvmChain(appState.chain) && displayAddress && `${appState.chain}:${displayAddress}` !== heroFiatFor) {
+        loadHeroFiat(displayAddress, appState.chain);
     }
     async function handleSendSubmit(e: CustomEvent) {
         const { tx, asset, amount, to, tokenAddress } = e.detail;
@@ -177,6 +255,7 @@
                         await chrome.runtime.sendMessage({
                             type: "recordActivity",
                             address: displayAddress,
+                            chain: appState.chain,
                             activity: {
                                 hash,
                                 chainId: currentEvmNetworkId ?? 1,
@@ -215,7 +294,37 @@
 
     // Productized labels for the active blockchain/curve.
     function chainLabel(chain: string | undefined): string {
-        return chain === "solana" ? "Solana" : "Ethereum";
+        return getChainLabel(chain);
+    }
+    function curveFromSessionCurve(curve: string | undefined): WalletCurve {
+        return curve === "ed25519" ? "ed25519" : "secp256k1";
+    }
+    function chainFromSession(invite: { blockchain?: string; curve_type?: string }): SupportedChain {
+        if (isSupportedChain(invite.blockchain)) return invite.blockchain;
+        return getDefaultChainForCurve(curveFromSessionCurve(invite.curve_type));
+    }
+    function protocolChainFor(chain: string | undefined): ProtocolBlockchain {
+        return isSupportedChain(chain)
+            ? getProtocolBlockchainForChain(chain)
+            : chain === "solana"
+              ? "solana"
+              : "ethereum";
+    }
+    function addressForChain(
+        addresses: { chain: string; path: string; address: string }[],
+        chain: string | undefined,
+    ): string | undefined {
+        const desired = isSupportedChain(chain) ? chain : "ethereum";
+        const normalized = addresses.map((addr) => ({
+            ...addr,
+            chain:
+                normalizeDerivedAddressChain(addr.chain) ??
+                addr.chain.toLowerCase(),
+        }));
+        return (
+            normalized.find((addr) => addr.chain === desired)?.address ??
+            normalized.find((addr) => addr.chain === protocolChainFor(desired))?.address
+        );
     }
     function shortAddr(addr: string | undefined): string {
         if (!addr) return "";
@@ -227,6 +336,127 @@
     // Ext-1b: toggled when the user clicks "+ Create Wallet". Shows
     // the CreateWalletForm overlay until they submit or cancel.
     let showCreateWallet = false;
+
+    function refreshExternalAccountFlags(accountService = AccountService.getInstance()) {
+        const accounts = accountService.getAccounts();
+        hasExternalAccounts = accounts.some(
+            (a) => a.type === "hardware" || a.type === "watch-only",
+        );
+    }
+
+    async function connectLedgerAccounts() {
+        accountSetupStatus = "Opening Ledger connection...";
+        try {
+            const transport = await requestLedgerTransport();
+            const accountService = AccountService.getInstance();
+            await accountService.ensureInitialized();
+            const signers = await discoverLedgerAccounts(transport);
+            if (signers.length === 0) {
+                accountSetupStatus =
+                    "No Ledger accounts found. Unlock the device and open the Ethereum or Solana app.";
+                return;
+            }
+
+            for (const signer of signers) {
+                const blockchain: Account["blockchain"] =
+                    signer.curve === "ed25519" ? "solana" : "ethereum";
+                const account: Account = {
+                    id: signer.id,
+                    address: signer.address(),
+                    name:
+                        signer.curve === "ed25519"
+                            ? "Ledger Solana"
+                            : "Ledger Ethereum",
+                    balance: "0",
+                    blockchain,
+                    created: Date.now(),
+                    type: "hardware",
+                    metadata: {
+                        source: "imported",
+                        tags: ["ledger", signer.kind],
+                    },
+                };
+                await accountService.addOrUpdateAccount(account);
+            }
+            await accountService.setCurrentAccount(signers[0].id);
+            appState.chain = signers[0].curve === "ed25519" ? "solana" : "ethereum";
+            appState.blockchain = protocolChainFor(appState.chain);
+            appState = { ...appState };
+            refreshExternalAccountFlags(accountService);
+            accountSetupStatus = `Added ${signers.length} Ledger account${signers.length === 1 ? "" : "s"}.`;
+        } catch (err) {
+            accountSetupStatus = formatUserError(err);
+        }
+    }
+
+    async function refreshYubiKeyAccounts() {
+        accountSetupStatus = "Refreshing YubiKey accounts...";
+        try {
+            const response = await chrome.runtime.sendMessage({
+                type: "discoverYubiKeyAccounts",
+            });
+            const accountService = AccountService.getInstance();
+            await accountService.ensureInitialized();
+            const current = accountService.getCurrentAccount();
+            if (!current) {
+                const firstYubiKey = accountService
+                    .getAccounts()
+                    .find((a) => a.id.startsWith("yubikey:"));
+                if (firstYubiKey) {
+                    await accountService.setCurrentAccount(firstYubiKey.id);
+                    appState.chain = firstYubiKey.blockchain;
+                    appState.blockchain = protocolChainFor(appState.chain);
+                    appState = { ...appState };
+                }
+            }
+            refreshExternalAccountFlags(accountService);
+            if (!response?.success) {
+                accountSetupStatus =
+                    response?.error ?? "YubiKey discovery failed.";
+                return;
+            }
+            accountSetupStatus =
+                response.count > 0
+                    ? `Added ${response.count} YubiKey account${response.count === 1 ? "" : "s"}.`
+                    : "No YubiKey accounts found. Check the native host and card.";
+        } catch (err) {
+            accountSetupStatus = formatUserError(err);
+        }
+    }
+
+    async function addSimulationAccount(
+        address: string,
+        blockchain: Account["blockchain"] = "ethereum",
+    ) {
+        accountSetupStatus = "";
+        try {
+            const accountService = AccountService.getInstance();
+            await accountService.ensureInitialized();
+            const normalized = address.trim();
+            const account: Account = {
+                id: `simulation:${blockchain}:${normalized.toLowerCase()}`,
+                address: normalized,
+                name: `Simulation ${chainLabel(blockchain)}`,
+                balance: "0",
+                blockchain,
+                created: Date.now(),
+                type: "watch-only",
+                metadata: {
+                    source: "imported",
+                    tags: ["simulation", "watch-only"],
+                },
+            };
+            await accountService.addOrUpdateAccount(account);
+            await accountService.setCurrentAccount(account.id);
+            appState.chain = blockchain;
+            appState.blockchain = protocolChainFor(blockchain);
+            appState = { ...appState };
+            refreshExternalAccountFlags(accountService);
+            accountSetupStatus = "Simulation address added.";
+        } catch (err) {
+            accountSetupStatus = formatUserError(err);
+        }
+    }
 
     // Ext-1d: post-DKG save-wallet form state. These live on the
     // popup component (ephemeral) not appState because they contain
@@ -510,6 +740,17 @@
                     threshold: appState.threshold,
                     ...persistedUIState, // Override with persisted preferences if available
                 };
+                const incomingChain: SupportedChain = isSupportedChain(message.chain)
+                    ? message.chain
+                    : isSupportedChain(message.blockchain)
+                      ? message.blockchain
+                      : isSupportedChain((currentUIState as any).chain)
+                        ? (currentUIState as any).chain
+                        : "ethereum";
+                const incomingCurve: WalletCurve =
+                    message.curve === "ed25519" || message.curve === "secp256k1"
+                        ? message.curve
+                        : getRequiredCurve(incomingChain);
 
                 // Update the entire app state from background - real-time state comes from background
                 appState = {
@@ -524,11 +765,8 @@
                     },
                     dkgState: message.dkgState || DkgState.Idle,
                     webrtcConnections: message.webrtcConnections || {},
-                    curve:
-                        message.curve ||
-                        (message.blockchain === "ethereum"
-                            ? "secp256k1"
-                            : "ed25519"),
+                    blockchain: protocolChainFor(incomingChain),
+                    curve: incomingCurve,
                     uiPreferences: message.uiPreferences || {
                         darkMode: false,
                         language: "en",
@@ -536,10 +774,7 @@
                     },
                     // UI preferences - preserve from current popup state or use localStorage
                     showSettings: currentUIState.showSettings,
-                    chain:
-                        message.blockchain ||
-                        currentUIState.chain ||
-                        "ethereum",
+                    chain: incomingChain,
                     proposedSessionIdInput:
                         currentUIState.proposedSessionIdInput,
                     totalParticipants: currentUIState.totalParticipants,
@@ -928,7 +1163,7 @@
             return;
         }
         const eip191 =
-            wallet.blockchain === "ethereum"
+            isEvmChain(wallet.blockchain)
                 ? (hashMessage(signMessage) as `0x${string}`)
                 : null;
         signPreview = {
@@ -1098,23 +1333,35 @@
 
     onMount(async () => {
         console.log("[UI] Component mounting");
+        await refreshSignalRoomState();
 
-        // Detect mirrored YubiKey accounts so the account list can render
-        // for hardware-only users (the AccountManager gate below also opens
-        // on FROST DkgState.Complete / KeystoreImported).
+        const onStorageChanged = (
+            changes: Record<string, chrome.storage.StorageChange>,
+            areaName: string,
+        ) => {
+            if (areaName !== "local" || !(ROOM_STORAGE_KEY in changes)) return;
+            const nextRoom = changes[ROOM_STORAGE_KEY].newValue;
+            signalRoom = typeof nextRoom === "string" ? nextRoom : "";
+            hasSignalRoom = signalRoom.length > 0;
+        };
+
+        chrome.storage.onChanged.addListener(onStorageChanged);
+        removeSignalRoomStorageListener = () => {
+            chrome.storage.onChanged.removeListener(onStorageChanged);
+        };
+
+        // Detect mirrored hardware/simulation accounts so the account list
+        // can render for non-MPC users (the AccountManager gate below also
+        // opens on FROST DkgState.Complete / KeystoreImported).
         try {
             const accountService = AccountService.getInstance();
             await accountService.ensureInitialized();
-            hasHardwareAccounts = accountService
-                .getAccounts()
-                .some((a) => a.type === "hardware");
+            refreshExternalAccountFlags(accountService);
             accountService.onAccountChange(() => {
-                hasHardwareAccounts = accountService
-                    .getAccounts()
-                    .some((a) => a.type === "hardware");
+                refreshExternalAccountFlags(accountService);
             });
         } catch (e) {
-            console.warn("[UI] hardware account detection failed:", e);
+            console.warn("[UI] external account detection failed:", e);
         }
 
         // Set up state tracking before connecting port
@@ -1197,6 +1444,7 @@
 
     onDestroy(() => {
         console.log("[UI] Component destroying, cleaning up port connection");
+        removeSignalRoomStorageListener?.();
         if (port) {
             port.disconnect();
         }
@@ -1264,6 +1512,14 @@
         throttledSaveUIState();
     }
 
+    $: if (
+        initialStateLoaded &&
+        isEvmChain(appState.chain) &&
+        networkChoicesFor !== appState.chain
+    ) {
+        loadNetworkChoices(appState.chain);
+    }
+
     // Removed fetchAddress() and fetchDkgAddress() - this is now an MPC-only wallet
     // DKG address fetching is now handled automatically by StateManager when DKG completes
 
@@ -1321,7 +1577,7 @@
             total: appState.totalParticipants,
             threshold: appState.threshold,
             participants: allParticipants,
-            blockchain: appState.chain, // Include blockchain selection
+            blockchain: protocolChainFor(appState.chain), // legacy protocol blockchain
         });
         console.log(
             "[UI] Proposing session:",
@@ -1359,11 +1615,17 @@
         // Set flag to prevent multiple clicks
         acceptingSession = true;
         
+        const inviteChain = chainFromSession(invite);
+        appState.chain = inviteChain;
+        appState.blockchain = getProtocolBlockchainForChain(inviteChain);
+        appState.curve = getRequiredCurve(inviteChain);
+        appState = { ...appState };
+
         chrome.runtime.sendMessage({
             type: "acceptSession",
             session_id: sessionId,
             accepted: true,
-            blockchain: appState.chain, // Include blockchain selection
+            blockchain: getProtocolBlockchainForChain(inviteChain),
         }, (response) => {
             acceptingSession = false; // Reset flag
             console.log("[UI] Accept session response:", response);
@@ -1377,7 +1639,7 @@
             "[UI] Accepting session invite:",
             sessionId,
             "with blockchain:",
-            appState.chain,
+            getProtocolBlockchainForChain(inviteChain),
         );
         
         // Optimistically update UI to show processing state
@@ -1732,8 +1994,9 @@
         <Settings
             currentAddress={appState.dkgAddress || ""}
             on:backToWallet={({ detail }) => {
-                if (detail.chain === "ethereum" || detail.chain === "solana") {
+                if (isSupportedChain(detail.chain)) {
                     appState.chain = detail.chain;
+                    appState.blockchain = getProtocolBlockchainForChain(detail.chain);
                 }
                 if (
                     detail.curve === "secp256k1" ||
@@ -1754,11 +2017,19 @@
         <CreateWalletForm
             deviceId={appState.deviceId}
             wsConnected={appState.wsConnected}
+            room={signalRoom}
             on:created={({ detail }) => {
                 console.log(
                     "[UI] DKG wallet creation announced:",
                     detail.sessionId,
                 );
+                createdDkgSessionId = detail.sessionId;
+                if (isSupportedChain(detail.chain)) {
+                    appState.chain = detail.chain;
+                    appState.blockchain = getProtocolBlockchainForChain(detail.chain);
+                    appState.curve = getRequiredCurve(detail.chain);
+                    appState = { ...appState };
+                }
                 showCreateWallet = false;
             }}
             on:cancel={() => {
@@ -1799,7 +2070,7 @@
         <div class="flex items-center justify-between gap-2">
             <span class="section-title">Overview</span>
             <div class="flex items-center gap-2">
-                {#if evmNetworks.length > 1}
+                {#if isEvmChain(appState.chain) && evmNetworks.length > 1}
                     <!-- Header network switcher (#16) -->
                     <select
                         class="rounded-lg border border-line bg-surface px-1.5 py-0.5 text-xs"
@@ -1812,13 +2083,9 @@
                         {/each}
                     </select>
                 {/if}
-                <span
-                    class="badge {appState.wsConnected
-                        ? 'badge-success'
-                        : 'badge-danger'}"
-                >
+                <span class="badge {signalStatusBadge}" title={signalStatusTitle}>
                     <span class="h-1.5 w-1.5 rounded-full bg-current"></span>
-                    {appState.wsConnected ? "Online" : "Offline"}
+                    {signalStatusLabel}
                 </span>
             </div>
         </div>
@@ -1834,8 +2101,10 @@
                             {chainLabel(appState.chain)}
                         </span>
                         <AccountPicker
-                            groupPublicKey={appState.dkgGroupPublicKey}
-                            curve={appState.curve}
+                            groupPublicKey={appState.dkgGroupPublicKey || ""}
+                            curve={appState.curve ??
+                                getRequiredCurve(isSupportedChain(appState.chain) ? appState.chain : "ethereum")}
+                            chain={isSupportedChain(appState.chain) ? appState.chain : "ethereum"}
                             selected={selectedAccount}
                             on:select={onAccountSelect}
                         />
@@ -1893,13 +2162,20 @@
 
         <!-- First-run onboarding (#26): guided create-or-join wizard, shown
              until this profile has a wallet (or the user dismisses it). -->
-        {#if (keystoreStatus.wallets?.length ?? 0) === 0 && !showCreateWallet && !onboardingDismissed}
+        {#if (keystoreStatus.wallets?.length ?? 0) === 0 && !hasExternalAccounts && !showCreateWallet && !onboardingDismissed}
             <Onboarding
                 wsConnected={appState.wsConnected}
                 on:create={() => (showCreateWallet = true)}
-                on:reconnect={() => chrome.runtime.sendMessage({ type: "reconnectSignal" })}
+                on:ledger={connectLedgerAccounts}
+                on:yubikey={refreshYubiKeyAccounts}
+                on:simulation={({ detail }) =>
+                    addSimulationAccount(detail.address, detail.blockchain)}
+                on:reconnect={reconnectSignalAfterRoomSave}
                 on:done={() => (onboardingDismissed = true)}
             />
+        {/if}
+        {#if accountSetupStatus}
+            <div class="alert alert-info text-xs">{accountSetupStatus}</div>
         {/if}
 
         <!-- Primary actions -->
@@ -1921,7 +2197,7 @@
                         disabled={!appState.wsConnected}
                         title={appState.wsConnected
                             ? "Create a new shared wallet"
-                            : "Not connected to the signal server"}
+                            : signalStatusTitle}
                     >
                         <span
                             class="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-soft text-primary"
@@ -1946,7 +2222,7 @@
                         disabled={!appState.wsConnected}
                         title={appState.wsConnected
                             ? "Start a threshold signing request"
-                            : "Not connected to the signal server"}
+                            : signalStatusTitle}
                     >
                         <span
                             class="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-soft text-primary"
@@ -1962,10 +2238,11 @@
 
         <!-- Wallet assets + activity + send/receive (shown once a wallet exists) -->
         {#if canSign && appState.dkgState === DkgState.Complete && appState.dkgAddress}
-            {#if showSend}
+            {#if showSend && isEvmChain(appState.chain)}
                 <div class="card card-pad">
                     <SendForm
                         from={displayAddress}
+                        chain={appState.chain}
                         on:submit={handleSendSubmit}
                         on:cancel={() => (showSend = false)}
                     />
@@ -1980,10 +2257,12 @@
                     <button
                         class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
                         on:click={() => { showSend = true; sendStatus = ""; }}
-                        disabled={selectedAccount !== 0}
-                        title={selectedAccount === 0
-                            ? "Send"
-                            : "Signing currently pins to Account 0 — per-session account selection ships next"}
+                        disabled={selectedAccount !== 0 || !isEvmChain(appState.chain)}
+                        title={selectedAccount !== 0
+                            ? "Signing currently pins to Account 0 — per-session account selection ships next"
+                            : isEvmChain(appState.chain)
+                              ? "Send"
+                              : "Transaction sending is not wired for this chain yet"}
                     >Send</button>
                     <button
                         class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
@@ -1994,15 +2273,26 @@
                     <p class="text-xs text-muted">{sendStatus}</p>
                 {/if}
                 {#key dataEpoch}
-                    <div class="card card-pad">
-                        <TokenList address={displayAddress} />
-                    </div>
-                    <div class="card card-pad">
-                        <ActivityFeed address={displayAddress} />
-                    </div>
-                    <div class="card card-pad">
-                        <NftGallery address={displayAddress} chain={appState.chain || "ethereum"} />
-                    </div>
+                    {#if isEvmChain(appState.chain)}
+                        <div class="card card-pad">
+                            <TokenList address={displayAddress} chain={appState.chain} />
+                        </div>
+                        <div class="card card-pad">
+                            <ActivityFeed address={displayAddress} chain={appState.chain} />
+                        </div>
+                        <div class="card card-pad">
+                            <NftGallery address={displayAddress} chain={appState.chain || "ethereum"} />
+                        </div>
+                    {:else if appState.chain === "solana"}
+                        <div class="card card-pad">
+                            <NftGallery address={displayAddress} chain="solana" />
+                        </div>
+                    {:else if isSupportedChain(appState.chain)}
+                        <div class="alert alert-info text-xs">
+                            {CHAIN_METADATA[appState.chain].note ??
+                                "Address and threshold signing are available. Transaction tools for this chain are not wired yet."}
+                        </div>
+                    {/if}
                 {/key}
             {/if}
         {/if}
@@ -2090,11 +2380,7 @@
                                 <div class="min-w-0 pr-2">
                                     <p class="text-sm font-medium">
                                         {inv.threshold}-of-{inv.total}
-                                        {chainLabel(
-                                            inv.curve_type === "ed25519"
-                                                ? "solana"
-                                                : "ethereum",
-                                        )}
+                                        {chainLabel(chainFromSession(inv))}
                                         {#if inv.session_type === "reshare"}
                                             <span class="badge badge-info"
                                                 >Reshare</span
@@ -2511,15 +2797,41 @@
                     {appState.sessionInfo.threshold}-of-{appState.sessionInfo
                         .total} · share this session so others can join:
                 </p>
-                <div class="mt-1 flex items-center gap-2">
-                    <code
-                        class="mono min-w-0 flex-1 truncate rounded-lg bg-surface-2 px-2 py-1 text-xs"
-                        >{appState.sessionInfo.session_id}</code
-                    >
-                    <CopyButton
-                        value={appState.sessionInfo.session_id}
-                        variant="icon"
-                    />
+                <div class="mt-2 rounded-lg border border-line bg-surface-2 p-2.5">
+                    <div class="mb-2 flex items-center justify-between gap-2">
+                        <span class="text-xs font-semibold">Share setup</span>
+                        <CopyButton
+                            value={setupInviteText}
+                            label="Copy invite"
+                            title="Copy room and session ID"
+                        />
+                    </div>
+                    <div class="space-y-1.5">
+                        <div class="flex items-center gap-2">
+                            <span class="w-16 shrink-0 text-xs text-muted">Room</span>
+                            <code class="mono min-w-0 flex-1 truncate text-xs">
+                                {signalRoom || "No room set"}
+                            </code>
+                            {#if signalRoom}
+                                <CopyButton
+                                    value={signalRoom}
+                                    variant="icon"
+                                    title="Copy room"
+                                />
+                            {/if}
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-16 shrink-0 text-xs text-muted">Session</span>
+                            <code class="mono min-w-0 flex-1 truncate text-xs">
+                                {appState.sessionInfo.session_id}
+                            </code>
+                            <CopyButton
+                                value={appState.sessionInfo.session_id}
+                                variant="icon"
+                                title="Copy session ID"
+                            />
+                        </div>
+                    </div>
                 </div>
                 <ul class="mt-3 space-y-1">
                     {#each appState.sessionInfo.participants ?? [] as pid}
@@ -2550,10 +2862,10 @@
             </div>
         {/if}
 
-        <!-- Multi-account support. Also rendered for YubiKey-only users
-             (hasHardwareAccounts) even before any FROST DKG completes. -->
-        {#if appState.dkgState === DkgState.Complete || appState.dkgState === DkgState.KeystoreImported || hasHardwareAccounts}
-            <AccountManager blockchain={appState.chain} />
+        <!-- Multi-account support. Also rendered for hardware/simulation users
+             even before any FROST DKG completes. -->
+        {#if appState.dkgState === DkgState.Complete || appState.dkgState === DkgState.KeystoreImported || hasExternalAccounts}
+            <AccountManager blockchain={isSupportedChain(appState.chain) ? appState.chain : "ethereum"} />
         {/if}
 
         <!-- dApp signature requests -->
@@ -2612,12 +2924,47 @@
                 </div>
             </div>
 
-            <div class="mt-2 flex items-center gap-2">
-                <code
-                    class="mono min-w-0 flex-1 truncate rounded-lg bg-surface-2 px-2 py-1 text-xs"
-                    >{appState.sessionInfo.session_id}</code
-                >
-                <CopyButton value={appState.sessionInfo.session_id} variant="icon" />
+            <div class="mt-3 rounded-lg border border-line bg-surface-2 p-2.5">
+                <div class="mb-2 flex items-center justify-between gap-2">
+                    <div>
+                        <p class="text-xs font-semibold">Share setup</p>
+                        <p class="text-[10px] text-muted">
+                            Send this to each co-signer joining the wallet.
+                        </p>
+                    </div>
+                    <CopyButton
+                        value={setupInviteText}
+                        label="Copy invite"
+                        title="Copy room and session ID"
+                    />
+                </div>
+
+                <div class="space-y-1.5">
+                    <div class="flex items-center gap-2">
+                        <span class="w-16 shrink-0 text-xs text-muted">Room</span>
+                        <code class="mono min-w-0 flex-1 truncate text-xs">
+                            {signalRoom || "No room set"}
+                        </code>
+                        {#if signalRoom}
+                            <CopyButton
+                                value={signalRoom}
+                                variant="icon"
+                                title="Copy room"
+                            />
+                        {/if}
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-16 shrink-0 text-xs text-muted">Session</span>
+                        <code class="mono min-w-0 flex-1 truncate text-xs">
+                            {appState.sessionInfo.session_id}
+                        </code>
+                        <CopyButton
+                            value={appState.sessionInfo.session_id}
+                            variant="icon"
+                            title="Copy session ID"
+                        />
+                    </div>
+                </div>
             </div>
 
             <div class="mt-3">
@@ -2789,12 +3136,13 @@
             <!-- Signal server -->
             <div class="flex items-center justify-between">
                 <span class="label mb-0">Signal server</span>
-                <span
-                    class="badge {appState.wsConnected
-                        ? 'badge-success'
-                        : 'badge-danger'}"
-                    >{appState.wsConnected ? "Connected" : "Disconnected"}</span
-                >
+                <span class="badge {signalStatusBadge}" title={signalStatusTitle}>
+                    {appState.wsConnected
+                        ? "Connected"
+                        : hasSignalRoom
+                          ? "Disconnected"
+                          : "No room configured"}
+                </span>
             </div>
 
             <!-- Connected devices -->
@@ -2926,7 +3274,7 @@
                                                     type: "importKeystore",
                                                     keystoreData,
                                                     password,
-                                                    chain: appState.chain,
+                                                    chain: protocolChainFor(appState.chain),
                                                 },
                                                 (response) => {
                                                     if (
@@ -2989,7 +3337,7 @@
                                 chrome.runtime.sendMessage(
                                     {
                                         type: "exportKeystore",
-                                        chain: appState.chain,
+                                        chain: protocolChainFor(appState.chain),
                                     },
                                     (response) => {
                                         if (chrome.runtime.lastError) {
@@ -3097,8 +3445,14 @@
                         Propose ({appState.threshold}-of-{appState.totalParticipants})
                     </Button>
                     {#if !appState.wsConnected}
-                        <p class="text-center text-xs text-danger-fg">
-                            Not connected to the signal server
+                        <p
+                            class="text-center text-xs {hasSignalRoom
+                                ? 'text-danger-fg'
+                                : 'text-warning-fg'}"
+                        >
+                            {hasSignalRoom
+                                ? "Not connected to the signal server"
+                                : "Generate and save a signal room first"}
                         </p>
                     {:else if appState.connecteddevices.filter((p) => p !== appState.deviceId).length < appState.totalParticipants - 1}
                         <p class="text-center text-xs text-muted">
@@ -3129,7 +3483,9 @@
         <!-- Connection error -->
         {#if appState.wsError}
             <div
-                class="alert alert-danger flex items-center justify-between gap-2"
+                class="alert {hasSignalRoom
+                    ? 'alert-danger'
+                    : 'alert-warning'} flex items-center justify-between gap-2"
             >
                 <span class="min-w-0 flex-1">{appState.wsError}</span>
                 <button

@@ -35,7 +35,7 @@ import { YubiKeyManager } from './yubikeyManager';
 
 // Import types
 import { INITIAL_APP_STATE } from "@stars-labs/types/appstate";
-import { getSignalServerUrl } from "../../config/signal-server";
+import { getRoom, getSignalServerUrl } from "../../config/signal-server";
 import { DkgState } from "@stars-labs/types/dkg";
 import {
     type PopupToBackgroundMessage,
@@ -271,6 +271,12 @@ function setupMessageHandlers(): void {
 
                 // Handle specific offscreen message types FIRST (before generic routing)
 
+                if (message.type === "discoverYubiKeyAccounts") {
+                    const signers = await yubiKeyManager.discover();
+                    sendResponse({ success: true, count: signers.length });
+                    return;
+                }
+
                 // Handle offscreen ready signal
                 if (message.type === MESSAGE_TYPES.OFFSCREEN_READY) {
                     console.log("🎯 [Background] Handling OFFSCREEN_READY signal");
@@ -444,6 +450,17 @@ export async function checkAndRestoreKeystores(): Promise<void> {
  */
 async function initializeWebSocket(): Promise<void> {
     try {
+        // The hosted signal server requires a strong tenant room. If no room
+        // exists yet, do not dial a URL the server will reject with HTTP 400.
+        const room = await getRoom();
+        if (!room) {
+            const deviceId = "mpc-2"; // TODO: Generate unique device ID
+            stateManager.updateState({ deviceId });
+            stateManager.updateWebSocketStatus(false, "No signal room configured");
+            console.log("🌐 [Background] Signal room not configured; skipping WebSocket startup");
+            return;
+        }
+
         // Resolve from config: user override via chrome.storage.local
         // ['signalServerUrl'] wins; otherwise the TUI-matching default,
         // so TUI and extension nodes land on the same signal server.

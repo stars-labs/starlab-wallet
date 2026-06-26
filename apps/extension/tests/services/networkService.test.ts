@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 import NetworkService from '../../src/services/networkService';
-import { mainnet, sepolia, polygon, arbitrum } from 'viem/chains';
+import { mainnet, sepolia, polygon, polygonAmoy } from 'viem/chains';
 import type { Chain } from '@stars-labs/types/network';
 
 // Create comprehensive mock for Chrome storage
@@ -222,9 +222,9 @@ describe('NetworkService', () => {
             // Set current ethereum network
             await networkService.setCurrentNetwork('ethereum', mainnetNetwork!);
             
-            // Ethereum should have current network, solana should not
+            // Each product chain now has its own default current network.
             expect(networkService.getCurrentNetwork('ethereum')).toBeDefined();
-            expect(networkService.getCurrentNetwork('solana')).toBeUndefined();
+            expect(networkService.getCurrentNetwork('solana')?.id).toBe(101);
         });
 
         it('should switch blockchain', async () => {
@@ -532,6 +532,24 @@ describe('NetworkService', () => {
             // Ethereum-based chains should be in ethereum networks
             expect(networks.ethereum.find(n => n.id === mainnet.id)).toBeDefined();
             expect(networks.ethereum.find(n => n.id === sepolia.id)).toBeDefined();
+        });
+
+        it('should keep EVM product-chain networks isolated', () => {
+            const ethereumNetworks = networkService.getNetworksForChain('ethereum');
+            const polygonNetworks = networkService.getNetworksForChain('polygon');
+
+            expect(ethereumNetworks.some(n => n.id === mainnet.id)).toBe(true);
+            expect(ethereumNetworks.some(n => n.id === polygon.id)).toBe(false);
+            expect(polygonNetworks.some(n => n.id === polygon.id)).toBe(true);
+            expect(polygonNetworks.some(n => n.id === polygonAmoy.id)).toBe(true);
+            expect(polygonNetworks.some(n => n.id === mainnet.id)).toBe(false);
+        });
+
+        it('should switch current network for one product chain without changing another', async () => {
+            await networkService.setCurrentNetworkForChain('polygon', polygonAmoy.id);
+
+            expect(networkService.getCurrentNetworkForChain('polygon')?.id).toBe(polygonAmoy.id);
+            expect(networkService.getCurrentNetworkForChain('ethereum')?.id).toBe(mainnet.id);
         });
 
         it('should handle network switching across different chains', async () => {

@@ -1,9 +1,10 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import type { Account } from "@stars-labs/types/account";
+    import { isEvmChain, type SupportedChain } from "@stars-labs/types/appstate";
     import AccountService from '../services/accountService';
     
-    export let blockchain: 'ethereum' | 'solana' = 'ethereum';
+    export let blockchain: SupportedChain = 'ethereum';
     
     let currentAccount: Account | null = null;
     let accounts: Account[] = [];
@@ -28,7 +29,11 @@
     
     async function loadAccounts() {
         await accountService.ensureInitialized();
-        accounts = accountService.getAccountsByBlockchain(blockchain);
+        accounts = accountService.getAccounts().filter(
+            (account) =>
+                account.blockchain === blockchain ||
+                (isEvmChain(account.blockchain) && isEvmChain(blockchain)),
+        );
         console.log('[AccountManager] Loaded accounts:', accounts);
     }
     
@@ -81,6 +86,23 @@
         navigator.clipboard.writeText(address);
         // Could add a toast notification here
     }
+
+    function accountBadge(account: Account): string {
+        const tags = account.metadata?.tags ?? [];
+        if (account.type === 'watch-only') return 'Simulation';
+        if (tags.includes('ledger') || account.id.startsWith('ledger:')) return 'Ledger';
+        if (tags.includes('yubikey') || account.id.startsWith('yubikey:')) return 'YubiKey';
+        if (account.type === 'hardware') return 'Hardware';
+        return '';
+    }
+
+    function nativeSymbol(chain: string): string {
+        if (chain === 'solana') return 'SOL';
+        if (chain === 'bitcoin') return 'BTC';
+        if (chain === 'sui') return 'SUI';
+        if (chain === 'polygon') return 'POL';
+        return 'ETH';
+    }
 </script>
 
 <div class="account-manager">
@@ -95,14 +117,14 @@
             <div class="account-info">
                 <div class="account-name">
                     {currentAccount.name}
-                    {#if currentAccount.type === 'hardware'}
-                        <span class="hardware-badge" title="Signed on a YubiKey hardware device">YubiKey</span>
+                    {#if accountBadge(currentAccount)}
+                        <span class="account-badge" class:watch-badge={currentAccount.type === 'watch-only'} title={currentAccount.type === 'watch-only' ? 'Watch-only simulation account' : 'Signed on a hardware device'}>{accountBadge(currentAccount)}</span>
                     {/if}
                 </div>
                 <div class="account-address">{formatAddress(currentAccount.address)}</div>
             </div>
             <div class="account-balance">
-                {currentAccount.balance || '0'} {blockchain === 'ethereum' ? 'ETH' : 'SOL'}
+                {currentAccount.balance || '0'} {nativeSymbol(blockchain)}
             </div>
         {:else}
             <div class="no-account">No account selected</div>
@@ -153,8 +175,8 @@
                         <div class="account-item-info">
                             <div class="account-item-name">
                                 {account.name}
-                                {#if account.type === 'hardware'}
-                                    <span class="hardware-badge" title="Signed on a YubiKey hardware device">YubiKey</span>
+                                {#if accountBadge(account)}
+                                    <span class="account-badge" class:watch-badge={account.type === 'watch-only'} title={account.type === 'watch-only' ? 'Watch-only simulation account' : 'Signed on a hardware device'}>{accountBadge(account)}</span>
                                 {/if}
                             </div>
                             <div class="account-item-address">
@@ -171,7 +193,7 @@
                             </div>
                         </div>
                         <div class="account-item-balance">
-                            {account.balance || '0'} {blockchain === 'ethereum' ? 'ETH' : 'SOL'}
+                            {account.balance || '0'} {nativeSymbol(blockchain)}
                         </div>
                     </div>
                 {/each}
@@ -219,7 +241,7 @@
         color: var(--c-text);
     }
 
-    .hardware-badge {
+    .account-badge {
         display: inline-block;
         margin-left: 6px;
         padding: 1px 6px;
@@ -230,6 +252,11 @@
         color: var(--c-primary-fg);
         background: var(--c-primary);
         border-radius: 6px;
+    }
+
+    .watch-badge {
+        color: var(--c-info-fg);
+        background: var(--c-info-soft);
     }
 
     .account-address {

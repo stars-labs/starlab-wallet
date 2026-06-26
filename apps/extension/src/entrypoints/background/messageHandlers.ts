@@ -26,6 +26,15 @@ import NetworkService from "../../services/networkService";
 import { KeystoreManager } from "../../services/keystoreManager";
 import { handleGetPortfolio, handleGetActivity, handleRecordActivity } from "./assetHandlers";
 import { DkgState } from "@stars-labs/types/dkg";
+import {
+    getDefaultChainForCurve,
+    getProtocolBlockchainForChain,
+    getChainLabel,
+    isSupportedChain,
+    isEvmChain,
+    normalizeDerivedAddressChain,
+    type SupportedChain,
+} from "@stars-labs/types/appstate";
 
 /**
  * Handles messages from popup interface
@@ -235,7 +244,7 @@ export class PopupMessageHandler {
 
                 case "setBlockchain":
 //                     console.log("🔗 [PopupMessageHandler] SET_BLOCKCHAIN: Setting blockchain preference");
-                    this.handleSetBlockchainRequest(message, sendResponse);
+                    await this.handleSetBlockchainRequest(message, sendResponse);
                     break;
 
                 case "getEthereumAddress":
@@ -537,9 +546,9 @@ export class PopupMessageHandler {
 
     /**
      * Reconnect the signal-server WebSocket using the freshly saved room /
-     * server override. The startup connect is roomless (it runs before any room
-     * is configured) and the multi-tenant server rejects it; this re-resolves
-     * the URL so the new room takes effect without reloading the extension.
+     * server override. Startup skips WebSocket dialing until a room exists;
+     * this re-resolves the URL so the new room takes effect without reloading
+     * the extension.
      */
     private async handleReconnectSignal(sendResponse: (response: any) => void): Promise<void> {
         try {
@@ -666,6 +675,9 @@ export class PopupMessageHandler {
         const total = Number(message.total);
         const threshold = Number(message.threshold);
         const curve = message.curve === "ed25519" ? "ed25519" : "secp256k1";
+        const chain = isSupportedChain(message.chain)
+            ? message.chain
+            : getDefaultChainForCurve(curve);
         if (!Number.isFinite(total) || !Number.isFinite(threshold)) {
             sendResponse({
                 success: false,
@@ -678,6 +690,7 @@ export class PopupMessageHandler {
             total,
             threshold,
             curve,
+            chain,
         });
         sendResponse(result);
     }
@@ -833,8 +846,10 @@ export class PopupMessageHandler {
                 });
                 return;
             }
-            const blockchain: "ethereum" | "solana" =
-                (wallet as any).blockchain === "solana" ? "solana" : "ethereum";
+            const walletChain: SupportedChain = isSupportedChain((wallet as any).blockchain)
+                ? (wallet as any).blockchain
+                : "ethereum";
+            const blockchain = getProtocolBlockchainForChain(walletChain);
 
             // Pull group_public_key + threshold/total from the saved
             // keyshare data. KeystoreManager stores the KeyShareData
@@ -1155,6 +1170,96 @@ export class PopupMessageHandler {
             const curve: "secp256k1" | "ed25519" =
                 lastResult.blockchain === "ethereum" ? "secp256k1" : "ed25519";
             const deviceId = state.deviceId || "mpc-2";
+            const primaryChain: SupportedChain = isSupportedChain(lastResult.chain)
+                ? lastResult.chain
+                : getDefaultChainForCurve(curve);
+            const protocolBlockchain = getProtocolBlockchainForChain(primaryChain);
+            const chainIds: Partial<Record<SupportedChain, number>> = {
+                ethereum: 1,
+                polygon: 137,
+                arbitrum: 42161,
+                optimism: 10,
+                base: 8453,
+            };
+            const addressFormats: Partial<Record<SupportedChain, string>> = {
+                ethereum: "EIP-55",
+                polygon: "EIP-55",
+                arbitrum: "EIP-55",
+                optimism: "EIP-55",
+                base: "EIP-55",
+                bitcoin: "bech32",
+                solana: "base58",
+                sui: "hex",
+            };
+            let derivedAddresses: Array<{ chain: SupportedChain; path: string; address: string }> = [];
+            try {
+                if (lastResult.groupPublicKey) {
+                    const derived = await this.offscreenManager.sendToOffscreen(
+                        {
+                            type: "deriveAccounts",
+                            curve,
+                            groupPublicKey: lastResult.groupPublicKey,
+                            count: 1,
+                        } as any,
+                        "Derive wallet account 0 addresses for save",
+                    );
+                    if (derived?.success && Array.isArray(derived.accounts?.[0]?.addresses)) {
+                        derivedAddresses = derived.accounts[0].addresses
+                            .map((addr: any) => {
+                                const chain = normalizeDerivedAddressChain(addr.chain);
+                                return chain && typeof addr.address === "string"
+                                    ? {
+                                          chain,
+                                          path: String(addr.path ?? ""),
+                                          address: addr.address,
+                                      }
+                                    : null;
+                            })
+                            .filter(Boolean);
+                    }
+                }
+            } catch (deriveErr) {
+                console.warn(
+                    "[PopupMessageHandler] Failed to derive multi-chain addresses while saving wallet:",
+                    deriveErr,
+                );
+            }
+            const addressFor = (chain: SupportedChain): string | undefined => {
+                const exact = derivedAddresses.find((addr) => addr.chain === chain)?.address;
+                if (exact) return exact;
+                const protocol = getProtocolBlockchainForChain(chain);
+                return derivedAddresses.find((addr) => addr.chain === protocol)?.address;
+            };
+            const primaryAddress =
+                addressFor(primaryChain) ??
+                lastResult.address ??
+                "";
+            const blockchainEntries = new Map<string, any>();
+            const addBlockchainEntry = (
+                chain: SupportedChain,
+                address: string | undefined,
+                enabled = chain === primaryChain,
+                path = "",
+            ) => {
+                if (!address) return;
+                blockchainEntries.set(chain, {
+                    blockchain: chain,
+                    network: "mainnet",
+                    ...(chainIds[chain] ? { chain_id: chainIds[chain] } : {}),
+                    address,
+                    address_format: addressFormats[chain] ?? "unknown",
+                    enabled,
+                    metadata: {
+                        curve,
+                        label: getChainLabel(chain),
+                        derivation_path: path,
+                    },
+                });
+            };
+            for (const addr of derivedAddresses) {
+                addBlockchainEntry(addr.chain, addr.address, addr.chain === primaryChain, addr.path);
+            }
+            addBlockchainEntry(primaryChain, primaryAddress, true);
 
             const keyShareData: any = {
                 // Core FROST material — `parsed` shape is
@@ -1173,15 +1278,9 @@ export class PopupMessageHandler {
                 participants: lastResult.participants ?? [],
                 // Curve + chain
                 curve,
-                blockchains: [],
-                ethereum_address:
-                    lastResult.blockchain === "ethereum"
-                        ? lastResult.address ?? undefined
-                        : undefined,
-                solana_address:
-                    lastResult.blockchain === "solana"
-                        ? lastResult.address ?? undefined
-                        : undefined,
+                blockchains: Array.from(blockchainEntries.values()),
+                ethereum_address: addressFor("ethereum"),
+                solana_address: addressFor("solana"),
                 created_at: Date.now(),
             };
 
@@ -1194,8 +1293,8 @@ export class PopupMessageHandler {
                 name:
                     walletName ??
                     `${lastResult.threshold}-of-${lastResult.total} ${curve}`,
-                blockchain: lastResult.blockchain,
-                address: lastResult.address ?? "",
+                blockchain: primaryChain,
+                address: primaryAddress,
                 session_id: keyShareData.session_id,
                 isActive: true,
                 hasBackup: false,
@@ -1332,11 +1431,25 @@ export class PopupMessageHandler {
         }
     }
 
-    private handleSetBlockchainRequest(message: any, sendResponse: (response: any) => void): void {
+    private async handleSetBlockchainRequest(message: any, sendResponse: (response: any) => void): Promise<void> {
         if ('blockchain' in message) {
+            if (!isSupportedChain(message.blockchain)) {
+                sendResponse({
+                    success: false,
+                    error: `Unsupported chain: ${String(message.blockchain)}`,
+                });
+                return;
+            }
             console.log("[PopupMessageHandler] Setting blockchain selection:", message.blockchain);
             this.stateManager.setBlockchain(message.blockchain);
-            sendResponse({ success: true, blockchain: this.stateManager.getBlockchain() });
+            const net = NetworkService.getInstance();
+            await net.ensureInitialized();
+            await net.setCurrentChain(message.blockchain);
+            sendResponse({
+                success: true,
+                blockchain: this.stateManager.getBlockchain(),
+                chain: this.stateManager.getChain(),
+            });
         } else {
             sendResponse({ success: false, error: "Missing blockchain parameter" });
         }
@@ -1882,6 +1995,7 @@ export class PopupMessageHandler {
     ): Promise<void> {
         try {
             const net = NetworkService.getInstance();
+            await net.ensureInitialized();
             const account: string =
                 message?.address ||
                 AccountService.getInstance().getCurrentAccount()?.address;
@@ -1889,7 +2003,17 @@ export class PopupMessageHandler {
                 sendResponse({ success: false, error: "No account selected" });
                 return;
             }
-            const network = net.getCurrentNetwork("ethereum");
+            const requestedChain: SupportedChain = isSupportedChain(message?.chain)
+                ? message.chain
+                : this.stateManager.getChain();
+            if (!isEvmChain(requestedChain)) {
+                sendResponse({
+                    success: false,
+                    error: `${getChainLabel(requestedChain)} balances are not wired yet`,
+                });
+                return;
+            }
+            const network = net.getCurrentNetworkForChain(requestedChain);
             const chainId = network?.id;
             if (!chainId) {
                 sendResponse({ success: false, error: "No EVM network selected" });
@@ -1918,7 +2042,13 @@ export class PopupMessageHandler {
                 sendResponse({ success: false, error: "No account selected" });
                 return;
             }
-            const activity = await handleGetActivity(account, message?.chainId);
+            let chainId = message?.chainId;
+            if (!chainId && isSupportedChain(message?.chain) && isEvmChain(message.chain)) {
+                const net = NetworkService.getInstance();
+                await net.ensureInitialized();
+                chainId = net.getCurrentNetworkForChain(message.chain)?.id;
+            }
+            const activity = await handleGetActivity(account, chainId);
             sendResponse({ success: true, activity });
         } catch (error) {
             console.error("[PopupMessageHandler] getActivity failed:", error);
@@ -2134,7 +2264,7 @@ export class OffscreenMessageHandler {
                         // Notify popup to refresh accounts
                         this.stateManager.broadcastToPopupPorts({
                             type: 'accountsUpdated',
-                            blockchain: newAccount.blockchain,
+                            blockchain: getProtocolBlockchainForChain(newAccount.blockchain),
                             accounts: accountService.getAccountsByBlockchain(newAccount.blockchain)
                         });
                     } else {

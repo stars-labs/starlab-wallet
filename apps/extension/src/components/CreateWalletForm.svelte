@@ -10,26 +10,38 @@
     import { createEventDispatcher } from "svelte";
     import { MESSAGE_TYPES } from "@stars-labs/types/messages";
     import Button from "../lib/ui/Button.svelte";
+    import CopyButton from "../lib/ui/CopyButton.svelte";
     import Icon from "../lib/ui/Icon.svelte";
     import { guideError } from "../utils/error-guidance";
+    import {
+        CHAIN_METADATA,
+        EVM_CHAINS,
+        LIMITED_CHAINS,
+        getRequiredCurve,
+        type SupportedChain,
+    } from "@stars-labs/types/appstate";
 
     let showAdvanced = false;
 
     export let deviceId: string = "";
     export let wsConnected: boolean = false;
+    export let room: string = "";
 
     const dispatch = createEventDispatcher<{
-        created: { sessionId: string };
+        created: { sessionId: string; chain: SupportedChain };
         cancel: void;
     }>();
 
     // Defaults match TUI's ThresholdConfig screen starting values.
     let total = 3;
     let threshold = 2;
+    let chain: SupportedChain = "ethereum";
     let curve: "secp256k1" | "ed25519" = "secp256k1";
     let walletName = "";
     let submitting = false;
     let errorMessage = "";
+    const evmChainOptions = EVM_CHAINS.map((id) => CHAIN_METADATA[id]);
+    const limitedChainOptions = LIMITED_CHAINS.map((id) => CHAIN_METADATA[id]);
 
     // Keep threshold clamped to [2, total] — threshold < 2 defeats the
     // purpose of multisig, and > total is nonsense. Mirror TUI.
@@ -37,6 +49,7 @@
     $: if (threshold < 2) threshold = 2;
     $: if (total < 2) total = 2;
     $: if (total > 10) total = 10;
+    $: curve = getRequiredCurve(chain);
 
     async function handleSubmit() {
         errorMessage = "";
@@ -53,9 +66,10 @@
                 total,
                 threshold,
                 curve,
+                chain,
             });
             if (response?.success && response.sessionId) {
-                dispatch("created", { sessionId: response.sessionId });
+                dispatch("created", { sessionId: response.sessionId, chain });
             } else {
                 errorMessage = guideError(
                     response?.error ?? "Failed to create wallet (no error returned)",
@@ -118,17 +132,52 @@
     </div>
 
     <div class="mt-3">
-        <label class="label" for="cw-curve">Network</label>
+        <label class="label" for="cw-chain">Primary chain</label>
         <select
-            id="cw-curve"
-            bind:value={curve}
+            id="cw-chain"
+            bind:value={chain}
             class="select"
             disabled={submitting}
         >
-            <option value="secp256k1">Ethereum &amp; EVM chains</option>
-            <option value="ed25519">Solana</option>
+            <optgroup label="EVM chains (secp256k1)">
+                {#each evmChainOptions as option}
+                    <option value={option.id}>{option.label}</option>
+                {/each}
+            </optgroup>
+            <optgroup label="ed25519">
+                <option value="solana">Solana</option>
+            </optgroup>
+            <optgroup label="Address + threshold signing">
+                {#each limitedChainOptions as option}
+                    <option value={option.id}>{option.label} — limited</option>
+                {/each}
+            </optgroup>
         </select>
+        <p class="mt-1 text-xs text-muted">
+            {CHAIN_METADATA[chain].family} · {curve}
+        </p>
+        {#if CHAIN_METADATA[chain].status === "limited"}
+            <p class="mt-1 text-xs text-muted">{CHAIN_METADATA[chain].note}</p>
+        {/if}
     </div>
+
+    {#if room}
+        <div class="mt-3 alert alert-info">
+            <div class="mb-1.5 flex items-center justify-between gap-2">
+                <span class="text-xs font-semibold">Room for co-signers</span>
+                <CopyButton value={room} label="Copy room" title="Copy room" />
+            </div>
+            <p class="text-xs">
+                Other devices must use this room before they can see the wallet
+                session.
+            </p>
+            <code class="mono mt-2 block truncate text-xs">{room}</code>
+        </div>
+    {:else}
+        <div class="mt-3 alert alert-warning text-xs">
+            Generate and save a room before creating an MPC wallet.
+        </div>
+    {/if}
 
     <div class="mt-3 alert alert-info text-xs">
         Any <b>{threshold}</b> of <b>{total}</b> devices will be able to approve

@@ -1,3 +1,4 @@
+import "../../lib/browser-buffer";
 import TransportWebHID from "@ledgerhq/hw-transport-webhid";
 import type Transport from "@ledgerhq/hw-transport";
 

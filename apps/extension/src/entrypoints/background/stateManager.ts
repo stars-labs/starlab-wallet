@@ -11,7 +11,15 @@
 // - Cross-component state consistency
 // ===================================================================
 
-import { AppState, INITIAL_APP_STATE } from "@stars-labs/types/appstate";
+import {
+    AppState,
+    INITIAL_APP_STATE,
+    getDefaultChainForCurve,
+    getProtocolBlockchainForChain,
+    getRequiredCurve,
+    isSupportedChain,
+    type SupportedChain,
+} from "@stars-labs/types/appstate";
 import { MeshStatusType } from "@stars-labs/types/mesh";
 import { DkgState } from "@stars-labs/types/dkg";
 import type {
@@ -64,11 +72,13 @@ export class StateManager {
             if (result[StateManager.STATE_STORAGE_KEY]) {
                 const persistedState = result[StateManager.STATE_STORAGE_KEY];
                 console.log("[StateManager] Loading persisted state:", persistedState);
+                const normalizedPersistedState =
+                    this.normalizeChainPatch(persistedState as Partial<AppState>);
 
                 // Merge persisted state with current state, preserving important runtime values
                 this.appState = {
                     ...this.appState,
-                    ...persistedState,
+                    ...normalizedPersistedState,
                     // Reset transient connection states that shouldn't persist
                     wsConnected: false,
                     meshStatus: { type: MeshStatusType.Incomplete },
@@ -218,14 +228,45 @@ export class StateManager {
         return { ...this.appState };
     }
 
+    private normalizeChainPatch(updates: Partial<AppState>): Partial<AppState> {
+        const normalized: Partial<AppState> = { ...updates };
+
+        if (normalized.chain !== undefined) {
+            if (isSupportedChain(normalized.chain)) {
+                normalized.curve = getRequiredCurve(normalized.chain);
+                normalized.blockchain = getProtocolBlockchainForChain(normalized.chain);
+            } else {
+                delete normalized.chain;
+            }
+            return normalized;
+        }
+
+        if (normalized.blockchain !== undefined) {
+            const chain: SupportedChain =
+                normalized.blockchain === "solana" ? "solana" : "ethereum";
+            normalized.chain = chain;
+            normalized.curve = getRequiredCurve(chain);
+            return normalized;
+        }
+
+        if (normalized.curve !== undefined) {
+            const chain = getDefaultChainForCurve(normalized.curve);
+            normalized.chain = chain;
+            normalized.blockchain = getProtocolBlockchainForChain(chain);
+        }
+
+        return normalized;
+    }
+
     /**
      * Update application state
      */
     updateState(updates: Partial<AppState>): void {
 //         console.log("[StateManager] Updating state:", updates);
+        const normalizedUpdates = this.normalizeChainPatch(updates);
         this.appState = {
             ...this.appState,
-            ...updates
+            ...normalizedUpdates
         };
         // Persist state changes
         this.persistState();
@@ -240,6 +281,11 @@ export class StateManager {
      */
     updateStateProperty<K extends keyof AppState>(key: K, value: AppState[K]): void {
 //         console.log(`[StateManager] Updating state property ${String(key)}:`, value);
+        if (key === "chain" || key === "blockchain" || key === "curve") {
+            this.updateState({ [key]: value } as Partial<AppState>);
+            this.broadcastCurrentState();
+            return;
+        }
         this.appState[key] = value;
         // Persist state changes
         this.persistState();
@@ -534,6 +580,10 @@ export class StateManager {
                 // set.
                 {
                     const info: any = payload;
+                    const sessionChain =
+                        isSupportedChain(this.appState.sessionInfo?.blockchain)
+                            ? this.appState.sessionInfo?.blockchain
+                            : this.getChain();
                     (this.appState as any).dkgAddress = info.address ?? "";
                     (this.appState as any).dkgGroupPublicKey =
                         info.groupPublicKey ?? "";
@@ -541,6 +591,7 @@ export class StateManager {
                         groupPublicKey: info.groupPublicKey,
                         address: info.address,
                         blockchain: info.blockchain,
+                        chain: sessionChain,
                         sessionId: info.sessionId,
                         threshold: info.threshold,
                         total: info.total,
@@ -829,10 +880,15 @@ export class StateManager {
     /**
      * Set blockchain selection (maintains blockchain field for backward compatibility)
      */
-    setBlockchain(blockchain: "ethereum" | "solana"): void {
-        // Convert blockchain to curve for new state model
-        this.appState.curve = blockchain === "ethereum" ? "secp256k1" : "ed25519";
-        console.log("[StateManager] Set blockchain:", blockchain, "-> curve:", this.appState.curve);
+    setBlockchain(chain: SupportedChain): void {
+        if (!isSupportedChain(chain)) {
+            console.warn("[StateManager] Ignoring unsupported chain:", chain);
+            return;
+        }
+        const curve = getRequiredCurve(chain);
+        const blockchain = getProtocolBlockchainForChain(chain);
+        this.updateState({ chain, blockchain, curve });
+        console.log("[StateManager] Set chain:", chain, "->", blockchain, "/", curve);
     }
 
     /**
@@ -856,8 +912,17 @@ export class StateManager {
     getDkgState() { return this.appState.dkgState; }
     getCurve() { return this.appState.curve; }
     getBlockchain() {
-        // Convert curve back to blockchain for backward compatibility
-        return this.appState.curve === "secp256k1" ? "ethereum" : "solana";
+        if (this.appState.blockchain) return this.appState.blockchain;
+        if (this.appState.chain && isSupportedChain(this.appState.chain)) {
+            return getProtocolBlockchainForChain(this.appState.chain);
+        }
+        return this.appState.curve === "ed25519" ? "solana" : "ethereum";
+    }
+    getChain() {
+        if (this.appState.chain && isSupportedChain(this.appState.chain)) {
+            return this.appState.chain;
+        }
+        return this.getBlockchain() === "solana" ? "solana" : "ethereum";
     }
 
     /**

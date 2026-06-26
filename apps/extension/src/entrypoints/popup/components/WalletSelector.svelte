@@ -1,6 +1,7 @@
 <script lang="ts">
     import { createEventDispatcher } from 'svelte';
     import type { ExtensionWalletMetadata } from "@stars-labs/types/keystore";
+    import { getChainLabel } from "@stars-labs/types/appstate";
     
     export let wallets: ExtensionWalletMetadata[] = [];
     export let activeWallet: ExtensionWalletMetadata | null = null;
@@ -28,6 +29,18 @@
                 return '⟠';
             case 'solana':
                 return '◎';
+            case 'bitcoin':
+                return '₿';
+            case 'sui':
+                return 'S';
+            case 'polygon':
+                return '⬡';
+            case 'arbitrum':
+                return 'A';
+            case 'optimism':
+                return 'O';
+            case 'base':
+                return 'B';
             default:
                 return '●';
         }
@@ -56,6 +69,7 @@
                 {#if activeWallet}
                     <span class="wallet-icon">{getWalletIcon(activeWallet.blockchain)}</span>
                     <span class="wallet-name">{activeWallet.name}</span>
+                    <span class="wallet-chain">{getChainLabel(activeWallet.blockchain)}</span>
                     <span class="wallet-address">{formatAddress(activeWallet.address)}</span>
                 {:else}
                     <span class="no-wallet">No wallet selected</span>
@@ -98,6 +112,7 @@
                             <span class="wallet-icon">{getWalletIcon(wallet.blockchain)}</span>
                             <div class="wallet-details">
                                 <span class="wallet-name">{wallet.name}</span>
+                                <span class="wallet-chain">{getChainLabel(wallet.blockchain)}</span>
                                 <span class="wallet-address">{formatAddress(wallet.address)}</span>
                             </div>
                             {#if wallet.id === activeWallet?.id}
@@ -169,6 +184,12 @@
         color: var(--c-muted);
         font-size: 13px;
         font-family: var(--font-mono, monospace);
+    }
+
+    .wallet-chain {
+        color: var(--c-muted);
+        font-size: 12px;
+        font-weight: 600;
     }
 
     .no-wallet {

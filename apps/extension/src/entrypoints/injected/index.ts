@@ -353,7 +353,7 @@ class PageProvider {
                         }
                         
                         if (result && result.mpc_ethereum_address) {
-                            const address = result.mpc_ethereum_address;
+                            const address = String(result.mpc_ethereum_address);
                             console.log('[Injected Provider] Got address directly from chrome.storage:', address);
                             
                             // Validate the address format

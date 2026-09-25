@@ -276,7 +276,8 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                 // state-transition timeline. Propagated through
                 // StateManager → popup via `dkgCompleted` broadcast.
                 webRTCManager.onDkgComplete = (payload) => {
-                    console.log("Offscreen: DKG complete:", payload);
+                    const { keystoreJson: _secret, ...loggable } = payload as any;
+                    console.log("Offscreen: DKG complete:", loggable);
                     sendToBackground({
                         type: "fromOffscreen",
                         payload: { type: "dkgComplete", ...payload },

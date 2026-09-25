@@ -37,6 +37,20 @@ import type {
 export type DkgStateListener = (state: DkgState) => void;
 
 /**
+ * Keys holding the DKG keystore JSON (secret share included). It stays in the
+ * background until the wallet is saved; the popup never needs it, and the
+ * popup logs every port message it receives.
+ */
+const SECRET_KEYS = ["pendingKeystoreJson", "keystoreJson"] as const;
+
+function withoutSecrets<T extends object>(message: T): T {
+    if (!SECRET_KEYS.some((k) => k in message)) return message;
+    const copy = { ...message } as Record<string, unknown>;
+    for (const k of SECRET_KEYS) delete copy[k];
+    return copy as T;
+}
+
+/**
  * Manages central application state and popup communication
  */
 export class StateManager {
@@ -410,7 +424,7 @@ export class StateManager {
             dkgState: this.appState.dkgState,
             dkgAddress: this.appState.dkgAddress
         });
-        port.postMessage(initialStateMessage);
+        port.postMessage(withoutSecrets(initialStateMessage));
 
         port.onDisconnect.addListener(() => {
             console.log("[StateManager] Popup disconnected");
@@ -421,7 +435,8 @@ export class StateManager {
     /**
      * Broadcast message to all connected popup ports
      */
-    broadcastToPopupPorts(message: BackgroundToPopupMessage): void {
+    broadcastToPopupPorts(unsafeMessage: BackgroundToPopupMessage): void {
+        const message = withoutSecrets(unsafeMessage);
         console.log("[StateManager] Broadcasting to", this.popupPorts.size, "popup ports:", message);
         this.popupPorts.forEach(port => {
             try {

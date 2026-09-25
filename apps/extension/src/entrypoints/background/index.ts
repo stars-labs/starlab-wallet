@@ -521,7 +521,7 @@ export default defineBackground(() => {
     // popup.html in a tab so the user still has a path forward.
     if (typeof chrome !== "undefined" && chrome.notifications) {
         chrome.notifications.onClicked.addListener(async (notificationId) => {
-            const opensPopup = ["mpc-signing-req:", "mpc-dapp-connect:"].some(
+            const opensPopup = ["mpc-signing-req:", "mpc-dapp-connect:", "mpc-dapp-sig:"].some(
                 (prefix) => notificationId.startsWith(prefix),
             );
             if (!opensPopup) return;

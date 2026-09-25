@@ -79,6 +79,8 @@ export class RpcHandler {
         originalMessage: string;
         address: string;
         origin: string;
+        /** Text shown on the popup's approve card (phishing banner included). */
+        display: string;
     }> = new Map();
     /**
      * Ext-4: injected so RPC calls (e.g. personal_sign from a dApp)
@@ -330,6 +332,25 @@ export class RpcHandler {
     }
 
     /** Connect requests still awaiting the user (the popup loads these on open). */
+    /**
+     * dApp signing requests still awaiting approval, in the shape of the
+     * `signatureRequest` broadcast. The popup is usually closed when a
+     * request arrives, so it loads these on open.
+     */
+    getPendingSignatureRequests(): Array<{
+        signingId: string;
+        message: string;
+        origin: string;
+        fromAddress: string;
+    }> {
+        return Array.from(this.pendingDappRequests, ([signingId, r]) => ({
+            signingId,
+            message: r.display,
+            origin: r.origin,
+            fromAddress: r.address,
+        }));
+    }
+
     getPendingConnectRequests(): ConnectRequestView[] {
         return Array.from(this.pendingConnectRequests.values(), (p) => p.view);
     }
@@ -890,20 +911,6 @@ export class RpcHandler {
         /** Human-readable text shown in the popup (defaults to originalMessage). */
         displayMessage?: string;
     }): Promise<string> {
-        const requestId = `dapp_req_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-        this.pendingDappRequests.set(requestId, {
-            walletId: ctx.walletId,
-            walletName: ctx.walletName,
-            groupPublicKey: ctx.groupPublicKey,
-            blockchain: ctx.blockchain,
-            threshold: ctx.threshold,
-            total: ctx.total,
-            messageHex: ctx.messageHex,
-            originalMessage: ctx.originalMessage,
-            address: ctx.address,
-            origin: this.origin || 'Unknown',
-        });
-
         // Phishing gate (#36): every signing request re-checks the origin —
         // a lookalike that slipped past connect still gets flagged where it
         // matters, on the approve screen.
@@ -918,6 +925,21 @@ export class RpcHandler {
                 /* never let the gate break signing */
             }
         }
+
+        const requestId = `dapp_req_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        this.pendingDappRequests.set(requestId, {
+            walletId: ctx.walletId,
+            walletName: ctx.walletName,
+            groupPublicKey: ctx.groupPublicKey,
+            blockchain: ctx.blockchain,
+            threshold: ctx.threshold,
+            total: ctx.total,
+            messageHex: ctx.messageHex,
+            originalMessage: ctx.originalMessage,
+            address: ctx.address,
+            origin: this.origin || 'Unknown',
+            display,
+        });
 
         chrome.runtime.sendMessage({
             type: 'signatureRequest',

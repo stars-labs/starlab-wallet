@@ -173,6 +173,13 @@ export class PopupMessageHandler {
                     await this.handleApproveMessageSignature(message, sendResponse);
                     break;
 
+                case "getPendingSignatureRequests":
+                    sendResponse({
+                        success: true,
+                        requests: this.rpcHandler.getPendingSignatureRequests(),
+                    });
+                    break;
+
                 case "getPendingConnectRequests":
                     sendResponse({
                         success: true,

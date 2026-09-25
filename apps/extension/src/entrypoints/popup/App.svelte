@@ -594,7 +594,10 @@
     }
 
     function onConnectRequestMessage(message: any) {
-        if (message?.type === "connectRequest" && message.request?.requestId) {
+        if (message?.type === "signatureRequest") {
+            // Sent via runtime.sendMessage, not the popup port.
+            handleBackgroundMessage(message);
+        } else if (message?.type === "connectRequest" && message.request?.requestId) {
             if (!connectRequests.some((r) => r.requestId === message.request.requestId)) {
                 connectRequests = [...connectRequests, message.request];
             }
@@ -612,6 +615,17 @@
             }
             if (response?.success && Array.isArray(response.requests)) {
                 connectRequests = response.requests;
+            }
+        });
+        chrome.runtime.sendMessage({ type: "getPendingSignatureRequests" }, (response) => {
+            if (chrome.runtime.lastError) {
+                console.warn("[UI] Failed to load signature requests:", chrome.runtime.lastError.message);
+                return;
+            }
+            if (response?.success && Array.isArray(response.requests)) {
+                for (const request of response.requests) {
+                    handleBackgroundMessage({ type: "signatureRequest", ...request });
+                }
             }
         });
     });
@@ -1065,8 +1079,10 @@
                 break;
                 
             case "signatureRequest":
-//                 console.log("[UI] Processing signatureRequest:", message);
-                if (message.signingId && message.message && message.origin && message.fromAddress) {
+                if (
+                    message.signingId && message.message && message.origin && message.fromAddress &&
+                    !signatureRequests.some((req) => req.signingId === message.signingId)
+                ) {
                     // Add new signature request to the list
                     signatureRequests = [...signatureRequests, {
                         signingId: message.signingId,

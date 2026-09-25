@@ -1169,7 +1169,7 @@ export class PopupMessageHandler {
 
             const curve: "secp256k1" | "ed25519" =
                 lastResult.blockchain === "ethereum" ? "secp256k1" : "ed25519";
-            const deviceId = state.deviceId || "mpc-2";
+            const deviceId = state.deviceId;
             const primaryChain: SupportedChain = isSupportedChain(lastResult.chain)
                 ? lastResult.chain
                 : getDefaultChainForCurve(curve);
@@ -1852,7 +1852,7 @@ export class PopupMessageHandler {
             }
             
             const keystoreManager = KeystoreManager.getInstance();
-            const deviceId = this.stateManager.getState().deviceId || 'mpc-2';
+            const deviceId = this.stateManager.getState().deviceId;
             
             await keystoreManager.createKeystore(message.password, deviceId);
             

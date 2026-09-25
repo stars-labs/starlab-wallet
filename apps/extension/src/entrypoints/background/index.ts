@@ -36,6 +36,7 @@ import { YubiKeyManager } from './yubikeyManager';
 // Import types
 import { INITIAL_APP_STATE } from "@stars-labs/types/appstate";
 import { getRoom, getSignalServerUrl } from "../../config/signal-server";
+import { getDeviceId } from "../../config/device";
 import { DkgState } from "@stars-labs/types/dkg";
 import {
     type PopupToBackgroundMessage,
@@ -386,8 +387,7 @@ export async function checkAndRestoreKeystores(): Promise<void> {
         const keystoreManager = KeystoreManager.getInstance();
         
         // Initialize with device ID
-        const deviceId = stateManager.getState().deviceId || 'mpc-2';
-        await keystoreManager.initialize(deviceId);
+        await keystoreManager.initialize(stateManager.getState().deviceId);
         
         // Check if keystore is initialized
         if (!await keystoreManager.isInitialized()) {
@@ -454,8 +454,6 @@ async function initializeWebSocket(): Promise<void> {
         // exists yet, do not dial a URL the server will reject with HTTP 400.
         const room = await getRoom();
         if (!room) {
-            const deviceId = "mpc-2"; // TODO: Generate unique device ID
-            stateManager.updateState({ deviceId });
             stateManager.updateWebSocketStatus(false, "No signal room configured");
             console.log("🌐 [Background] Signal room not configured; skipping WebSocket startup");
             return;
@@ -466,12 +464,8 @@ async function initializeWebSocket(): Promise<void> {
         // so TUI and extension nodes land on the same signal server.
         const WEBSOCKET_URL = await getSignalServerUrl();
 
-        // Generate device ID
-        const deviceId = "mpc-2"; // TODO: Generate unique device ID
-        stateManager.updateState({ deviceId });
-
         // Initialize WebSocket manager and connect
-        await webSocketManager.initialize(WEBSOCKET_URL, deviceId);
+        await webSocketManager.initialize(WEBSOCKET_URL, stateManager.getState().deviceId);
 
         // Store WebSocket client reference for legacy compatibility
         wsClient = webSocketManager.getClient();
@@ -530,6 +524,10 @@ export default defineBackground(() => {
     // Async startup runs detached so the entrypoint itself stays synchronous.
     // Order preserved: restore keystores → create offscreen → connect WS.
     void (async () => {
+        // Resolve this install's persisted device id before anything that
+        // identifies us (keystore index, signal server, sessions) reads it.
+        stateManager.updateState({ deviceId: await getDeviceId() });
+
         // Check for existing keystores and restore state
         await checkAndRestoreKeystores();
 

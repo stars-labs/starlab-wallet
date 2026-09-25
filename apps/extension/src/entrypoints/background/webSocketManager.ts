@@ -16,6 +16,7 @@ import type { SessionInfo } from "@stars-labs/types/session";
 import { SessionManager } from "./sessionManager";
 import { SigningNotifier } from "./signingNotification";
 import { getSignalServerUrl } from "../../config/signal-server";
+import { getDeviceId } from "../../config/device";
 import { parseSessionInfoFromWire } from "../../utils/session-parse";
 import type {
     BackgroundToPopupMessage,
@@ -127,17 +128,6 @@ export class WebSocketManager {
     }
 
     /**
-     * Initialize WebSocket connection (legacy method)
-     */
-    async initializeWebSocket(): Promise<void> {
-        // Legacy entry point without explicit URL/device id. Resolve
-        // the URL from config so this path matches the main
-        // initializeWebSocket() in background/index.ts.
-        const url = await getSignalServerUrl();
-        return this.initialize(url, "mpc-2");
-    }
-
-    /**
      * Tear down the current connection (if any) and reconnect using a freshly
      * resolved signal-server URL. This is how a room / signal-server override
      * saved AFTER startup takes effect: startup skips the socket until a room
@@ -153,7 +143,7 @@ export class WebSocketManager {
             console.warn("[WebSocketManager] reconnect: error closing existing client:", e);
         }
         const url = await getSignalServerUrl();
-        await this.initialize(url, this.appState.deviceId || "mpc-2");
+        await this.initialize(url, await getDeviceId());
     }
 
     /**

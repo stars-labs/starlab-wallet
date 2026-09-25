@@ -542,6 +542,15 @@
     };
     let peerDeclineToasts: PeerDeclineToast[] = [];
 
+    // A dApp signing request that failed in the background (ceremony
+    // error, timeout, …). Same transient-toast pattern as declines.
+    type SigningErrorToast = {
+        signingId: string;
+        error: string;
+        expiresAt: number;
+    };
+    let signingErrorToasts: SigningErrorToast[] = [];
+
     // Ext-2d-progress: live per-peer roster during an active FROST
     // signing ceremony. Updated by the `signingProgress` event from
     // background every time a commitment or share lands on
@@ -1125,11 +1134,20 @@
                 break;
                 
             case "signatureError":
-//                 console.log("[UI] Processing signatureError:", message);
                 if (message.signingId) {
                     // Remove the failed request from the list
                     signatureRequests = signatureRequests.filter(req => req.signingId !== message.signingId);
-                    // TODO: Show error notification
+                    const toast: SigningErrorToast = {
+                        signingId: message.signingId,
+                        error: String(message.error ?? "Unknown error"),
+                        expiresAt: Date.now() + 8000,
+                    };
+                    signingErrorToasts = [...signingErrorToasts, toast];
+                    setTimeout(() => {
+                        signingErrorToasts = signingErrorToasts.filter(
+                            (t) => t.expiresAt !== toast.expiresAt,
+                        );
+                    }, 8000);
                 }
                 break;
 
@@ -2594,6 +2612,18 @@
                         <p class="mono text-[10px] opacity-80">
                             {toast.declinerId}
                         </p>
+                    </div>
+                {/each}
+            </div>
+        {/if}
+
+        <!-- Signing-error toasts (auto-dismiss after 8s) -->
+        {#if signingErrorToasts.length > 0}
+            <div class="fixed right-4 top-4 z-40 space-y-2">
+                {#each signingErrorToasts as toast (toast.expiresAt)}
+                    <div class="alert alert-error shadow-lg">
+                        <p class="font-semibold">Signing failed</p>
+                        <p class="text-[11px] opacity-80">{toast.error}</p>
                     </div>
                 {/each}
             </div>

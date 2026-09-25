@@ -87,13 +87,6 @@ export class ContentProvider {
     };
 
     private forwardToBackground(request: JsonRpcRequest) {
-        // Check if we can handle the request directly in the content script first
-        if (this.canHandleLocally(request)) {
-            console.log('[Content Script] Handling request locally:', request.method);
-            this.handleRequestLocally(request);
-            return;
-        }
-        
         // The background routes any typed message whose payload is a JSON-RPC
         // request to the RpcHandler. It derives the origin from the sender
         // frame itself, so none is sent here.
@@ -183,56 +176,8 @@ export class ContentProvider {
         }, '*');
     }
 
-    // Helper function to determine if a request can be handled locally
-    private canHandleLocally(request: JsonRpcRequest): boolean {
-        // List of methods we can handle directly in the content script.
-        // Account methods (eth_accounts / eth_requestAccounts) must always
-        // reach the background: it enforces per-origin connect approval.
-        const locallyHandlableMethods = [
-            'eth_chainId',
-            'net_version',
-        ];
-        
-        return locallyHandlableMethods.includes(request.method);
-    }
-    
-    // Handle RPC requests directly in the content script
-    private handleRequestLocally(request: JsonRpcRequest): void {
-        const { method, id } = request;
-        
-        console.log(`[Content Script] Handling ${method} locally`);
-        
-        switch (method) {
-            case 'eth_chainId':
-                // Return Ethereum mainnet chainId by default
-                this.sendToPage({
-                    type: 'WALLET_RESPONSE',
-                    payload: {
-                        id,
-                        jsonrpc: '2.0',
-                        result: '0x1' // Ethereum mainnet
-                    }
-                });
-                break;
-                
-            case 'net_version':
-                // Return Ethereum mainnet network version by default
-                this.sendToPage({
-                    type: 'WALLET_RESPONSE',
-                    payload: {
-                        id,
-                        jsonrpc: '2.0',
-                        result: '1' // Ethereum mainnet
-                    }
-                });
-                break;
-        }
-    }
-    
-    // 清理方法
     public cleanup() {
         window.removeEventListener('message', this.handlePageMessage);
-        // 注意：Chrome 扩展 API 不提供 removeListener 的标准方式
     }
 }
 

@@ -257,7 +257,13 @@ describe("RpcHandler.getPendingSignatureRequests", () => {
             .catch(() => {});
     }
 
-    beforeEach(() => augmentChromeNotifications());
+    beforeEach(() => {
+        augmentChromeNotifications();
+        // enqueueDappSignature broadcasts via runtime.sendMessage; don't rely
+        // on whichever chrome global an earlier test file left behind.
+        const chromeGlobal = (global as any).chrome;
+        chromeGlobal.runtime = { ...chromeGlobal.runtime, sendMessage: jest.fn() };
+    });
 
     it("lists a queued request in the popup's signatureRequest shape", () => {
         const rpc = new RpcHandler();

@@ -50,6 +50,7 @@ function makeSigningInfo(signingId: string, transactionData: string) {
         acceptances: new Map<string, boolean>(),
         accepted_participants: ['a', 'b'],
         selected_signers: ['a', 'b'],
+        signer_identifiers: { a: 1, b: 2 },
         step: 'commitment_phase' as const,
         initiator: 'a',
     };

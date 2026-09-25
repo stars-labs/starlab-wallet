@@ -368,53 +368,6 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                     }
                 });
 
-                // Request keystore data from background to load into WASM
-                chrome.runtime.sendMessage({ type: "getActiveKeystore" }, async (response) => {
-                    if (chrome.runtime.lastError) {
-                        console.error("Offscreen: Error getting active keystore:", chrome.runtime.lastError.message);
-                        return;
-                    }
-                    
-                    if (response && response.success && response.keyShare) {
-                        console.log("Offscreen: Found active keystore to load");
-                        
-                        try {
-                            const { FrostDkgSecp256k1, FrostDkgEd25519 } = await import("@stars-labs/core-wasm");
-                            
-                            // Determine curve type
-                            const curveType = response.keyShare.curve || 'secp256k1';
-                            
-                            let dkgInstance;
-                            if (curveType === 'secp256k1') {
-                                dkgInstance = new FrostDkgSecp256k1();
-                            } else {
-                                dkgInstance = new FrostDkgEd25519();
-                            }
-                            
-                            // Import the keystore
-                            const keystoreData = {
-                                key_package: response.keyShare.key_package,
-                                group_public_key: response.keyShare.group_public_key,
-                                session_id: response.keyShare.session_id,
-                                device_id: response.keyShare.device_id,
-                                participant_index: response.keyShare.participant_index,
-                                threshold: response.keyShare.threshold,
-                                total_participants: response.keyShare.total_participants
-                            };
-                            
-                            dkgInstance.import_keystore(JSON.stringify(keystoreData));
-                            console.log("Offscreen: Successfully loaded keystore into WASM");
-                            
-                            // Store the instance for later use (signing)
-                            // Note: This should be integrated with WebRTCManager in production
-                            (globalThis as any).__importedDkgInstance = dkgInstance;
-                            (globalThis as any).__importedKeystoreCurveType = curveType;
-                        } catch (error) {
-                            console.error("Offscreen: Failed to load keystore into WASM:", error);
-                        }
-                    }
-                });
-                
                 sendResponse({ success: true, message: "Offscreen initialized with WebRTCManager." });
             } else {
                 console.error("Offscreen: LocaldeviceId is falsy after assignment:", localdeviceId);

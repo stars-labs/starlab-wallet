@@ -26,6 +26,8 @@ import NetworkService from "../../services/networkService";
 import { KeystoreManager } from "../../services/keystoreManager";
 import { handleGetPortfolio, handleGetActivity, handleRecordActivity } from "./assetHandlers";
 import { DkgState } from "@stars-labs/types/dkg";
+import type { KeyShareData } from "@stars-labs/types/keystore";
+import { keyShareCoreFromEngine, type KeyShareCore } from "../../utils/engineKeystore";
 import {
     getDefaultChainForCurve,
     getProtocolBlockchainForChain,
@@ -1194,13 +1196,17 @@ export class PopupMessageHandler {
                 return;
             }
 
-            let parsed: any;
+            let keyShareCore: KeyShareCore;
             try {
-                parsed = JSON.parse(pendingJson);
-            } catch (parseErr) {
+                keyShareCore = keyShareCoreFromEngine(
+                    pendingJson,
+                    lastResult.groupPublicKey ?? "",
+                    lastResult.participantIdentifiers ?? {},
+                );
+            } catch (coreErr) {
                 sendResponse({
                     success: false,
-                    error: `Corrupt keystore JSON from WASM: ${(parseErr as Error).message}`,
+                    error: `DKG result can't be saved: ${(coreErr as Error).message}`,
                 });
                 return;
             }
@@ -1299,23 +1305,13 @@ export class PopupMessageHandler {
             }
             addBlockchainEntry(primaryChain, primaryAddress, true);
 
-            const keyShareData: any = {
-                // Core FROST material — `parsed` shape is
-                // `KeystoreData` from frost-core/keystore.rs.
-                key_package: parsed.key_package ?? "",
-                group_public_key:
-                    lastResult.groupPublicKey ?? parsed.public_key_package ?? "",
+            const keyShareData: KeyShareData = {
+                // Canonical FROST material: engine keystore fields +
+                // hex group key + explicit device→FROST-id map.
+                ...keyShareCore,
                 // Session context
                 session_id: lastResult.sessionId ?? "",
                 device_id: deviceId,
-                participant_index:
-                    parsed.participant_index ?? lastResult.participantIndex ?? 1,
-                threshold: parsed.min_signers ?? lastResult.threshold ?? 0,
-                total_participants:
-                    parsed.max_signers ?? lastResult.total ?? 0,
-                participants: lastResult.participants ?? [],
-                // Curve + chain
-                curve,
                 blockchains: Array.from(blockchainEntries.values()),
                 ethereum_address: addressFor("ethereum"),
                 solana_address: addressFor("solana"),
@@ -1694,13 +1690,17 @@ export class PopupMessageHandler {
                             // Create key share data from the exported keystore
                             const keyShareData = {
                                 key_package: exportedData.key_package || '',
-                                group_public_key: exportedData.group_public_key || response.sessionInfo.group_public_key || '',
+                                public_key_package: exportedData.public_key_package || '',
+                                group_public_key: response.sessionInfo.group_public_key || '',
                                 session_id: response.sessionInfo.session_id,
                                 device_id: response.sessionInfo.device_id,
                                 participant_index: response.sessionInfo.participant_index,
                                 threshold: response.sessionInfo.threshold,
                                 total_participants: response.sessionInfo.total_participants,
                                 participants: [response.sessionInfo.device_id],
+                                participant_identifiers: {
+                                    [response.sessionInfo.device_id]: response.sessionInfo.participant_index,
+                                },
                                 curve: response.sessionInfo.curve_type as 'secp256k1' | 'ed25519',
                                 blockchains: response.sessionInfo.blockchains || [],
                                 ethereum_address: response.addresses?.ethereum,

@@ -1,6 +1,11 @@
 import { SessionInfo, DkgState, MeshStatus, MeshStatusType } from "@stars-labs/types/appstate";
 import { WebRTCAppMessage } from "@stars-labs/types/webrtc";
 import { WebSocketMessagePayload, WebRTCSignal } from "@stars-labs/types/websocket";
+import type { KeyShareData } from "@stars-labs/types/keystore";
+import {
+  dkgParticipantIdentifiers,
+  toEngineKeystoreJson,
+} from "../../utils/engineKeystore";
 
 export { DkgState, MeshStatusType }; // Export DkgState and MeshStatusType
 
@@ -28,9 +33,10 @@ export enum ReshareState {
 }
 
 // M3 reshare: ceremony bookkeeping. `oldParticipants` is the wallet's
-// CURRENT cohort (sorted) — FROST identifiers for the ceremony are
-// 1-based positions in THIS list, because the engine requires every
-// new participant to already hold a share under its old identifier.
+// CURRENT cohort (sorted). FROST identifiers come from the wallet's
+// stored participant_identifiers (NOT list positions — after a removal
+// reshare the cohort keeps gapped ids like {1,3}); the engine requires
+// every new participant to already hold a share under its old id.
 // `newParticipants` is the (sorted) cohort that will hold shares
 // after the ceremony — always a subset of oldParticipants.
 export interface ReshareInfo {
@@ -39,7 +45,8 @@ export interface ReshareInfo {
   old_participants: string[]; // sorted
   new_participants: string[]; // sorted, subset of old_participants
   new_threshold: number;
-  old_group_public_key: string;
+  old_group_public_key: string; // hex
+  identifiers: Record<string, number>; // device id → FROST id (old cohort)
 }
 
 // Signing process information
@@ -51,6 +58,10 @@ export interface SigningInfo {
   acceptances: Map<string, boolean>; // Map peer ID to acceptance status
   accepted_participants: string[];
   selected_signers: string[];
+  /** device id → FROST identifier for every selected signer, taken
+   *  from the wallet's stored participant_identifiers. Never derived
+   *  from list positions (ids are gapped after a removal reshare). */
+  signer_identifiers: Record<string, number>;
   step: "commitment_phase" | "share_phase" | "complete";
   initiator: string;
   final_signature?: string; // Final aggregated signature as string
@@ -76,6 +87,8 @@ export class WebRTCManager {
   // FROST DKG integration
   private frostDkg: any | null = null;
   private participantIndex: number | null = null;
+  // device id → FROST id of the wallet loaded by loadKeystoreForSigning.
+  private walletIdentifiers: Record<string, number> | null = null;
   private receivedRound1Packages: Set<string> = new Set();
   private receivedRound2Packages: Set<string> = new Set();
   private groupPublicKey: string | null = null;
@@ -97,7 +110,7 @@ export class WebRTCManager {
   public reshareState: ReshareState = ReshareState.Idle;
   public reshareInfo: ReshareInfo | null = null;
   private frostReshare: any | null = null;
-  private reshareKeyShare: any | null = null; // pending keystore data until mesh is ready
+  private reshareKeyShare: KeyShareData | null = null; // pending keystore data until mesh is ready
   private receivedReshareRound1: Set<string> = new Set();
   private receivedReshareRound2: Set<string> = new Set();
   private bufferedReshareRound1: Array<{ fromPeerId: string; packageHex: string }> = [];
@@ -132,13 +145,14 @@ export class WebRTCManager {
     total: number;
     participants: string[];
     participantIndex: number | null;
+    /** device id → FROST id assigned by this DKG (sorted position). */
+    participantIdentifiers: Record<string, number>;
     /** WASM-exported keystore JSON — carries the key package bytes,
      *  FROST identifiers, and public key commitments for each
      *  participant. The background's KeystoreManager consumes this
      *  (via addWallet) to encrypt + persist the keyshare once the
-     *  user picks a password. `null` when export failed (logged but
-     *  non-fatal). */
-    keystoreJson: string | null;
+     *  user picks a password. */
+    keystoreJson: string;
   }) => void = () => { };
   public onSigningStateUpdate: (state: SigningState, info: SigningInfo | null) => void = () => { };
   /**
@@ -213,7 +227,8 @@ export class WebRTCManager {
     threshold: number;
     total: number;
     participants: string[];
-    participantIndex: number | null;
+    /** device id → FROST id for the NEW cohort (old ids retained). */
+    participantIdentifiers: Record<string, number>;
     blockchain: "ethereum" | "solana";
   }) => void = () => { };
 
@@ -1674,8 +1689,11 @@ export class WebRTCManager {
         return;
       }
 
-      // Finalize DKG and get group public key
-      this.groupPublicKey = this.frostDkg.finalize_dkg();
+      // finalize_dkg() returns the full engine keystore JSON (SECRET
+      // share included) — it's only handed to the save flow; the group
+      // public key is the hex verifying key.
+      const keystoreJson: string = this.frostDkg.finalize_dkg();
+      this.groupPublicKey = this.frostDkg.get_group_public_key();
 
       // Generate blockchain addresses using proper WASM methods
       if (this.groupPublicKey) {
@@ -1705,21 +1723,6 @@ export class WebRTCManager {
           this.currentBlockchain === "ethereum"
             ? this.ethereumAddress
             : this.solanaAddress;
-        // Extract the WASM keystore JSON so background can encrypt +
-        // persist without needing a return trip. Failure here is
-        // non-fatal: the ceremony succeeded, we just can't save yet.
-        // The popup will show the address + group key but cannot
-        // offer "Save" — user would need to retry.
-        let keystoreJson: string | null = null;
-        try {
-          if (this.frostDkg && typeof (this.frostDkg as any).export_keystore === "function") {
-            keystoreJson = (this.frostDkg as any).export_keystore();
-          }
-        } catch (exportErr) {
-          this._log(
-            `export_keystore failed (non-fatal): ${this._getErrorMessage(exportErr)}`,
-          );
-        }
         this.onDkgComplete({
           groupPublicKey: this.groupPublicKey ?? "",
           address: address ?? null,
@@ -1729,6 +1732,9 @@ export class WebRTCManager {
           total: this.sessionInfo?.total ?? 0,
           participants: this.sessionInfo?.participants ?? [],
           participantIndex: this.participantIndex,
+          participantIdentifiers: dkgParticipantIdentifiers(
+            this.sessionInfo?.participants ?? [],
+          ),
           keystoreJson,
         });
       } catch (cbErr) {
@@ -1750,6 +1756,7 @@ export class WebRTCManager {
     // Note: Don't reset dkgState here - caller should manage state transitions
     this.frostDkg = null;
     this.participantIndex = null;
+    this.walletIdentifiers = null;
     this.receivedRound1Packages.clear();
     this.receivedRound2Packages.clear();
     this.groupPublicKey = null;
@@ -1859,7 +1866,7 @@ export class WebRTCManager {
   public startReshare(
     sessionInfo: SessionInfo,
     walletId: string,
-    keyShare: any,
+    keyShare: KeyShareData,
     blockchain: "ethereum" | "solana",
   ): boolean {
     // A finished (or failed) ceremony doesn't block the next one —
@@ -1896,6 +1903,14 @@ export class WebRTCManager {
       this._log(`Cannot start reshare: we are not in the new cohort`);
       return false;
     }
+    const identifiers = keyShare?.participant_identifiers ?? {};
+    const unmapped = oldParticipants.filter((p) => !(identifiers[p] > 0));
+    if (unmapped.length > 0) {
+      this._log(
+        `Cannot start reshare: wallet has no FROST identifier for [${unmapped.join(", ")}]`,
+      );
+      return false;
+    }
 
     this.currentBlockchain = blockchain;
     this.reshareInfo = {
@@ -1904,7 +1919,8 @@ export class WebRTCManager {
       old_participants: oldParticipants,
       new_participants: newParticipants,
       new_threshold: sessionInfo.threshold,
-      old_group_public_key: String(keyShare?.group_public_key ?? ""),
+      old_group_public_key: String(keyShare.group_public_key ?? ""),
+      identifiers: { ...identifiers },
     };
     this.reshareKeyShare = keyShare;
     this._updateReshareState(ReshareState.WaitingForMesh);
@@ -1915,10 +1931,9 @@ export class WebRTCManager {
     return true;
   }
 
-  /** Old-cohort FROST identifier for a device id (1-based, sorted). */
+  /** Old-cohort FROST identifier for a device id (from the wallet record). */
   private _reshareIdOf(deviceId: string): number {
-    const idx = this.reshareInfo?.old_participants.indexOf(deviceId) ?? -1;
-    return idx + 1; // 0 means "not a shareholder"
+    return this.reshareInfo?.identifiers[deviceId] ?? 0; // 0 = not a shareholder
   }
 
   private _maybeInitReshare(): void {
@@ -1947,54 +1962,6 @@ export class WebRTCManager {
     void this._initializeReshare();
   }
 
-  /**
-   * The engine's init_reshare requires the CANONICAL keystore JSON
-   * that export_keystore emits ({key_package, public_key_package,
-   * min_signers, max_signers, participant_index, …}) — verified
-   * against the vendored wasm; there is no field aliasing. The
-   * extension's KeyShareData doesn't store public_key_package as its
-   * own field, BUT for DKG-created wallets `group_public_key` holds
-   * the full finalize_dkg() output, which IS the canonical keystore
-   * JSON. Resolve whichever form we have.
-   */
-  private _resolveEngineKeystoreJson(ks: any): string {
-    if (typeof ks?.group_public_key === "string") {
-      try {
-        const parsed = JSON.parse(ks.group_public_key);
-        if (
-          parsed &&
-          typeof parsed === "object" &&
-          typeof parsed.public_key_package === "string" &&
-          typeof parsed.key_package === "string"
-        ) {
-          return ks.group_public_key;
-        }
-      } catch {
-        /* plain hex group key — fall through */
-      }
-    }
-    if (
-      typeof ks?.public_key_package === "string" &&
-      typeof ks?.key_package === "string"
-    ) {
-      const total = Number(ks.total_participants) || 0;
-      return JSON.stringify({
-        key_package: ks.key_package,
-        public_key_package: ks.public_key_package,
-        min_signers: Number(ks.threshold) || 0,
-        max_signers: total,
-        participant_index: Number(ks.participant_index) || 0,
-        participant_indices: Array.from({ length: total }, (_, i) => i + 1),
-        curve:
-          ks.curve ??
-          (this.currentBlockchain === "ethereum" ? "secp256k1" : "ed25519"),
-      });
-    }
-    throw new Error(
-      "Wallet record doesn't carry the engine keystore (public_key_package) — this wallet can't be reshared from this device",
-    );
-  }
-
   private _resolveGlobal(name: string): any {
     return (
       (typeof globalThis !== "undefined" && (globalThis as any)[name]) ||
@@ -2016,52 +1983,19 @@ export class WebRTCManager {
       }
 
       const ks = this.reshareKeyShare;
-      const keystoreJson = this._resolveEngineKeystoreJson(ks);
-
-      // Canonical OLD group key (compressed hex) for the post-reshare
-      // invariant check. Importing into a throwaway FrostDkg instance
-      // both validates the keystore and normalizes the key format —
-      // KeyShareData.group_public_key may hold a JSON blob (see
-      // _resolveEngineKeystoreJson).
-      const DkgClass =
-        this.currentBlockchain === "ethereum"
-          ? this._resolveGlobal("FrostDkgSecp256k1")
-          : this._resolveGlobal("FrostDkgEd25519");
-      if (DkgClass) {
-        let probe: any = null;
-        try {
-          probe = new DkgClass();
-          probe.import_keystore(keystoreJson);
-          const canonical = probe.get_group_public_key?.();
-          if (typeof canonical === "string" && canonical.length > 0) {
-            this.reshareInfo.old_group_public_key = canonical;
-          }
-        } catch (probeErr) {
-          this._log(
-            `Old-group-key probe failed (continuing, invariant check weakened): ${this._getErrorMessage(probeErr)}`,
-          );
-        } finally {
-          try { probe?.free?.(); } catch { /* noop */ }
-        }
-      }
+      const keystoreJson = toEngineKeystoreJson(ks);
 
       const newIds = this.reshareInfo.new_participants.map((p) =>
         this._reshareIdOf(p),
       );
       if (newIds.some((id) => id <= 0)) {
         throw new Error(
-          "A new-cohort device is missing from the old participant list",
+          "A new-cohort device has no FROST identifier in the wallet record",
         );
       }
-      const myId = this._reshareIdOf(this.localPeerId);
-      if (myId !== Number(ks.participant_index)) {
-        // Not fatal — the keystore's own index is authoritative for
-        // the WASM; the sorted-list derivation is our cross-check
-        // that all peers agree on the id mapping. A mismatch means
-        // the wallet's stored participants order disagrees with the
-        // announced reshare_old_participants.
-        this._log(
-          `⚠️ Reshare id sanity check: sorted-list id ${myId} != keystore participant_index ${ks.participant_index}. Using keystore's view via init_reshare.`,
+      if (this._reshareIdOf(this.localPeerId) !== ks.participant_index) {
+        throw new Error(
+          `Wallet record inconsistent: identifier map says ${this._reshareIdOf(this.localPeerId)} for this device, keystore says ${ks.participant_index}`,
         );
       }
 
@@ -2324,31 +2258,19 @@ export class WebRTCManager {
 
       // CRITICAL invariant: the group public key (and therefore every
       // derived address) must NOT change. A mismatch means the
-      // ceremony diverged — do not persist the new share. Comparison
-      // only runs when the old key is in canonical hex form (set by
-      // the import-probe in _initializeReshare); a JSON-blob old key
-      // means the probe failed and we have nothing comparable.
+      // ceremony diverged — do not persist the new share.
       const oldKey = (this.reshareInfo.old_group_public_key || "").toLowerCase();
       const newKey = (newGroupKey || "").toLowerCase();
-      if (
-        /^[0-9a-f]+$/.test(oldKey) &&
-        /^[0-9a-f]+$/.test(newKey) &&
-        oldKey !== newKey
-      ) {
+      if (!newKey || oldKey !== newKey) {
         throw new Error(
           `Group public key changed after reshare (old=${oldKey.slice(0, 16)}…, new=${newKey.slice(0, 16)}…) — refusing to save`,
         );
       }
 
-      let participantIndex: number | null = null;
-      try {
-        const parsed = JSON.parse(newKeystoreJson);
-        participantIndex =
-          typeof parsed.participant_index === "number"
-            ? parsed.participant_index
-            : null;
-      } catch {
-        /* keystore JSON shape is engine-defined; index is optional info */
+      // New cohort keeps its OLD identifiers (gapped after a removal).
+      const participantIdentifiers: Record<string, number> = {};
+      for (const p of this.reshareInfo.new_participants) {
+        participantIdentifiers[p] = this._reshareIdOf(p);
       }
 
       this._updateReshareState(ReshareState.Complete);
@@ -2363,7 +2285,7 @@ export class WebRTCManager {
         threshold: this.reshareInfo.new_threshold,
         total: this.reshareInfo.new_participants.length,
         participants: this.reshareInfo.new_participants.slice(),
-        participantIndex,
+        participantIdentifiers,
         blockchain: this.currentBlockchain,
       });
     } catch (error) {
@@ -2421,32 +2343,25 @@ export class WebRTCManager {
    * and we haven't already loaded a keystore (or we need a different
    * one than what's currently loaded).
    *
-   * The keystore data shape must match what frost-core's import_keystore
-   * expects — the background's `getActiveKeystore` response already
-   * provides this, modulo field-name normalization (snake_case).
+   * The stored KeyShareData is converted to the engine's canonical
+   * keystore JSON by `toEngineKeystoreJson` (the same boundary the
+   * reshare path uses) — derive_child_keystore_* / import_keystore
+   * accept nothing else. The wallet's participant_identifiers map is
+   * kept so the ceremony can resolve co-signers' FROST ids.
    *
    * Returns true on successful load. Throws on keystore parse failure
    * or WASM init failure; callers should treat those as fatal for
    * the ceremony and bail.
    */
   public async loadKeystoreForSigning(
-    keyShareData: {
-      key_package: string;
-      group_public_key: string;
-      session_id: string;
-      device_id: string;
-      participant_index: number;
-      threshold: number;
-      total_participants: number;
-      curve?: "secp256k1" | "ed25519";
-    },
+    keyShareData: KeyShareData,
     blockchain: "ethereum" | "solana",
   ): Promise<boolean> {
     this.currentBlockchain = blockchain;
-    this.participantIndex = keyShareData.participant_index;
     this._log(
       `Loading keystore for signing: ${blockchain} / participant ${keyShareData.participant_index} / session ${keyShareData.session_id}`,
     );
+    const parentJson = toEngineKeystoreJson(keyShareData);
 
     const {
       FrostDkgSecp256k1,
@@ -2459,15 +2374,6 @@ export class WebRTCManager {
       blockchain === "ethereum"
         ? new FrostDkgSecp256k1()
         : new FrostDkgEd25519();
-    const parentJson = JSON.stringify({
-      key_package: keyShareData.key_package,
-      group_public_key: keyShareData.group_public_key,
-      session_id: keyShareData.session_id,
-      device_id: keyShareData.device_id,
-      participant_index: keyShareData.participant_index,
-      threshold: keyShareData.threshold,
-      total_participants: keyShareData.total_participants,
-    });
     // BIP-44 all the way: the ROOT key never signs. Derive ACCOUNT 0's child
     // keystore (pinned standard path) and sign with that — deterministic, so
     // every co-signer derives the same child from its own share and the
@@ -2486,6 +2392,8 @@ export class WebRTCManager {
     instance.import_keystore(childJson);
 
     this.frostDkg = instance;
+    this.participantIndex = keyShareData.participant_index;
+    this.walletIdentifiers = { ...keyShareData.participant_identifiers };
     this.groupPublicKey = keyShareData.group_public_key;
     if (blockchain === "ethereum") {
       try {
@@ -2517,9 +2425,12 @@ export class WebRTCManager {
    *   1. Ensure `this.frostDkg` is loaded (caller must run
    *      loadKeystoreForSigning first).
    *   2. Set up signingInfo with selected_signers = the first
-   *      `threshold` participants from session_info.participants
-   *      (stable-sorted so every peer picks the same subset — a
-   *      disagreement here would corrupt the ceremony).
+   *      `threshold` shareholders (devices with a FROST id in the
+   *      wallet's participant_identifiers) among the SORTED
+   *      session participants, so every peer picks the same subset
+   *      regardless of wire order — a disagreement here would
+   *      corrupt the ceremony. Each signer's FROST id comes from
+   *      that map, never from its list position.
    *   3. Call frostDkg.signing_commit() to generate our commitment
    *      for THIS round.
    *   4. Broadcast the commitment as a SigningCommitment WebRTC
@@ -2545,20 +2456,38 @@ export class WebRTCManager {
       return false;
     }
 
-    // Select the first `threshold` participants deterministically.
-    // All peers must pick the same subset — using session_info's
-    // array order (which is the canonical order from the server's
-    // broadcast) ensures convergence without a separate selection
-    // round-trip.
-    const threshold = sessionInfo.threshold;
-    const selectedSigners = sessionInfo.participants.slice(0, threshold);
-
-    if (!selectedSigners.includes(this.localPeerId)) {
+    const identifiers = this.walletIdentifiers;
+    if (!identifiers || !(identifiers[this.localPeerId] > 0)) {
       this._log(
-        `Not a selected signer for this ceremony (we're not in the first ${threshold} of ${sessionInfo.participants.length}) — idle until re-invited`,
+        `Cannot start signing ceremony: loaded wallet has no FROST identifier for this device`,
       );
       return false;
     }
+
+    // Select the first `threshold` shareholders deterministically.
+    // All peers must pick the same subset: sort the session's
+    // participants (wire order is join order, which peers may see
+    // differently) and skip devices that hold no share of this wallet.
+    const threshold = sessionInfo.threshold;
+    const shareholders = [...sessionInfo.participants]
+      .sort()
+      .filter((p) => identifiers[p] > 0);
+    const selectedSigners = shareholders.slice(0, threshold);
+    if (selectedSigners.length < threshold) {
+      this._log(
+        `Cannot start signing ceremony: only ${selectedSigners.length} of ${threshold} required shareholders joined`,
+      );
+      return false;
+    }
+
+    if (!selectedSigners.includes(this.localPeerId)) {
+      this._log(
+        `Not a selected signer for this ceremony (we're not in the first ${threshold} of ${shareholders.length} shareholders) — idle until re-invited`,
+      );
+      return false;
+    }
+    const signerIdentifiers: Record<string, number> = {};
+    for (const p of selectedSigners) signerIdentifiers[p] = identifiers[p];
 
     const signingId = `sign_${sessionInfo.session_id}`;
     this.signingInfo = {
@@ -2569,6 +2498,7 @@ export class WebRTCManager {
       acceptances: new Map(),
       accepted_participants: selectedSigners.slice(),
       selected_signers: selectedSigners,
+      signer_identifiers: signerIdentifiers,
       step: "commitment_phase",
       initiator: sessionInfo.proposer_id,
     };
@@ -2689,8 +2619,9 @@ export class WebRTCManager {
    * explicitly registered via add_signing_commitment(i, hex)
    * before sign() can produce a share using them.
    *
-   * Index convention: FROST participants are 1-indexed. Convert from
-   * peer-id via `participants.indexOf(peerId) + 1`.
+   * Index convention: the sender's FROST identifier comes from
+   * signingInfo.signer_identifiers (the wallet's stored map) — NOT
+   * its list position, which is wrong for gapped cohorts like {1,3}.
    */
   private _handleSigningCommitment(fromPeerId: string, message: any): void {
     this._log(`Handling signing commitment from ${fromPeerId}`);
@@ -2704,13 +2635,10 @@ export class WebRTCManager {
       return;
     }
 
-    // Sorted order to match the Rust core's canonical_identifier — signingInfo
-    // participants may come straight off the wire (unsorted). (#29)
-    const senderIndex =
-      [...this.signingInfo.participants].sort().indexOf(fromPeerId) + 1;
+    const senderIndex = this.signingInfo.signer_identifiers[fromPeerId] ?? 0;
     if (senderIndex <= 0) {
       this._log(
-        `Invalid sender index for ${fromPeerId} (not in participants list)`,
+        `Ignoring ${fromPeerId}: not a selected signer (no FROST identifier)`,
       );
       return;
     }
@@ -2778,13 +2706,10 @@ export class WebRTCManager {
       return;
     }
 
-    // Sorted order to match the Rust core's canonical_identifier — signingInfo
-    // participants may come straight off the wire (unsorted). (#29)
-    const senderIndex =
-      [...this.signingInfo.participants].sort().indexOf(fromPeerId) + 1;
+    const senderIndex = this.signingInfo.signer_identifiers[fromPeerId] ?? 0;
     if (senderIndex <= 0) {
       this._log(
-        `Invalid sender index for ${fromPeerId} (not in participants list)`,
+        `Ignoring ${fromPeerId}: not a selected signer (no FROST identifier)`,
       );
       return;
     }

@@ -35,9 +35,10 @@ export type WebRTCAppMessage =
   | { webrtc_msg_type: 'AggregatedSignature'; signing_id: string; signature: string } // Final signature as string
 
   // M3 Reshare Messages (rotate shares, same group key). Packages are
-  // hex strings straight from the FrostReshare* WASM; sender identity
-  // is derived from the sorted reshare_old_participants list (OLD
-  // cohort FROST indices), not the session participants.
+  // hex strings straight from the FrostReshare* WASM; the sender's
+  // FROST id is looked up in the wallet's stored device→id map (OLD
+  // cohort ids, gapped after a removal), not derived from any list
+  // position.
   | { webrtc_msg_type: 'ReshareRound1Package'; session_id: string; package: string }
   | { webrtc_msg_type: 'ReshareRound2Package'; session_id: string; package: string }
 

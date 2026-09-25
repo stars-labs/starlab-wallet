@@ -424,13 +424,17 @@ export class KeystoreManager {
                         // Create key share data
                         const keyShareData: KeyShareData = {
                             key_package: keystoreData.key_package || '',
-                            group_public_key: keystoreData.group_public_key || '',
+                            public_key_package: keystoreData.public_key_package || '',
+                            group_public_key: importedData.sessionInfo.group_public_key || '',
                             session_id: importedData.sessionInfo.session_id,
                             device_id: importedData.sessionInfo.device_id,
                             participant_index: importedData.sessionInfo.participant_index,
                             threshold: importedData.sessionInfo.threshold,
                             total_participants: importedData.sessionInfo.total_participants,
                             participants: [importedData.sessionInfo.device_id],
+                            participant_identifiers: {
+                                [importedData.sessionInfo.device_id]: importedData.sessionInfo.participant_index,
+                            },
                             curve: importedData.sessionInfo.curve_type as 'secp256k1' | 'ed25519',
                             blockchains: importedData.sessionInfo.blockchains || [],
                             ethereum_address: importedData.addresses?.ethereum,

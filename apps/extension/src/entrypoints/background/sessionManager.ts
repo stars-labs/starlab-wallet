@@ -808,8 +808,8 @@ export class SessionManager {
      *   - threshold/total describe the NEW cohort
      *   - wallet_name carries the wallet id (the joiners use it to
      *     locate their own share for the same wallet)
-     *   - reshare_old_participants carries the CURRENT cohort so all
-     *     devices derive identical FROST identifiers (sorted order)
+     *   - reshare_old_participants carries the CURRENT cohort (FROST
+     *     ids come from each device's stored participant_identifiers)
      *
      * The engine's reshare requires every NEW participant to already
      * hold a share, so newParticipants must be a subset of

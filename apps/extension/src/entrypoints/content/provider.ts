@@ -94,12 +94,12 @@ export class ContentProvider {
             return;
         }
         
-        // Use a simplified message structure that our background handler will recognize
+        // The background routes any typed message whose payload is a JSON-RPC
+        // request to the RpcHandler. It derives the origin from the sender
+        // frame itself, so none is sent here.
         const message = {
-            // The payload is what matters - must have jsonrpc, id, method fields
-            ...request,
-            origin: window.location.origin,
-            timestamp: Date.now()
+            type: 'dappRpc',
+            payload: request,
         };
 
 //         console.log('[Content Script] Forwarding request to background:', request.method);
@@ -185,13 +185,12 @@ export class ContentProvider {
 
     // Helper function to determine if a request can be handled locally
     private canHandleLocally(request: JsonRpcRequest): boolean {
-        // List of methods we can handle directly in the content script
+        // List of methods we can handle directly in the content script.
+        // Account methods (eth_accounts / eth_requestAccounts) must always
+        // reach the background: it enforces per-origin connect approval.
         const locallyHandlableMethods = [
             'eth_chainId',
-            'eth_getBalance',
             'net_version',
-            'eth_accounts',
-            'eth_requestAccounts'
         ];
         
         return locallyHandlableMethods.includes(request.method);
@@ -226,106 +225,6 @@ export class ContentProvider {
                         result: '1' // Ethereum mainnet
                     }
                 });
-                break;
-                
-            case 'eth_accounts':
-            case 'eth_requestAccounts':
-                // Get accounts from storage
-                chrome.storage.local.get(['mpc_ethereum_address'], (result) => {
-                    try {
-                        if (result && result.mpc_ethereum_address) {
-                            console.log('[Content Script] Using saved MPC Ethereum address:', result.mpc_ethereum_address);
-                            
-                            // Store in sessionStorage for direct access by injected script
-                            try {
-                                if (window.sessionStorage) {
-                                    window.sessionStorage.setItem('starlab_wallet_accounts', JSON.stringify([result.mpc_ethereum_address]));
-                                }
-                            } catch (err) {
-                                console.log('[Content Script] Unable to update sessionStorage:', err);
-                            }
-                            
-                            this.sendToPage({
-                                type: 'WALLET_RESPONSE',
-                                payload: {
-                                    id,
-                                    jsonrpc: '2.0',
-                                    result: [result.mpc_ethereum_address]
-                                }
-                            });
-                        } else {
-                            // No saved address, fall back to requesting it from background
-                            console.log('[Content Script] No saved address, requesting from background');
-                            chrome.runtime.sendMessage(
-                                { type: 'getEthereumAddress' },
-                                (addressResponse) => {
-                                    if (chrome.runtime.lastError) {
-                                        console.error('[Content Script] Error getting address:', chrome.runtime.lastError);
-                                    }
-                                    
-                                    if (addressResponse && addressResponse.success && 
-                                        addressResponse.data && addressResponse.data.ethereumAddress) {
-                                        
-                                        const address = addressResponse.data.ethereumAddress;
-                                        console.log('[Content Script] Got address from background:', address);
-                                        
-                                        // Save to sessionStorage
-                                        try {
-                                            if (window.sessionStorage) {
-                                                window.sessionStorage.setItem('starlab_wallet_accounts', JSON.stringify([address]));
-                                            }
-                                        } catch (err) {
-                                            console.log('[Content Script] Unable to update sessionStorage:', err);
-                                        }
-                                        
-                                        this.sendToPage({
-                                            type: 'WALLET_RESPONSE',
-                                            payload: {
-                                                id,
-                                                jsonrpc: '2.0',
-                                                result: [address]
-                                            }
-                                        });
-                                    } else {
-                                        // Forward original request to background as last resort
-                                        console.log('[Content Script] Failed to get address, forwarding original request');
-                                        const originalMessage = {
-                                            ...request,
-                                            origin: window.location.origin,
-                                            timestamp: Date.now()
-                                        };
-                                        chrome.runtime.sendMessage(originalMessage);
-                                    }
-                                }
-                            );
-                        }
-                    } catch (err) {
-                        console.error('[Content Script] Error handling accounts request:', err);
-                        this.sendToPage({
-                            type: 'WALLET_RESPONSE',
-                            payload: {
-                                id,
-                                jsonrpc: '2.0',
-                                error: {
-                                    code: -32603,
-                                    message: 'Internal error: ' + (err instanceof Error ? err.message : String(err))
-                                }
-                            }
-                        });
-                    }
-                });
-                break;
-                
-            default:
-                // If we get here, we should be able to handle it but haven't implemented it yet
-                console.warn(`[Content Script] Method ${method} marked as locally handleable but not implemented`);
-                // Fall back to background
-                const message = {
-                    ...request,
-                    origin: window.location.origin,
-                    timestamp: Date.now()
-                };
-                chrome.runtime.sendMessage(message);
                 break;
         }
     }

@@ -1,5 +1,5 @@
 import { defineUnlistedScript } from '#imports';
-import { MESSAGE_PREFIX, MessageType, WALLET_INFO, DEFAULT_ADDRESSES } from '../../constants';
+import { MESSAGE_PREFIX, MessageType, WALLET_INFO } from '../../constants';
 import { v4 as uuidv4 } from 'uuid';
 import { registerStarlabSolanaWallet } from './solana/register';
 
@@ -31,6 +31,22 @@ const ETHEREUM_MAINNET = {
     tickerName: 'Ethereum'
 };
 
+/**
+ * EIP-1193 ProviderRpcError from a JSON-RPC error payload, keeping `code`
+ * (e.g. 4001 user rejected) so dApps can tell a reject from a failure.
+ */
+function toProviderError(error: unknown): Error & { code: number; data?: unknown } {
+    const obj = typeof error === 'object' && error !== null ? (error as Record<string, unknown>) : null;
+    const message =
+        typeof error === 'string' ? error :
+        typeof obj?.message === 'string' ? obj.message :
+        'Unknown error';
+    const err = new Error(message) as Error & { code: number; data?: unknown };
+    err.code = typeof obj?.code === 'number' ? obj.code : -32603;
+    if (obj && 'data' in obj) err.data = obj.data;
+    return err;
+}
+
 class PageProvider {
     private requestIdCounter = 0;
     private pendingRequests = new Map<number | string, (response: any) => void>();
@@ -60,26 +76,6 @@ class PageProvider {
             'disconnect': new Set(),
             'message': new Set()
         };
-        
-        // Try to initialize cached accounts from sessionStorage
-        try {
-            if (window.sessionStorage) {
-                const storedData = window.sessionStorage.getItem('starlab_wallet_accounts');
-                if (storedData) {
-                    try {
-                        const data = JSON.parse(storedData);
-                        if (Array.isArray(data) && data.length > 0) {
-                            this.cachedAccounts = data;
-                            console.log('[Injected Provider] Initialized with cached accounts from sessionStorage:', this.cachedAccounts);
-                        }
-                    } catch (parseError) {
-                        console.error('[Injected Provider] Error parsing sessionStorage data:', parseError);
-                    }
-                }
-            }
-        } catch (e) {
-            console.log('[Injected Provider] Error accessing sessionStorage during initialization:', e);
-        }
     }
 
     // Handle messages from content script
@@ -109,91 +105,56 @@ class PageProvider {
     // EIP-1193 required methods
     request = (args: { method: string, params?: unknown[] | object }): Promise<unknown> => {
         console.log(`[Injected Provider] Request called with method: ${args.method}`, args);
-        
+
         return new Promise((resolve, reject) => {
             const id = this.requestIdCounter++;
-
-            // Define proceedWithRequest at the top of the function body
-            // to avoid hoisting issues
-            const proceedWithRequest = () => {
-                // Create JSON-RPC request
-                const request = {
-                    id,
-                    jsonrpc: '2.0',
-                    method: args.method,
-                    params: args.params || []
-                };
-
-                // Store callback
-                this.pendingRequests.set(id, (response: any) => {
-                    console.log(`[Injected Provider] Received response for ${args.method}:`, response);
-                    
-                    if (response.error) {
-                        // Handle different error formats that might be received
-                        let errorMessage = 'Unknown error';
-                        
-                        if (typeof response.error === 'string') {
-                            errorMessage = response.error;
-                        } else if (typeof response.error === 'object' && response.error !== null) {
-                            errorMessage = response.error.message || JSON.stringify(response.error);
-                        }
-                        
-                        console.error(`[Injected Provider] Request failed: ${errorMessage}`);
-                        reject(new Error(errorMessage));
-                    } else {
-                        // For eth_requestAccounts, emit events
-                        if (args.method === 'eth_requestAccounts' && Array.isArray(response.result)) {
-                            const chainId = this.chainId || '0x1';
-                            this.emit('connect', { chainId });
-                            this.emit('accountsChanged', response.result);
-                        }
-                        resolve(response.result);
-                    }
-                });
-
-                // Send message to content script
-                window.postMessage(
-                    {
-                        type: `${MESSAGE_PREFIX}${MessageType.REQUEST}`,
-                        payload: request
-                    },
-                    '*'
-                );
+            const request = {
+                id,
+                jsonrpc: '2.0',
+                method: args.method,
+                params: args.params || []
             };
-            
-            // Handle eth_requestAccounts specially - this is the connection request
-            if (args.method === 'eth_requestAccounts') {
-                console.log('[Injected Provider] Processing eth_requestAccounts connection request');
-                
-                // Auto-approve connections for now to prevent wallet getting stuck
-                // In the future, this should trigger a popup for user approval
-                this.getAccounts().then(accounts => {
-                    console.log('[Injected Provider] Auto-approved connection with accounts:', accounts);
-                    
-                    // If we got accounts, resolve with them
-                    if (accounts && accounts.length > 0) {
-                        // Emit connection event
-                        const chainId = this.chainId || '0x1';
-                        this.emit('connect', { chainId });
-                        this.emit('accountsChanged', accounts);
-                        
-                        resolve(accounts);
-                        return;
+
+            this.pendingRequests.set(id, (response: any) => {
+                console.log(`[Injected Provider] Received response for ${args.method}:`, response);
+
+                if (response.error) {
+                    reject(toProviderError(response.error));
+                    return;
+                }
+
+                // Account methods go through the wallet's per-origin connect
+                // approval; cache what it returned for the sync legacy `send`.
+                if ((args.method === 'eth_requestAccounts' || args.method === 'eth_accounts') &&
+                    Array.isArray(response.result)) {
+                    this.updateAccounts(response.result as string[]);
+                    if (args.method === 'eth_requestAccounts') {
+                        this.emit('connect', { chainId: this.chainId || '0x1' });
                     }
-                    
-                    // If we don't have accounts yet, proceed with normal request flow
-                    console.log('[Injected Provider] No accounts found, proceeding with RPC request');
-                    proceedWithRequest();
-                }).catch(error => {
-                    console.error('[Injected Provider] Error in getAccounts during connection:', error);
-                    proceedWithRequest();
-                });
-            } else {
-                // For all other methods, proceed normally
-                proceedWithRequest();
-            }
+                }
+                resolve(response.result);
+            });
+
+            window.postMessage(
+                {
+                    type: `${MESSAGE_PREFIX}${MessageType.REQUEST}`,
+                    payload: request
+                },
+                '*'
+            );
         });
     };
+
+    /** Cache accounts and emit accountsChanged when they differ. */
+    private updateAccounts(accounts: string[]): void {
+        const previous = this.cachedAccounts ?? [];
+        this.cachedAccounts = accounts;
+        const changed =
+            previous.length !== accounts.length || previous.some((a, i) => a !== accounts[i]);
+        if (changed) {
+            this.emit('accountsChanged', accounts);
+        }
+    }
 
     // EIP-1193 required event methods
     on(eventName: string, listener: (params: any) => void): void {
@@ -224,13 +185,8 @@ class PageProvider {
 
     // Clean up when PageProvider is destroyed
 
-    // Cache property values. Not marked `private` because the
-    // factory code below (line ~466) intentionally seeds
-    // cachedAccounts before the async real-accounts fetch completes,
-    // and the same factory clears it to force re-fetch after
-    // initial delay. That external seeding is the documented
-    // initialization path — marking these `private` was a type-
-    // surface bug, not an API contract.
+    // Last accounts the wallet returned for this origin (only ever what
+    // the user approved). Read by the legacy synchronous `send` shim.
     cachedAccounts: string[] | null = null;
     cachedChainId: string | null = null;
     
@@ -273,168 +229,13 @@ class PageProvider {
         return this.networkVersion; // Return default
     };
     
-    // Get accounts method - required by many dapps
+    // Get accounts method - required by many dapps. Returns only accounts the
+    // user has connected to this origin (empty until they approve a connect).
     getAccounts = async (): Promise<string[]> => {
-        // If we have cached accounts, return them immediately to prevent loops
-        if (this.cachedAccounts && this.cachedAccounts.length > 0) {
-            console.log('[Injected Provider] Returning cached accounts:', this.cachedAccounts);
-            return this.cachedAccounts;
-        }
-        
-        // Always have a fallback ready
-        const fallbackAddress = DEFAULT_ADDRESSES.ethereum();
-        
-        try {
-            console.log('[Injected Provider] Requesting accounts from background');
-            // Use direct messaging to content script for better stability
-            const result = await this.getAccountsDirectly();
-            
-            if (Array.isArray(result) && result.length > 0) {
-                this.cachedAccounts = result as string[];
-                console.log('[Injected Provider] Received and cached accounts:', this.cachedAccounts);
-                return this.cachedAccounts;
-            } else {
-                console.log('[Injected Provider] No accounts received from direct method');
-                // Fallback to the default address
-                this.cachedAccounts = [fallbackAddress];
-                return this.cachedAccounts;
-            }
-        } catch (error) {
-            console.error('[Injected Provider] Error in getAccounts:', error);
-            
-            // For testing and development - return a placeholder address if we can't get a real one
-            console.log('[Injected Provider] Using fallback address due to error:', fallbackAddress);
-            this.cachedAccounts = [fallbackAddress];
-            return this.cachedAccounts;
-        }
+        const result = await this.request({ method: 'eth_accounts' });
+        return Array.isArray(result) ? (result as string[]) : [];
     };
-    
-    // Direct method to get accounts that doesn't rely on the request method
-    private getAccountsDirectly = (): Promise<string[]> => {
-        return new Promise((resolve) => {
-            // Try to get saved address from sessionStorage, which is safer in injected context
-            try {
-                const storedData = window.sessionStorage.getItem('starlab_wallet_accounts');
-                if (storedData) {
-                    try {
-                        const data = JSON.parse(storedData);
-                        if (Array.isArray(data) && data.length > 0) {
-                            console.log('[Injected Provider] Found accounts in sessionStorage:', data);
-                            
-                            // Verify the address is valid and not a default placeholder
-                            const defaultAddress = DEFAULT_ADDRESSES.ethereum();
-                            if (data[0] !== defaultAddress && 
-                                !data[0].startsWith('0x000000') && 
-                                data[0].match(/^0x[a-fA-F0-9]{40}$/)) {
-                                
-                                console.log('[Injected Provider] Using saved account address:', data[0]);
-                                resolve(data);
-                                return;
-                            } else {
-                                console.log('[Injected Provider] Found fallback address in storage, will try refresh');
-                            }
-                        }
-                    } catch (parseError) {
-                        console.error('[Injected Provider] Error parsing sessionStorage data:', parseError);
-                    }
-                }
-            } catch (e) {
-                console.log('[Injected Provider] Error accessing sessionStorage:', e);
-            }
-            
-            // First try to get directly from chrome.storage.local if this is possible in this context
-            if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-                try {
-                    chrome.storage.local.get(['mpc_ethereum_address'], (result) => {
-                        if (chrome.runtime.lastError) {
-                            console.log('[Injected Provider] Error accessing chrome.storage:', chrome.runtime.lastError);
-                            proceedWithPageRequest();
-                            return;
-                        }
-                        
-                        if (result && result.mpc_ethereum_address) {
-                            const address = String(result.mpc_ethereum_address);
-                            console.log('[Injected Provider] Got address directly from chrome.storage:', address);
-                            
-                            // Validate the address format
-                            if (address.match(/^0x[a-fA-F0-9]{40}$/) && 
-                                !address.startsWith('0x000000')) {
-                                
-                                // Save to sessionStorage for future use
-                                try {
-                                    if (window.sessionStorage) {
-                                        window.sessionStorage.setItem('starlab_wallet_accounts', 
-                                            JSON.stringify([address]));
-                                    }
-                                } catch (e) {
-                                    console.log('[Injected Provider] Error saving to sessionStorage:', e);
-                                }
-                                
-                                resolve([address]);
-                                return;
-                            }
-                        }
-                        
-                        // If we get here, we need to proceed with page request
-                        proceedWithPageRequest();
-                    });
-                } catch (e) {
-                    console.log('[Injected Provider] Error with chrome.storage:', e);
-                    proceedWithPageRequest();
-                }
-            } else {
-                // No chrome.storage access, proceed with page request
-                proceedWithPageRequest();
-            }
-            
-            // Function to send page request and check sessionStorage after
-            function proceedWithPageRequest() {
-                console.log('[Injected Provider] Sending direct page request for accounts');
-                window.postMessage(
-                    {
-                        type: `${MESSAGE_PREFIX}${MessageType.REQUEST}`,
-                        payload: {
-                            id: 'direct-accounts-req-' + Date.now(),
-                            jsonrpc: '2.0',
-                            method: 'eth_accounts',
-                            params: []
-                        }
-                    },
-                    '*'
-                );
-                
-                // Give it some time to get processed, then check sessionStorage again
-                setTimeout(() => {
-                    try {
-                        const refreshedData = window.sessionStorage.getItem('starlab_wallet_accounts');
-                        if (refreshedData) {
-                            try {
-                                const data = JSON.parse(refreshedData);
-                                if (Array.isArray(data) && data.length > 0 && 
-                                    data[0].match(/^0x[a-fA-F0-9]{40}$/) && 
-                                    !data[0].startsWith('0x000000')) {
-                                    
-                                    console.log('[Injected Provider] Found refreshed accounts in sessionStorage:', data);
-                                    resolve(data);
-                                    return;
-                                }
-                            } catch (parseError) {
-                                console.error('[Injected Provider] Error parsing refreshed sessionStorage data:', parseError);
-                            }
-                        }
-                        // If we still don't have valid accounts, use fallback with unique seed
-                        // Use a specific string that's unique per domain for better UX
-                        const seed = window.location.hostname || 'unknown-site';
-                        resolve([DEFAULT_ADDRESSES.ethereum(seed)]);
-                    } catch (e) {
-                        console.log('[Injected Provider] Error accessing refreshed sessionStorage:', e);
-                        resolve([DEFAULT_ADDRESSES.ethereum()]);
-                    }
-                }, 500); // Give it 500ms to process
-            }
-        });
-    };
-    
+
     // For compatibility with legacy web3.js
     isConnected = (): boolean => {
         return true; // Always return true as per most wallet providers
@@ -467,30 +268,12 @@ export default defineUnlistedScript(() => {
     
     console.log('[Injected Provider] Initializing Starlab Wallet provider');
     
-    // Immediately provide access to a placeholder account for smoother dapp experience
-    // This will be replaced by the real address once available
-    const initialAccounts = [DEFAULT_ADDRESSES.ethereum()];
-    provider.cachedAccounts = initialAccounts;
-    
-    // Handle the initial chain ID and connection status
-    provider.emit('connect', { chainId: provider.chainId });
-    provider.emit('accountsChanged', initialAccounts);
-    console.log('[Injected Provider] Emitted initial connect and accountsChanged events');
-    
-    // Try to fetch the real account details async
-    setTimeout(() => {
-        console.log('[Injected Provider] Attempting to fetch real accounts...');
-        provider.cachedAccounts = null; // Clear cache to force fetch
-        provider.getAccounts().then(accounts => {
-            if (accounts && accounts.length > 0 && accounts[0] !== initialAccounts[0]) {
-                console.log('[Injected Provider] Got real accounts, updating:', accounts);
-                provider.emit('accountsChanged', accounts);
-            }
-        }).catch(error => {
-            console.error('[Injected Provider] Failed to get real accounts:', error);
-        });
-    }, 1000);
-    
+    // Pick up accounts this origin is already connected to (never prompts;
+    // empty until the user approves a connect request).
+    provider.getAccounts().catch(error => {
+        console.warn('[Injected Provider] Failed to read connected accounts:', error);
+    });
+
     // Typed as `any` so we can attach EIP-1193-legacy properties
     // (sendAsync, send, networkVersion, isStarLabWallet, _chainId,
     // _metamask) that aren't on PageProvider's declared surface but

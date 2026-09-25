@@ -173,6 +173,17 @@ export class PopupMessageHandler {
                     await this.handleApproveMessageSignature(message, sendResponse);
                     break;
 
+                case "getPendingConnectRequests":
+                    sendResponse({
+                        success: true,
+                        requests: this.rpcHandler.getPendingConnectRequests(),
+                    });
+                    break;
+
+                case "resolveConnectRequest":
+                    await this.handleResolveConnectRequest(message, sendResponse);
+                    break;
+
                 // Session restore removed - sessions are ephemeral for security
                 // case "requestSessionRestore": removed
 
@@ -636,6 +647,26 @@ export class PopupMessageHandler {
             }
         }
         sendResponse({ success: true });
+    }
+
+    /** Popup Approve/Reject on a dApp Connect request card. */
+    private async handleResolveConnectRequest(
+        message: any,
+        sendResponse: (response: any) => void,
+    ): Promise<void> {
+        const selected = message.selectedAddresses;
+        if (
+            typeof message.requestId !== "string" ||
+            typeof message.approved !== "boolean" ||
+            (selected !== undefined &&
+                (!Array.isArray(selected) || !selected.every((a: unknown) => typeof a === "string")))
+        ) {
+            sendResponse({ success: false, error: "Invalid connect resolution message" });
+            return;
+        }
+        sendResponse(
+            await this.rpcHandler.resolveConnectRequest(message.requestId, message.approved, selected),
+        );
     }
 
     // Session restore removed - sessions are ephemeral for security
@@ -1517,16 +1548,21 @@ export class PopupMessageHandler {
 
     private async handleRpcMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
         try {
-            // Set origin if provided (from content script)
-            if (message.origin) {
-                this.rpcHandler.setOrigin(message.origin);
-            }
-            
+            // Always reset: an origin-less (internal) request must never
+            // inherit the previous dApp's origin, and vice versa.
+            this.rpcHandler.setOrigin(typeof message.origin === "string" ? message.origin : "");
+
             const result = await this.rpcHandler.handleRpcRequest(message.payload);
             sendResponse({ success: true, result });
         } catch (error) {
             console.error("[PopupMessageHandler] RPC request failed:", error);
-            sendResponse({ success: false, error: (error as Error).message });
+            const text = error instanceof Error ? error.message : String(error);
+            const code = (error as { code?: unknown } | null)?.code;
+            // Keep EIP-1193 codes (4001 user rejected, …) so the page sees them.
+            sendResponse({
+                success: false,
+                error: typeof code === "number" ? { code, message: text } : text,
+            });
         }
     }
 

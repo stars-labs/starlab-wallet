@@ -252,6 +252,25 @@ function setupMessageHandlers(): void {
             return true;
         }
 
+        // dApp RPC relayed by a content script: permissions are keyed by the
+        // sending frame's origin as Chrome reports it — never by a value the
+        // message carries, and never empty (empty means "internal caller").
+        if (sender.tab && isRpcMessage(message as PopupToBackgroundMessage)) {
+            let origin = sender.origin ?? "";
+            if (!origin && sender.url) {
+                try {
+                    origin = new URL(sender.url).origin;
+                } catch {
+                    origin = "";
+                }
+            }
+            if (!origin || origin === "null") {
+                sendResponse({ success: false, error: "Unknown request origin" });
+                return true;
+            }
+            (message as { origin?: string }).origin = origin;
+        }
+
         // Handle async operations
         (async () => {
             const startTime = Date.now();
@@ -508,7 +527,10 @@ export default defineBackground(() => {
     // popup.html in a tab so the user still has a path forward.
     if (typeof chrome !== "undefined" && chrome.notifications) {
         chrome.notifications.onClicked.addListener(async (notificationId) => {
-            if (!notificationId.startsWith("mpc-signing-req:")) return;
+            const opensPopup = ["mpc-signing-req:", "mpc-dapp-connect:"].some(
+                (prefix) => notificationId.startsWith(prefix),
+            );
+            if (!opensPopup) return;
             try {
                 if (chrome.action && (chrome.action as any).openPopup) {
                     await (chrome.action as any).openPopup();

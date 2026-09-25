@@ -36,6 +36,8 @@
     import Settings from "../../components/Settings.svelte";
     import AccountManager from "../../components/AccountManager.svelte";
     import SignatureRequest from "../../components/SignatureRequest.svelte";
+    import ConnectRequest from "../../components/ConnectRequest.svelte";
+    import type { ConnectRequestView } from "../background/connectRequest";
     import PasswordPrompt from "./components/PasswordPrompt.svelte";
     import WalletSelector from "./components/WalletSelector.svelte";
     import CreateWalletForm from "../../components/CreateWalletForm.svelte";
@@ -573,7 +575,39 @@
         origin: string;
         fromAddress: string;
     }> = [];
-    
+
+    // dApp connect requests. Loaded on open (the request usually predates
+    // the popup) and kept live by the RpcHandler's runtime broadcasts.
+    let connectRequests: ConnectRequestView[] = [];
+
+    function removeConnectRequest(requestId: string) {
+        connectRequests = connectRequests.filter((r) => r.requestId !== requestId);
+    }
+
+    function onConnectRequestMessage(message: any) {
+        if (message?.type === "connectRequest" && message.request?.requestId) {
+            if (!connectRequests.some((r) => r.requestId === message.request.requestId)) {
+                connectRequests = [...connectRequests, message.request];
+            }
+        } else if (message?.type === "connectRequestResolved" && message.requestId) {
+            removeConnectRequest(message.requestId);
+        }
+    }
+
+    onMount(() => {
+        chrome.runtime.onMessage.addListener(onConnectRequestMessage);
+        chrome.runtime.sendMessage({ type: "getPendingConnectRequests" }, (response) => {
+            if (chrome.runtime.lastError) {
+                console.warn("[UI] Failed to load connect requests:", chrome.runtime.lastError.message);
+                return;
+            }
+            if (response?.success && Array.isArray(response.requests)) {
+                connectRequests = response.requests;
+            }
+        });
+    });
+    onDestroy(() => chrome.runtime.onMessage.removeListener(onConnectRequestMessage));
+
     // Keystore state
     // Explicit typing so `.wallets.find(...)` returns
     // `ExtensionWalletMetadata | undefined` instead of `never`.
@@ -2062,6 +2096,18 @@
         </div>
     {:else}
         <!-- ===================== Main wallet view ===================== -->
+
+        <!-- dApp connect requests: nothing is shared with a site until approved -->
+        {#if connectRequests.length > 0}
+            <div class="space-y-2">
+                {#each connectRequests as request (request.requestId)}
+                    <ConnectRequest
+                        {request}
+                        on:complete={(e) => removeConnectRequest(e.detail)}
+                    />
+                {/each}
+            </div>
+        {/if}
 
         {#if keystoreStatus.wallets.length > 0}
             <WalletSelector

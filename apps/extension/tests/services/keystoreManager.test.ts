@@ -5,8 +5,12 @@
  * skips the password step whenever the background wins the startup race.
  */
 import { describe, it, expect, beforeEach } from "bun:test";
-import { KeystoreManager } from "../../src/services/keystoreManager";
 import { KeystoreService } from "../../src/services/keystoreService";
+
+// Other test files mock.module() keystoreManager process-wide; the query
+// suffix loads a separate, real instance of the module.
+const realModule = "../../src/services/keystoreManager.ts?real";
+const { KeystoreManager } = (await import(realModule)) as typeof import("../../src/services/keystoreManager");
 
 describe("KeystoreManager.isInitialized", () => {
     beforeEach(async () => {

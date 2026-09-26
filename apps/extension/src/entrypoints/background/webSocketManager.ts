@@ -15,7 +15,7 @@ import { AppState } from "@stars-labs/types/appstate";
 import type { SessionInfo } from "@stars-labs/types/session";
 import { SessionManager } from "./sessionManager";
 import { SigningNotifier } from "./signingNotification";
-import { getSignalServerUrl } from "../../config/signal-server";
+import { getRoom, getSignalServerUrl } from "../../config/signal-server";
 import { getDeviceId } from "../../config/device";
 import { parseSessionInfoFromWire } from "../../utils/session-parse";
 import type {
@@ -28,9 +28,22 @@ import { ServerMsg, WebSocketMessagePayload } from "@stars-labs/types/websocket"
 /**
  * Manages WebSocket connections and message handling for MPC coordination
  */
+/**
+ * Delay before reconnect attempt `attempt` (0-based): exponential from 1s,
+ * capped at 30s, with 50–100% jitter so many clients dropped by the same
+ * outage don't reconnect in lockstep.
+ */
+export function reconnectDelayMs(attempt: number, random: () => number = Math.random): number {
+    const base = Math.min(30_000, 1000 * 2 ** attempt);
+    return Math.round(base * (0.5 + random() / 2));
+}
+
 export class WebSocketManager {
     private wsClient: WebSocketClient | null = null;
     private devices: string[] = [];
+    /** Consecutive failed reconnects; reset once a socket opens. */
+    private reconnectAttempt = 0;
+    private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private appState: AppState;
     private sessionManager: SessionManager;
     private broadcastToPopup: (message: BackgroundToPopupMessage) => void;
@@ -137,6 +150,10 @@ export class WebSocketManager {
      */
     async reconnect(): Promise<void> {
         console.log("[WebSocketManager] reconnect requested — re-resolving URL with saved room");
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
         try {
             this.wsClient?.disconnect();
         } catch (e) {
@@ -144,6 +161,26 @@ export class WebSocketManager {
         }
         const url = await getSignalServerUrl();
         await this.initialize(url, await getDeviceId());
+    }
+
+    /**
+     * Reconnect after an unexpected close, with backoff. Keeps trying while
+     * a room is configured — a wallet is useless offline.
+     */
+    private scheduleReconnect(): void {
+        if (this.reconnectTimer) return;
+        const delay = reconnectDelayMs(this.reconnectAttempt++);
+        console.log(`[WebSocketManager] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempt})`);
+        this.reconnectTimer = setTimeout(async () => {
+            this.reconnectTimer = null;
+            if (!(await getRoom())) return;
+            try {
+                await this.reconnect();
+            } catch (e) {
+                console.warn("[WebSocketManager] Reconnect failed:", e);
+                this.scheduleReconnect();
+            }
+        }, delay);
     }
 
     /**
@@ -200,6 +237,14 @@ export class WebSocketManager {
             try {
                 this.wsClient!.register(this.appState.deviceId);
                 console.log("[WebSocketManager] Registration sent to server");
+                this.reconnectAttempt = 0;
+                // Back after a drop mid-ceremony: tell the server (and so the
+                // other participants) we're still in the session. Membership
+                // is deduped server-side.
+                const active = this.stateManager?.getState().sessionInfo ?? this.appState.sessionInfo;
+                if (active && active.proposer_id !== this.appState.deviceId) {
+                    this.wsClient!.sendSessionStatusUpdate(active.session_id, this.appState.deviceId);
+                }
             } catch (regError) {
                 console.error("[WebSocketManager] Error during registration:", regError);
             }
@@ -268,6 +313,7 @@ export class WebSocketManager {
                 return;
             }
             console.log("[WebSocketManager] WebSocket onClose event triggered, event:", event);
+            this.scheduleReconnect();
 
             // Keep `this.appState` in sync (the initialState broadcast below
             // spreads it; updateWebSocketStatus doesn't write through).

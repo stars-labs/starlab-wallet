@@ -1826,6 +1826,44 @@ export function standard_account_path(chain, account) {
 export function start() {
     wasm.start();
 }
+
+/**
+ * Re-encode a package the engine produced (hex of its JSON — what
+ * generate_round1/2, signing_commit and sign return) in FROST's binary
+ * `serialize()` form, the CLI/TUI wire encoding (`DKG_ROUND1:`,
+ * `DKG_ROUND2:`, `SIGN_COMMIT:`, `SIGN_SHARE:` frames). Returns hex.
+ *
+ * `curve`: "ed25519" | "secp256k1" | "secp256k1-tr";
+ * `kind`: "round1" | "round2" | "commitment" | "share".
+ * @param {string} curve
+ * @param {string} kind
+ * @param {string} json_hex
+ * @returns {string}
+ */
+export function to_frost_wire(curve, kind, json_hex) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(curve, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(kind, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(json_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.to_frost_wire(ptr0, len0, ptr1, len1, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,

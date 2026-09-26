@@ -12,7 +12,7 @@
 //   - `bunx playwright install chromium`
 //   - INTEROP_SIGNAL set to a reachable signal server (default: deployed worker)
 import { test, expect, mirrorOffscreenConsole } from "./fixtures";
-import { openPopup, onboard, useSignalServer, setRoom, createWallet, dkgResult, saveWallet, signMessage } from "./extension-actions";
+import { openPopup, onboard, useSignalServer, setRoom, createWallet, dkgResult, saveWallet, signMessage, extSignature } from "./extension-actions";
 import { startPeers, killPeers, freshRoom, ensurePrereqs, startSignalServer, type Peer } from "./cli-peers";
 
 // "local" = a private starlab-signal-server per test (see startSignalServer).
@@ -64,6 +64,9 @@ test("ext + 2 CLI: DKG group keys agree, then a signature verifies", async ({ pa
     const sigs = await Promise.all(peers.map((p) => p.signature));
     for (const s of sigs) expect(s.sig).toMatch(/^0x[0-9a-f]+$/);
     expect(new Set(sigs.map((s) => s.sig)).size, "all peers must hold the same aggregate signature").toBe(1);
+    // …and the extension took part in (and holds) that same signature —
+    // two CLI peers alone already meet a 2-of-3 threshold.
+    expect(await extSignature(page)).toBe(sigs[0].sig.replace(/^0x/, "").toLowerCase());
   } finally {
     killPeers(peers);
     server?.kill();

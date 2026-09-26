@@ -111,6 +111,7 @@ export const frostresharesecp256k1_reshare_round1: (a: number) => [number, numbe
 export const frostresharesecp256k1_reshare_round2: (a: number) => [number, number, number, number];
 export const main: () => void;
 export const standard_account_path: (a: number, b: number, c: number) => [number, number];
+export const to_frost_wire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
 export const wasmerror_message: (a: number) => [number, number];
 export const wasmerror_new: (a: number, b: number) => number;
 export const frostdkgsecp256k1tr_is_dkg_complete: (a: number) => number;

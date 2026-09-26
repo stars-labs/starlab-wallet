@@ -98,6 +98,19 @@ export async function dkgResult(page: Page): Promise<{ groupPublicKey: string; a
   return page.evaluate(() => chrome.runtime.sendMessage({ type: "getState" }).then((s) => s.dkgLastResult));
 }
 
+/** The aggregate signature the extension ended up with (hex, no 0x). */
+export async function extSignature(page: Page): Promise<string> {
+  await expect
+    .poll(() => page.evaluate(() => chrome.runtime.sendMessage({ type: "getState" }).then((s) => !!s?.lastSignature)), {
+      timeout: 60_000,
+    })
+    .toBe(true);
+  const sig: string = await page.evaluate(() =>
+    chrome.runtime.sendMessage({ type: "getState" }).then((s) => s.lastSignature.signature),
+  );
+  return sig.replace(/^0x/, "").toLowerCase();
+}
+
 /** Save the freshly generated wallet (the post-DKG "Save this wallet" form). */
 export async function saveWallet(page: Page, password: string): Promise<void> {
   await page.getByPlaceholder("Password (at least 8 characters)").fill(password);

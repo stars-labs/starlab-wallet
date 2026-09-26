@@ -285,6 +285,17 @@ export function standard_account_path(chain: string, account: number): string | 
 
 export function start(): void;
 
+/**
+ * Re-encode a package the engine produced (hex of its JSON — what
+ * generate_round1/2, signing_commit and sign return) in FROST's binary
+ * `serialize()` form, the CLI/TUI wire encoding (`DKG_ROUND1:`,
+ * `DKG_ROUND2:`, `SIGN_COMMIT:`, `SIGN_SHARE:` frames). Returns hex.
+ *
+ * `curve`: "ed25519" | "secp256k1" | "secp256k1-tr";
+ * `kind`: "round1" | "round2" | "commitment" | "share".
+ */
+export function to_frost_wire(curve: string, kind: string, json_hex: string): string;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -399,6 +410,7 @@ export interface InitOutput {
     readonly frostresharesecp256k1_reshare_round2: (a: number) => [number, number, number, number];
     readonly main: () => void;
     readonly standard_account_path: (a: number, b: number, c: number) => [number, number];
+    readonly to_frost_wire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly wasmerror_message: (a: number) => [number, number];
     readonly wasmerror_new: (a: number, b: number) => number;
     readonly frostdkgsecp256k1tr_is_dkg_complete: (a: number) => number;

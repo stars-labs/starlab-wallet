@@ -76,13 +76,17 @@ test output.
 
 ## Status
 
-Verified passing (2026-09-26) for both secp256k1 and ed25519 against a
-starlab-mpc CLI that has (a) the engine fixes in `fix/wasm-accept-frost-binary`
-(frost-native identifiers, JSON-or-binary package decoding) and (b) the live
-data-channel handling of the extension's structured `DkgRound*Package`
-messages (local refactor `f753833`; not yet on starlab-mpc `main`, whose CLI
-ignores the extension's round-1 package and stalls at 2/3):
-the extension initiates DKG with two CLI peers, all three agree on the group
-key, and an extension-initiated signing produces the same signature on every
-peer. Not yet covered: CLI-initiated DKG/signing with the extension joining,
-and mixed extension/CLI reshare.
+Against starlab-mpc `main` + stars-labs/starlab-mpc#110 (frost-native
+identifiers, JSON-or-binary decoding, `to_frost_wire`), with the extension
+speaking the CLI's native `DKG_ROUND*:` / `SIGN_*:` frames:
+
+- **DKG — passing** for secp256k1 and ed25519: extension-initiated, two CLI
+  peers, all three agree on the group key.
+- **Signing — the extension-participation assertion fails, deliberately.**
+  The CLI signs with whichever threshold-many commitments arrive first and
+  doesn't announce joins, so the two CLI peers complete a 2-of-3 signature
+  among themselves before the extension's ceremony starts. This needs a
+  protocol decision (proposer-chosen signer list in the signing announce).
+
+Not yet covered: CLI-initiated DKG/signing with the extension joining, and
+mixed extension/CLI reshare.

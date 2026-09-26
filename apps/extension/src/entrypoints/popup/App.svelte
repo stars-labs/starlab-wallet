@@ -1697,17 +1697,18 @@
         appState.curve = getRequiredCurve(inviteChain);
         appState = { ...appState };
 
+        // Same path as the invitations list's "Join": registers us with the
+        // signal server (participant_update), which is how CLI/TUI and
+        // extension proposers learn who joined.
         chrome.runtime.sendMessage({
-            type: "acceptSession",
+            type: MESSAGE_TYPES.JOIN_DKG_SESSION,
             session_id: sessionId,
-            accepted: true,
-            blockchain: getProtocolBlockchainForChain(inviteChain),
         }, (response) => {
             acceptingSession = false; // Reset flag
-            console.log("[UI] Accept session response:", response);
+            console.log("[UI] Join session response:", response);
             if (!response || !response.success) {
-                console.error("[UI] Failed to accept session:", response?.error || "Unknown error");
-                // Restore the invite if acceptance failed
+                console.error("[UI] Failed to join session:", response?.error || "Unknown error");
+                // Restore the invite if joining failed
                 appState.invites = [...appState.invites, invite];
             }
         });

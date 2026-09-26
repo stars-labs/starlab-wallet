@@ -159,6 +159,49 @@ export async function startSignalServer(): Promise<{ url: string; kill(): void }
   return server;
 }
 
+/**
+ * Run a one-shot `starlab-cli` command (e.g. `wallet create`, `sign`) as a
+ * device with its own keystore. Resolves with its stdout once it exits 0.
+ */
+export function runCli(opts: {
+  args: string[];
+  deviceId: string;
+  keystore?: string;
+  signal: string;
+  room: string;
+  password: string;
+}): { keystore: string; done: Promise<string>; kill(): void } {
+  ensurePrereqs();
+  const keystore = opts.keystore ?? fs.mkdtempSync(path.join(os.tmpdir(), `interop-ks-${opts.deviceId}-`));
+  const proc = spawn(
+    CLI_BIN,
+    [
+      ...opts.args,
+      "--device-id", opts.deviceId,
+      "--keystore", keystore,
+      "--signal-server", opts.signal,
+      "--room", opts.room,
+      "--password-env", "MPC_INTEROP_PW",
+      "--log-level", "warn",
+    ],
+    { env: { ...process.env, MPC_INTEROP_PW: opts.password }, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let out = "";
+  proc.stdout!.on("data", (d: Buffer) => {
+    out += d.toString();
+    console.log(`[${opts.deviceId}] ${d.toString().trimEnd()}`);
+  });
+  proc.stderr!.on("data", (d: Buffer) => console.error(`[${opts.deviceId}:err] ${d.toString().trimEnd()}`));
+  const done = new Promise<string>((resolve, reject) => {
+    proc.once("exit", (code) =>
+      code === 0 ? resolve(out) : reject(new Error(`starlab-cli ${opts.args.join(" ")} exited ${code}`)),
+    );
+  });
+  const handle = { keystore, done, kill: () => proc.kill("SIGTERM") };
+  live.add(handle);
+  return handle;
+}
+
 // A run killed from outside (Ctrl-C, CI timeout) skips the spec's `finally`.
 const live = new Set<{ kill(): void }>();
 process.once("exit", () => live.forEach((p) => p.kill()));

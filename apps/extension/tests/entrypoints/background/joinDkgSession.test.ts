@@ -16,9 +16,10 @@
  *    threshold during join, we'd fork the ceremony config and FROST
  *    rounds would fail later.
  *
- * 3. Idempotent: if we're already in the participants list (e.g.
- *    the server echoed our own update back), joining again is a
- *    no-op that doesn't double-emit wire messages.
+ * 3. Already listed (a CLI/TUI signing announce pre-lists the whole
+ *    cohort): still tell the server. It dedupes membership but
+ *    re-broadcasts participant_update — the event that starts our
+ *    ceremony now that the session is our active one.
  *
  * 4. Proposer guard: the creator can't self-join. Prevents the
  *    "creator is now a participant twice" bug where the session
@@ -232,23 +233,20 @@ describe("SessionManager.joinDkgSession", () => {
         });
     });
 
-    describe("idempotence", () => {
-        it("re-joining does not double-emit wire update", async () => {
+    describe("pre-listed participant", () => {
+        it("still announces the join so the server re-broadcasts participants", async () => {
             const { mgr, wsClient } = makeSessionManager({
                 deviceId: "ext-bob",
                 invites: [
                     makeInvite({
-                        // Server already echoed our prior update
-                        // back, so we're in the participants list.
+                        // CLI signing announces list the whole cohort.
                         participants: ["tui-alice", "ext-bob"],
                     }),
                 ],
             });
             const res = await mgr.joinDkgSession("dkg_abc");
             expect(res.success).toBe(true);
-            // The guard should see we're already a participant and
-            // skip the wire emit.
-            expect(wsClient.sendSessionStatusUpdate).not.toHaveBeenCalled();
+            expect(wsClient.sendSessionStatusUpdate).toHaveBeenCalledWith("dkg_abc", "ext-bob");
         });
     });
 });

@@ -75,6 +75,8 @@ export class WebRTCManager {
   private localPeerId: string;
   private peerConnections: Map<string, RTCPeerConnection> = new Map();
   private dataChannels: Map<string, RTCDataChannel> = new Map();
+  /** Messages for peers whose data channel isn't open yet, sent on open. */
+  private pendingSends: Map<string, WebRTCAppMessage[]> = new Map();
 
   public sessionInfo: SessionInfo | null = null;
   public invites: SessionInfo[] = []; // Store incoming session proposals/invites
@@ -592,8 +594,12 @@ export class WebRTCManager {
       dc.send(JSON.stringify(message));
       this._log(`Sent WebRTCAppMessage to ${toPeerId}: ${JSON.stringify(message)}`);
     } else {
-      // Use verbose logging for expected failures in test environment
-      this._logVerbose(`Cannot send WebRTCAppMessage to ${toPeerId}: data channel not open or doesn't exist.`);
+      // The channel may still be opening (a peer that just (re)connected);
+      // deliver when it opens rather than dropping the message.
+      const queue = this.pendingSends.get(toPeerId) ?? [];
+      queue.push(message);
+      this.pendingSends.set(toPeerId, queue);
+      this._logVerbose(`Queued WebRTCAppMessage for ${toPeerId}: data channel not open yet.`);
     }
   }
 
@@ -2567,6 +2573,9 @@ export class WebRTCManager {
 
     channel.onopen = () => {
       this._log(`Data channel opened with ${peerId}`);
+      const queued = this.pendingSends.get(peerId) ?? [];
+      this.pendingSends.delete(peerId);
+      for (const message of queued) this.sendWebRTCAppMessage(peerId, message);
       this._checkMeshStatus();
     };
 
@@ -2944,6 +2953,17 @@ export class WebRTCManager {
     };
   }
 
+  /** Close and forget the connections of peers that left the signal server. */
+  public dropPeers(peerIds: string[]): void {
+    for (const peerId of peerIds) {
+      this.peerConnections.get(peerId)?.close();
+      this.peerConnections.delete(peerId);
+      this.dataChannels.delete(peerId);
+      this.pendingSends.delete(peerId);
+      this._log(`Dropped connection to ${peerId} (left the signal server)`);
+    }
+  }
+
   /**
    * Offer to every session participant whose device id sorts after ours —
    * the smaller id offers, the same rule as the Rust CLI/TUI. Skips peers
@@ -3029,6 +3049,10 @@ export class WebRTCManager {
   // Method to update session info and trigger mesh status check
   public updateSessionInfo(sessionInfo: SessionInfo): void {
     this._log(`Updating session info for session ${sessionInfo.session_id}`);
+    if (this.sessionInfo && this.sessionInfo.session_id !== sessionInfo.session_id) {
+      // Undelivered frames belong to the previous ceremony.
+      this.pendingSends.clear();
+    }
     this._log(`Participants: [${sessionInfo.participants.join(', ')}]`);
     this._log(`Accepted devices: [${sessionInfo.accepted_devices.join(', ')}]`);
 

@@ -610,8 +610,8 @@ export class SessionManager {
                 error: "You're the proposer of this session — no need to join",
             };
         }
-        // Already a participant? Still succeed (idempotent) but
-        // don't re-emit the status update.
+        // Already listed? (CLI/TUI signing announces pre-list the whole
+        // cohort.) Still join and tell the server — see below.
         const alreadyJoined = invite.participants.includes(currentDeviceId);
         if (
             !alreadyJoined &&
@@ -656,16 +656,13 @@ export class SessionManager {
         }
 
         try {
-            if (!alreadyJoined) {
-                this.wsClient.sendSessionStatusUpdate(sessionId, currentDeviceId);
-                console.log(
-                    `[SessionManager] Joined DKG session ${sessionId} as ${currentDeviceId}`,
-                );
-            } else {
-                console.log(
-                    `[SessionManager] Already in session ${sessionId}, no update sent`,
-                );
-            }
+            // Sent even when pre-listed: the server dedupes membership but
+            // re-broadcasts participant_update, which is what starts our
+            // ceremony now that this is our active session.
+            this.wsClient.sendSessionStatusUpdate(sessionId, currentDeviceId);
+            console.log(
+                `[SessionManager] Joined session ${sessionId} as ${currentDeviceId}`,
+            );
             this.broadcastToPopup({
                 type: "dkgSessionJoined",
                 sessionInfo: local,

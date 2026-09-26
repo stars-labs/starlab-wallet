@@ -488,6 +488,11 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
             }
             break;
 
+        case "peersLeft":
+            webRTCManager?.dropPeers(payload.peers ?? []);
+            sendResponse({ success: true });
+            break;
+
         case "sessionResponseUpdate":
             console.log("Offscreen: Received 'sessionResponseUpdate' command", payload);
             if (webRTCManager && payload.sessionInfo) {

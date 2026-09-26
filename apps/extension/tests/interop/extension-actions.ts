@@ -88,6 +88,17 @@ export async function createWallet(
   await page.getByRole("button", { name: "Create wallet", exact: true }).click();
 }
 
+/** Accept the (single) pending wallet / signing invitation. */
+export async function acceptInvitation(page: Page): Promise<void> {
+  await closeSettings(page);
+  await page.getByRole("button", { name: "Accept & join" }).first().click({ timeout: 30_000 });
+}
+
+/** Approve an incoming signing request ("Review & join"). */
+export async function approveSigningRequest(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Review & join" }).click({ timeout: 60_000 });
+}
+
 /** The extension's DKG result, read from the background state. */
 export async function dkgResult(page: Page): Promise<{ groupPublicKey: string; address: string | null }> {
   await expect

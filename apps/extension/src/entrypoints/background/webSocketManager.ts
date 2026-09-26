@@ -622,6 +622,13 @@ export class WebSocketManager {
      */
     private handleDeviceListMessage(msg: ServerMsg & { type: "devices" | "DEVICES" }, messageType: string): void {
         const deviceList = msg.devices || [];
+        // A peer that left (e.g. a one-shot CLI that exited) leaves a dead
+        // WebRTC connection in offscreen; drop it so the peer's next
+        // process gets a fresh one.
+        const left = this.devices.filter((d: string) => !deviceList.includes(d));
+        if (left.length > 0) {
+            void this.sendToOffscreen({ type: "peersLeft", peers: left } as any, `peersLeft(${left.join(",")})`);
+        }
         this.devices = deviceList;
 
         // Exclude current peer from connected devices list

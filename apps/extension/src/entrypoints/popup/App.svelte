@@ -827,6 +827,8 @@
                         type: MeshStatusType.Incomplete,
                     },
                     dkgState: message.dkgState || DkgState.Idle,
+                    // Gates the post-DKG "Save this wallet" form.
+                    pendingKeystoreReady: message.pendingKeystoreReady === true,
                     webrtcConnections: message.webrtcConnections || {},
                     blockchain: protocolChainFor(incomingChain),
                     curve: incomingCurve,

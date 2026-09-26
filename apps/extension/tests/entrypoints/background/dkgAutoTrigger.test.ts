@@ -53,6 +53,7 @@ function makeManager(opts?: {
         return { success: true };
     });
     const stateManager = {
+        getState: () => appState,
         updateInvites: jest.fn((inv: any[]) => {
             appState.invites = inv;
         }),
@@ -260,5 +261,63 @@ describe("WebSocketManager: DKG auto-trigger on all-joined", () => {
         const si = env.sentToOffscreen[0].msg.sessionInfo;
         expect(si.total).toBe(5);
         expect(si.threshold).toBe(3);
+    });
+});
+
+describe("WebSocketManager: server participant_update", () => {
+    // The signal server tells a session's participants about joins with a
+    // server-originated relay (not a `session_available` re-broadcast):
+    // `{type:"relay", from:"server", data:{type:"participant_update",
+    // session_id, session_info}}`. CLI/TUI joiners only produce this frame,
+    // so an extension DKG initiator must act on it.
+    function participantUpdate(session: SessionInfo) {
+        const { session_info } = frame(session);
+        return {
+            type: "relay" as const,
+            from: "server",
+            data: { type: "participant_update", session_id: session.session_id, session_info },
+        };
+    }
+
+    it("triggers the DKG when the last participant joins", () => {
+        const env = makeManager({ deviceId: "ext-bob" });
+        const session = inviteReady("dkg_pu", "ext-bob");
+        env.appState.sessionInfo = { ...session, participants: ["ext-bob"] };
+
+        (env.mgr as any).handleWebSocketMessage(participantUpdate(session));
+
+        expect(env.sentToOffscreen.map((s) => s.msg.type)).toEqual(["sessionAllAccepted"]);
+    });
+
+    it("does not trigger while participants are still missing", () => {
+        const env = makeManager({ deviceId: "ext-bob" });
+        const session = inviteReady("dkg_pu2", "ext-bob");
+        env.appState.sessionInfo = { ...session, participants: ["ext-bob"] };
+
+        (env.mgr as any).handleWebSocketMessage(
+            participantUpdate({ ...session, participants: session.participants.slice(0, 2) }),
+        );
+
+        expect(env.sentToOffscreen).toEqual([]);
+    });
+});
+
+describe("WebSocketManager: active session source", () => {
+    // In the service worker each manager is constructed with its own copy
+    // of the state (`stateManager.getState()` returns a copy), and
+    // SessionManager records a newly created/joined session on the
+    // StateManager — not on WebSocketManager's copy.
+    it("triggers for the session the StateManager holds as active", () => {
+        const env = makeManager({ deviceId: "ext-bob" });
+        const session = inviteReady("dkg_sm", "ext-bob");
+        env.appState.sessionInfo = null; // WebSocketManager's own stale copy
+        (env.mgr as any).stateManager.getState = () => ({
+            ...env.appState,
+            sessionInfo: { ...session, participants: ["ext-bob"] },
+        });
+
+        (env.mgr as any).handleWebSocketMessage(frame(session));
+
+        expect(env.sentToOffscreen.map((s) => s.msg.type)).toEqual(["sessionAllAccepted"]);
     });
 });

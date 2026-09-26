@@ -15,7 +15,9 @@ import type {
     OffscreenToBackgroundMessage
 } from "@stars-labs/types/messages";
 import { MESSAGE_TYPES, isRpcMessage, isAccountManagement, isNetworkManagement, isUIRequest } from "@stars-labs/types/messages";
-import { StateManager } from "./stateManager";
+import { StateManager, withoutSecrets } from "./stateManager";
+import { redactForLog } from "../../utils/redact";
+import { walletIdFromSession } from "../../utils/wallet-id";
 import { OffscreenManager } from "./offscreenManager";
 import { WebSocketManager } from "./webSocketManager";
 import { SessionManager } from "./sessionManager";
@@ -116,16 +118,14 @@ export class PopupMessageHandler {
             messageCategory = 'UI Request';
         }
 
-        console.log(`│ Data:`, message);
+        console.log(`│ Data:`, redactForLog(message));
 //         console.log("└─────────────────────────────────────────────────────────────────");
 
         try {
             switch (message.type) {
                 case MESSAGE_TYPES.GET_STATE:
 //                     console.log("📊 [PopupMessageHandler] GET_STATE: Returning current application state");
-                    const state = this.stateManager.getState();
-//                     console.log("📊 [PopupMessageHandler] State keys:", Object.keys(state));
-                    sendResponse(state);
+                    sendResponse(withoutSecrets(this.stateManager.getState()));
                     break;
 
                 case MESSAGE_TYPES.GET_WEBRTC_STATE:
@@ -891,17 +891,19 @@ export class PopupMessageHandler {
                 : "ethereum";
             const blockchain = getProtocolBlockchainForChain(walletChain);
 
-            // Pull group_public_key + threshold/total from the saved
-            // keyshare data. KeystoreManager stores the KeyShareData
-            // alongside the metadata; we need it to populate the
-            // signing announcement. Fall back to placeholder values
-            // if the service doesn't expose the share (UI shouldn't
-            // offer Sign for walletless metadata).
-            const keyShare = (km as any).getKeyShareData?.(walletId);
-            const groupPublicKey =
-                keyShare?.group_public_key ?? (wallet as any).group_public_key ?? "";
-            const threshold = keyShare?.threshold ?? 2;
-            const total = keyShare?.total_participants ?? 3;
+            // The signing announce needs the group key and cohort shape,
+            // which live on the stored key share (not the wallet metadata).
+            const keyShare = await km.getKeyShare(walletId);
+            if (!keyShare) {
+                sendResponse({
+                    success: false,
+                    error: `No key share for wallet ${walletId} — unlock the wallet first`,
+                });
+                return;
+            }
+            const groupPublicKey = keyShare.group_public_key;
+            const threshold = keyShare.threshold;
+            const total = keyShare.total_participants;
 
             // EIP-191 wrap for secp256k1 ⇒ ecrecover-compatible.
             // ed25519: raw UTF-8 bytes.
@@ -1318,10 +1320,9 @@ export class PopupMessageHandler {
                 created_at: Date.now(),
             };
 
-            // Make a unique-ish wallet id from session_id; if the
-            // session_id collides with an existing wallet, suffix a
-            // short timestamp to avoid overwriting.
-            const walletId = `wallet-${keyShareData.session_id || `dkg-${Date.now()}`}`;
+            // Same id every other participant (CLI/TUI too) derives from
+            // the shared session id — announces name the wallet by it.
+            const walletId = walletIdFromSession(keyShareData.session_id);
             const metadata: any = {
                 id: walletId,
                 name:
@@ -1373,12 +1374,18 @@ export class PopupMessageHandler {
             }
 
             // Save succeeded. Drop the in-memory key material + flip
-            // UI state so popup moves to a "wallet ready" view.
+            // UI state so popup moves to a "wallet ready" view. The DKG
+            // session is over too — clearing it re-enables "Sign message",
+            // which is hidden while a session is active.
             this.stateManager.updateState({
                 // @ts-ignore — off-type fields, same pattern as elsewhere
                 pendingKeystoreJson: null,
                 pendingKeystoreReady: false,
+                sessionInfo: null,
             } as any);
+            // updateState doesn't notify the popup; without this the save
+            // form stays up after a successful save.
+            this.stateManager.broadcastCurrentState();
 
             console.log(
                 `[PopupMessageHandler] ✅ Wallet saved: ${walletId} (${metadata.name})`,

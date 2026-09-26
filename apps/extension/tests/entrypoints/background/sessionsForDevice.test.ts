@@ -46,6 +46,7 @@ function makeManager() {
     const sendToOffscreen = jest.fn(async () => ({ success: true }));
     const sessionManager: any = {};
     const stateManager: any = {
+        getState: () => appState,
         updateInvites: jest.fn((invites: any[]) => {
             appState.invites = invites;
         }),

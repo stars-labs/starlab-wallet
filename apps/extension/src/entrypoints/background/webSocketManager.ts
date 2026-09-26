@@ -420,7 +420,7 @@ export class WebSocketManager {
             return;
         }
         console.log(
-            `[WebSocketManager] session_available: ${parsed.session_id} (${parsed.session_type ?? "dkg"}, ${parsed.threshold}/${parsed.total}, proposer=${parsed.proposer_id})`,
+            `[WebSocketManager] session_available: ${parsed.session_id} (${parsed.session_type ?? "dkg"}, ${parsed.threshold}/${parsed.total}, proposer=${parsed.proposer_id}, joined=${parsed.participants.join(",")})`,
         );
 
         // Merge-update into invites: replace if we already have this
@@ -491,11 +491,15 @@ export class WebSocketManager {
      *     the offscreen-signing wiring.)
      */
     private maybeTriggerCeremony(session: SessionInfo): void {
-        const mySessionId = this.appState.sessionInfo?.session_id;
+        // Our constructor got a copy of the state; SessionManager records
+        // the session we created/joined on the StateManager, so read it
+        // from there.
+        const current = this.stateManager?.getState() ?? this.appState;
+        const mySessionId = current.sessionInfo?.session_id;
         if (!mySessionId || mySessionId !== session.session_id) {
             return; // Not our session.
         }
-        const deviceId = this.appState.deviceId;
+        const deviceId = current.deviceId;
         if (!deviceId || !session.participants.includes(deviceId)) {
             return; // We're not a listed participant.
         }
@@ -640,6 +644,19 @@ export class WebSocketManager {
     private handleRelayMessage(msg: ServerMsg & { type: "relay" | "RELAY" }, messageType: string): void {
         console.log(`[WebSocketManager] Received ${messageType} message from server:`, msg);
         const data = msg.data as WebSocketMessagePayload;
+
+        // The signal server announces joins to a session's participants
+        // with its own relay frame rather than a `session_available`
+        // re-broadcast. CLI/TUI joiners produce only this, so treat it
+        // exactly like a session update.
+        const serverFrame = msg.data as { type?: string; session_info?: unknown } | undefined;
+        if (msg.from === "server" && serverFrame?.type === "participant_update") {
+            this.handleSessionAvailable({
+                type: "session_available",
+                session_info: serverFrame.session_info,
+            } as ServerMsg & { type: "session_available" });
+            return;
+        }
 
         if (!data || !data.websocket_msg_type) {
             console.warn("[WebSocketManager] Invalid relay message data:", data);

@@ -285,6 +285,17 @@ export function standard_account_path(chain: string, account: number): string | 
 
 export function start(): void;
 
+/**
+ * Re-encode a package the engine produced (hex of its JSON — what
+ * generate_round1/2, signing_commit and sign return) in FROST's binary
+ * `serialize()` form, the CLI/TUI wire encoding (`DKG_ROUND1:`,
+ * `DKG_ROUND2:`, `SIGN_COMMIT:`, `SIGN_SHARE:` frames). Returns hex.
+ *
+ * `curve`: "ed25519" | "secp256k1" | "secp256k1-tr";
+ * `kind`: "round1" | "round2" | "commitment" | "share".
+ */
+export function to_frost_wire(curve: string, kind: string, json_hex: string): string;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -347,6 +358,8 @@ export interface InitOutput {
     readonly frostdkgsecp256k1tr_add_signature_share: (a: number, b: number, c: number, d: number) => [number, number];
     readonly frostdkgsecp256k1tr_add_signing_commitment: (a: number, b: number, c: number, d: number) => [number, number];
     readonly frostdkgsecp256k1tr_aggregate_signature: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly frostdkgsecp256k1tr_can_finalize: (a: number) => number;
+    readonly frostdkgsecp256k1tr_can_start_round2: (a: number) => number;
     readonly frostdkgsecp256k1tr_clear_signing_state: (a: number) => void;
     readonly frostdkgsecp256k1tr_export_keystore: (a: number) => [number, number, number, number];
     readonly frostdkgsecp256k1tr_finalize_dkg: (a: number) => [number, number, number, number];
@@ -355,8 +368,11 @@ export interface InitOutput {
     readonly frostdkgsecp256k1tr_get_address: (a: number) => [number, number, number, number];
     readonly frostdkgsecp256k1tr_get_group_public_key: (a: number) => [number, number, number, number];
     readonly frostdkgsecp256k1tr_get_taproot_xonly_key: (a: number) => [number, number, number, number];
+    readonly frostdkgsecp256k1tr_has_signing_nonces: (a: number) => number;
     readonly frostdkgsecp256k1tr_import_keystore: (a: number, b: number, c: number) => [number, number];
     readonly frostdkgsecp256k1tr_init_dkg: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly frostdkgsecp256k1tr_is_dkg_complete: (a: number) => number;
+    readonly frostdkgsecp256k1tr_new: () => number;
     readonly frostdkgsecp256k1tr_sign: (a: number, b: number, c: number) => [number, number, number, number];
     readonly frostdkgsecp256k1tr_signing_commit: (a: number) => [number, number, number, number];
     readonly frostdkgunified_add_round1_package: (a: number, b: number, c: number, d: number) => [number, number];
@@ -399,18 +415,14 @@ export interface InitOutput {
     readonly frostresharesecp256k1_reshare_round2: (a: number) => [number, number, number, number];
     readonly main: () => void;
     readonly standard_account_path: (a: number, b: number, c: number) => [number, number];
+    readonly start: () => void;
+    readonly to_frost_wire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly wasmerror_message: (a: number) => [number, number];
     readonly wasmerror_new: (a: number, b: number) => number;
-    readonly frostdkgsecp256k1tr_is_dkg_complete: (a: number) => number;
-    readonly frostdkgsecp256k1tr_can_finalize: (a: number) => number;
-    readonly frostdkgsecp256k1tr_can_start_round2: (a: number) => number;
-    readonly start: () => void;
-    readonly frostdkgsecp256k1tr_has_signing_nonces: (a: number) => number;
-    readonly frostdkgsecp256k1tr_new: () => number;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
-    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __externref_table_dealloc: (a: number) => void;

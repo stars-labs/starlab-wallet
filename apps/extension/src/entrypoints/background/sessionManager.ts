@@ -742,8 +742,9 @@ export class SessionManager {
             curve_type: curveType,
             coordination_type: "Network",
             // Signing-specific top-level siblings — TUI parser reads
-            // these at the top level (not nested).
-            wallet_name: config.walletName,
+            // these at the top level (not nested). `wallet_name` is the
+            // wallet id: CLI/TUI joiners load their share by it.
+            wallet_name: config.walletId,
             group_public_key: config.groupPublicKey,
             blockchain: config.blockchain,
             signing_message_hex: config.signingMessageHex,

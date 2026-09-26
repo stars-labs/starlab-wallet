@@ -1,5 +1,6 @@
 import { SessionInfo, DkgState, MeshStatus, MeshStatusType } from "@stars-labs/types/appstate";
 import { WebRTCAppMessage } from "@stars-labs/types/webrtc";
+import { to_frost_wire } from "@stars-labs/core-wasm";
 import { WebSocketMessagePayload, WebRTCSignal } from "@stars-labs/types/websocket";
 import type { KeyShareData } from "@stars-labs/types/keystore";
 import {
@@ -298,6 +299,20 @@ export class WebRTCManager {
     return Array.from(bytes)
       .map((byte) => byte.toString(16).padStart(2, '0'))
       .join('');
+  }
+
+  /** Engine JSON (hex) → FROST binary (hex), the CLI/TUI wire encoding. */
+  private _frostWire(kind: "round1" | "round2" | "commitment" | "share", jsonHex: string): string {
+    const curve = this.currentBlockchain === "ethereum" ? "secp256k1" : "ed25519";
+    return to_frost_wire(curve, kind, jsonHex);
+  }
+
+  private _hexToBase64(hex: string): string {
+    return btoa(String.fromCharCode(...this._hexToBytes(hex)));
+  }
+
+  private _hexToBytes(hex: string): Uint8Array {
+    return new Uint8Array((hex.match(/.{1,2}/g) ?? []).map((byte) => parseInt(byte, 16)));
   }
 
   private _base64ToHex(base64: string): string {
@@ -1047,36 +1062,12 @@ export class WebRTCManager {
       const round1Package = this.frostDkg.generate_round1();
       this._log(`Generated Round 1 package (hex): ${round1Package.substring(0, 20)}...`);
 
-      // Decode hex to get JSON string, then parse it as structured object (wire-compatible with the TUI node).
-      let packageObject;
-      try {
-        // First decode the hex string to get the JSON string
-        const hexMatches = round1Package.match(/.{1,2}/g);
-        if (!hexMatches) {
-          throw new Error('Invalid hex string format');
+      // Broadcast in the CLI/TUI native frame (FROST binary, base64).
+      const text = `DKG_ROUND1:${this._hexToBase64(this._frostWire("round1", round1Package))}`;
+      for (const peerId of this.sessionInfo?.participants ?? []) {
+        if (peerId !== this.localPeerId) {
+          this.sendWebRTCAppMessage(peerId, { webrtc_msg_type: "SimpleMessage", text });
         }
-
-        const packageBytes = new Uint8Array(hexMatches.map((byte: string) => parseInt(byte, 16)));
-        const packageJson = new TextDecoder().decode(packageBytes);
-        this._log(`Decoded Round 1 package JSON: ${packageJson.substring(0, 100)}...`);
-
-        // Then parse the JSON string to get the structured object
-        packageObject = JSON.parse(packageJson);
-      } catch (error) {
-        throw new Error(`Failed to decode/parse Round 1 package: ${error}`);
-      }
-
-      // Broadcast to all participants
-      if (this.sessionInfo) {
-        this.sessionInfo.participants.forEach(peerId => {
-          if (peerId !== this.localPeerId) {
-            const message: WebRTCAppMessage = {
-              webrtc_msg_type: 'DkgRound1Package' as const,
-              package: packageObject  // Send parsed JSON object — TUI peers expect the object shape, not a hex string.
-            };
-            this.sendWebRTCAppMessage(peerId, message);
-          }
-        });
       }
 
       // Process our own package locally - but only add to received set, don't add to FROST DKG
@@ -1117,6 +1108,17 @@ export class WebRTCManager {
                   void this._handleDkgRound2Package(fromPeerId, packageHex);
                 } catch (error) {
                   this._log(`Failed to decode DKG_ROUND2 from ${fromPeerId}: ${this._getErrorMessage(error)}`);
+                }
+              } else if (text.startsWith('SIGN_COMMIT:') || text.startsWith('SIGN_SHARE:')) {
+                // Signing frames carry no ceremony id — one ceremony runs
+                // at a time, so they belong to the active one.
+                const signing_id = this.signingInfo?.signing_id;
+                if (text.startsWith('SIGN_COMMIT:')) {
+                  const commitment = this._base64ToHex(text.slice('SIGN_COMMIT:'.length));
+                  this._handleSigningCommitment(fromPeerId, { signing_id, commitment });
+                } else {
+                  const share = this._base64ToHex(text.slice('SIGN_SHARE:'.length));
+                  this._handleSignatureShare(fromPeerId, { signing_id, share });
                 }
               }
             }
@@ -1637,15 +1639,11 @@ export class WebRTCManager {
 
             // Extract the specific package for this peer from the map
             if (packageMap[peerIndexStr]) {
-              const individualPackage = packageMap[peerIndexStr];
-
-              // Send the individual package (not the entire map)
-              const message: WebRTCAppMessage = {
-                webrtc_msg_type: 'DkgRound2Package' as const,
-                package: individualPackage
-              };
-
-              this.sendWebRTCAppMessage(peerId, message);
+              const wire = this._frostWire("round2", packageMap[peerIndexStr]);
+              this.sendWebRTCAppMessage(peerId, {
+                webrtc_msg_type: "SimpleMessage",
+                text: `DKG_ROUND2:${this._hexToBase64(wire)}`,
+              });
               sentCount++;
               this._log(`Sent Round 2 package to ${peerId} (index ${peerIndex})`);
             } else {
@@ -2525,10 +2523,8 @@ export class WebRTCManager {
 
     // Broadcast to all other selected signers.
     const broadcast: WebRTCAppMessage = {
-      webrtc_msg_type: "SigningCommitment" as const,
-      signing_id: signingId,
-      sender_identifier: this.localPeerId,
-      commitment: commitmentHex,
+      webrtc_msg_type: "SimpleMessage",
+      text: `SIGN_COMMIT:${this._hexToBase64(this._frostWire("commitment", commitmentHex))}`,
     };
     for (const peerId of selectedSigners) {
       if (peerId !== this.localPeerId) {
@@ -2819,10 +2815,8 @@ export class WebRTCManager {
     }
 
     const message: WebRTCAppMessage = {
-      webrtc_msg_type: "SignatureShare" as const,
-      signing_id: this.signingInfo.signing_id,
-      sender_identifier: this.localPeerId,
-      share: shareHex,
+      webrtc_msg_type: "SimpleMessage",
+      text: `SIGN_SHARE:${this._hexToBase64(this._frostWire("share", shareHex))}`,
     };
 
     for (const peerId of this.signingInfo.selected_signers) {
@@ -2939,6 +2933,20 @@ export class WebRTCManager {
       receivedRound2Packages: Array.from(this.receivedRound2Packages),
       frostDkgInitialized: this.frostDkg !== null
     };
+  }
+
+  /**
+   * Offer to every session participant whose device id sorts after ours —
+   * the smaller id offers, the same rule as the Rust CLI/TUI. Skips peers
+   * we already have a connection with, so it is safe to call whenever a
+   * ceremony becomes ready.
+   */
+  public initiateMeshOffers(): void {
+    for (const peerId of this.sessionInfo?.participants ?? []) {
+      if (peerId > this.localPeerId && !this.peerConnections.has(peerId)) {
+        void this.initiatePeerConnection(peerId);
+      }
+    }
   }
 
   // Add the missing initiatePeerConnection method that offscreen/index.ts calls

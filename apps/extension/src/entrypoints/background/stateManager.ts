@@ -39,11 +39,11 @@ export type DkgStateListener = (state: DkgState) => void;
 /**
  * Keys holding the DKG keystore JSON (secret share included). It stays in the
  * background until the wallet is saved; the popup never needs it, and the
- * popup logs every port message it receives.
+ * popup logs every message it receives. Apply at every popup egress.
  */
 const SECRET_KEYS = ["pendingKeystoreJson", "keystoreJson"] as const;
 
-function withoutSecrets<T extends object>(message: T): T {
+export function withoutSecrets<T extends object>(message: T): T {
     if (!SECRET_KEYS.some((k) => k in message)) return message;
     const copy = { ...message } as Record<string, unknown>;
     for (const k of SECRET_KEYS) delete copy[k];

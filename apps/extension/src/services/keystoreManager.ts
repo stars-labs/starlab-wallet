@@ -85,8 +85,11 @@ export class KeystoreManager {
      * Check if keystore is initialized
      */
     public async isInitialized(): Promise<boolean> {
+        // A password exists once a wallet is saved under it, or once it was
+        // set this session. The locked session initialize() writes on every
+        // startup does not count — it would skip first-run password setup.
         const wallets = this.keystoreService.getWallets();
-        return wallets.length > 0 || this.session !== null;
+        return wallets.length > 0 || this.session?.unlocked === true;
     }
     
     /**

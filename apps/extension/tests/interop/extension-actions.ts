@@ -1,15 +1,7 @@
 // Extension UI actions for the L3c harness (#33).
 //
-// All popup interactions live here so selectors are in ONE place. Two tiers:
-//
-//   VERIFIED  — uses data-testids that exist in the source today
-//               (Settings room input/status; added in this change).
-//   FIRST-RUN — create-wallet / sign steps depend on richer popup UI
-//               (CreateWalletForm overlay etc.). The selectors below are the
-//               best-effort starting point; confirm/adjust them on the first
-//               headed run (`bun run test:interop --headed`) and keep them
-//               centralized here.
-import { type Page } from "@playwright/test";
+// All popup interactions live here so selectors are in ONE place.
+import { expect, type Page, type Worker } from "@playwright/test";
 import { popupUrl } from "./fixtures";
 
 export async function openPopup(page: Page, extensionId: string): Promise<void> {
@@ -17,7 +9,7 @@ export async function openPopup(page: Page, extensionId: string): Promise<void> 
   await page.waitForLoadState("domcontentloaded");
 }
 
-// --- VERIFIED: Settings → room (data-testids added to Settings.svelte) ------
+// --- Settings → room ---------------------------------------------------------
 
 /** Open Settings. The gear/settings control toggles `showSettings`. */
 export async function openSettings(page: Page): Promise<void> {
@@ -40,6 +32,28 @@ export async function setRoom(page: Page, room: string): Promise<void> {
   await page.getByTestId("room-status").filter({ hasText: /saved/i }).waitFor({ timeout: 10_000 });
 }
 
+// --- first run -------------------------------------------------------------
+
+/** First-run onboarding: set the keystore password ("Get started"). */
+export async function onboard(page: Page, password: string): Promise<void> {
+  await page.getByRole("button", { name: "Get started" }).click();
+  const dialog = page.getByRole("dialog", { name: "Create Wallet" });
+  await dialog.getByRole("textbox", { name: "Password", exact: true }).fill(password);
+  await dialog.getByRole("textbox", { name: "Confirm password" }).fill(password);
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await dialog.waitFor({ state: "hidden", timeout: 10_000 });
+}
+
+/**
+ * Point the extension at `url` (e.g. a local signal server). There is no popup
+ * control for this — it's the chrome.storage override `getSignalServerUrl()`
+ * reads — so write it from the service worker. Takes effect on the reconnect
+ * that `setRoom` triggers.
+ */
+export async function useSignalServer(sw: Worker, url: string): Promise<void> {
+  await sw.evaluate((u) => chrome.storage.local.set({ signalServerUrl: u }), url);
+}
+
 // --- create wallet (DKG initiator) ------------------------------------------
 
 /** Leave the Settings view (its "Done" button) so the wallet view is showing. */
@@ -53,57 +67,70 @@ export async function closeSettings(page: Page): Promise<void> {
 /**
  * Create a threshold wallet — the extension becomes the DKG initiator.
  *
- * Selectors verified against CreateWalletForm.svelte: stable ids `#cw-total`,
- * `#cw-threshold`, `#cw-curve`; both the main-view trigger and the form's submit
- * are labelled "Create wallet", but the main view unmounts when the form opens
- * (App.svelte `{#if showSettings}{:else if showCreateWallet}{:else}…`), so the
- * post-open lookup resolves to the submit. The DKG-creation form has no password
- * field (the keystore password is collected later), so `opts.password` is unused
- * here.
+ * The "Create wallet — New shared wallet" shortcut is disabled until the
+ * background reports the signal server connected, so waiting for it to enable
+ * turns a connection failure into a clear error. The form (CreateWalletForm)
+ * has stable ids; curve is chosen via the primary chain.
  */
 export async function createWallet(
   page: Page,
-  opts: { threshold: number; total: number; password: string; curve: string },
+  opts: { threshold: number; total: number; curve: string },
 ): Promise<void> {
-  // `setRoom` leaves us on Settings; return to the wallet view.
   await closeSettings(page);
 
-  // The main-view "Create wallet" button is `disabled` until the background
-  // reports wsConnected (it enables once the post-room reconnect lands). Assert
-  // it becomes enabled so a connection failure is a clear error, not a vague
-  // click timeout.
-  const trigger = page.getByRole("button", { name: /create wallet/i }).first();
-  await trigger.waitFor({ state: "visible", timeout: 20_000 });
-  await page.waitForFunction(
-    () => {
-      const b = Array.from(document.querySelectorAll("button")).find((el) =>
-        /create wallet/i.test(el.textContent ?? ""),
-      );
-      return !!b && !(b as HTMLButtonElement).disabled;
-    },
-    { timeout: 30_000 },
-  );
+  const trigger = page.getByRole("button", { name: /Create wallet New shared wallet/ });
+  await expect(trigger).toBeEnabled({ timeout: 30_000 });
   await trigger.click();
 
-  // CreateWalletForm overlay — fill the real inputs (defaults already match a
-  // 2-of-3, but set them explicitly so the test controls the shape).
   await page.locator("#cw-total").fill(String(opts.total));
   await page.locator("#cw-threshold").fill(String(opts.threshold));
-  if (opts.curve) {
-    await page.locator("#cw-curve").selectOption(opts.curve).catch(() => {});
-  }
+  await page.locator("#cw-chain").selectOption(opts.curve === "ed25519" ? "solana" : "ethereum");
+  await page.getByRole("button", { name: "Create wallet", exact: true }).click();
+}
 
-  // Submit (form's button is also "Create wallet"; main view is unmounted now).
-  await page.getByRole("button", { name: /^create wallet$/i }).click();
+/** The extension's DKG result, read from the background state. */
+export async function dkgResult(page: Page): Promise<{ groupPublicKey: string; address: string | null }> {
+  await expect
+    .poll(() => page.evaluate(() => chrome.runtime.sendMessage({ type: "getState" }).then((s) => !!s?.dkgLastResult)), {
+      timeout: 60_000,
+    })
+    .toBe(true);
+  return page.evaluate(() => chrome.runtime.sendMessage({ type: "getState" }).then((s) => s.dkgLastResult));
+}
+
+/** The aggregate signature the extension ended up with (hex, no 0x). */
+export async function extSignature(page: Page): Promise<string> {
+  await expect
+    .poll(() => page.evaluate(() => chrome.runtime.sendMessage({ type: "getState" }).then((s) => !!s?.lastSignature)), {
+      timeout: 60_000,
+    })
+    .toBe(true);
+  const sig: string = await page.evaluate(() =>
+    chrome.runtime.sendMessage({ type: "getState" }).then((s) => s.lastSignature.signature),
+  );
+  return sig.replace(/^0x/, "").toLowerCase();
+}
+
+/** Save the freshly generated wallet (the post-DKG "Save this wallet" form). */
+export async function saveWallet(page: Page, password: string): Promise<void> {
+  await page.getByPlaceholder("Password (at least 8 characters)").fill(password);
+  await page.getByPlaceholder("Confirm password").fill(password);
+  await page.getByRole("button", { name: "Encrypt & save" }).click();
+  await page.getByPlaceholder("Password (at least 8 characters)").waitFor({ state: "hidden", timeout: 15_000 });
 }
 
 /**
- * Sign a message with the active wallet (extension as initiator).
- * NEEDS-VERIFY selectors.
+ * Start a threshold signing of `message` with the saved wallet (extension as
+ * initiator): Sign message → Review → Confirm & broadcast.
  */
 export async function signMessage(page: Page, message: string): Promise<void> {
-  await page.getByRole("button", { name: /sign message/i }).first().click();
-  const box = page.getByPlaceholder(/message/i);
-  if (await box.count()) await box.first().fill(message);
-  await page.getByRole("button", { name: /^sign$|confirm/i }).last().click();
+  const trigger = page.getByRole("button", { name: /Sign message Request signatures/ });
+  await expect(trigger).toBeEnabled({ timeout: 30_000 });
+  await trigger.click();
+  await page.locator("#sign-msg").fill(message);
+  await page.getByRole("button", { name: "Review" }).click();
+  await page.getByRole("button", { name: /Confirm & broadcast/ }).click();
+  // Surface a rejected request right away instead of as a peer timeout.
+  await expect(page.getByRole("button", { name: /Confirm & broadcast/ })).toBeHidden({ timeout: 15_000 });
+  await expect(page.locator(".text-danger-fg")).toHaveCount(0);
 }

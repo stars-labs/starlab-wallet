@@ -21,3 +21,6 @@ test-results/
 # NOTE: packages/@starlab/core-wasm/pkg is a VENDORED build artifact and IS
 # committed on purpose (it's how the extension gets FROST without building the
 # engine's Rust). Do not add it here.
+
+# svelte-check --tsgo cache
+.svelte-check/

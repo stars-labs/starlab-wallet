@@ -10,6 +10,8 @@
       "chrome",
       "node",
       "bun"
-    ]
+    ],
+    "noUncheckedIndexedAccess": false,
+    "verbatimModuleSyntax": false
   }
 }

@@ -4,7 +4,8 @@ import { test, expect } from "./fixtures";
 import { signMessage, extSignature } from "./extension-actions";
 import { setupExtension, extensionInitiatedDkg, type Env } from "./scenario";
 
-test.describe.configure({ mode: "serial", timeout: 180_000 });
+// Independent tests (each gets its own signal server + room).
+test.describe.configure({ timeout: 180_000 });
 
 test("ext + 2 CLI: DKG group keys agree, then a signature verifies", async ({ page, context, extensionId }) => {
   let env: Env | undefined;

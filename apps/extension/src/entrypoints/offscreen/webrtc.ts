@@ -1117,6 +1117,14 @@ export class WebRTCManager {
                 } catch (error) {
                   this._log(`Failed to decode DKG_ROUND2 from ${fromPeerId}: ${this._getErrorMessage(error)}`);
                 }
+              } else if (text.startsWith('RESHARE_ROUND1:')) {
+                this._handleReshareRound1Package(fromPeerId, {
+                  package: this._base64ToHex(text.slice('RESHARE_ROUND1:'.length)),
+                });
+              } else if (text.startsWith('RESHARE_ROUND2:')) {
+                this._handleReshareRound2Package(fromPeerId, {
+                  package: this._base64ToHex(text.slice('RESHARE_ROUND2:'.length)),
+                });
               } else if (text.startsWith('SIGN_COMMIT:') || text.startsWith('SIGN_SHARE:')) {
                 // Signing frames carry no ceremony id — one ceremony runs
                 // at a time, so they belong to the active one.
@@ -1887,11 +1895,14 @@ export class WebRTCManager {
       this._log(`Cannot start reshare: already in state ${this.reshareState}`);
       return false;
     }
+    // Extension announces name the old cohort; CLI/TUI refresh announces
+    // don't — there it is the wallet's original participant set.
     const oldParticipants = [
-      ...((sessionInfo as any).reshare_old_participants ?? []),
+      ...((sessionInfo as any).reshare_old_participants ??
+        Object.keys(keyShare?.participant_identifiers ?? {})),
     ].sort();
     if (oldParticipants.length === 0) {
-      this._log(`Cannot start reshare: session missing reshare_old_participants`);
+      this._log(`Cannot start reshare: no old cohort (announce or wallet)`);
       return false;
     }
     const newParticipants = [...sessionInfo.participants].sort();
@@ -2018,10 +2029,10 @@ export class WebRTCManager {
       // Round 1: broadcast our package to every other new participant.
       const round1Hex: string = this.frostReshare.reshare_round1();
       this.receivedReshareRound1.add(this.localPeerId);
+      // The CLI/TUI native frame (FROST binary, base64).
       const msg: WebRTCAppMessage = {
-        webrtc_msg_type: "ReshareRound1Package" as const,
-        session_id: this.reshareInfo.session_id,
-        package: round1Hex,
+        webrtc_msg_type: "SimpleMessage",
+        text: `RESHARE_ROUND1:${this._hexToBase64(this._frostWire("round1", round1Hex))}`,
       };
       for (const peerId of this.reshareInfo.new_participants) {
         if (peerId !== this.localPeerId) {
@@ -2158,9 +2169,8 @@ export class WebRTCManager {
           continue;
         }
         const msg: WebRTCAppMessage = {
-          webrtc_msg_type: "ReshareRound2Package" as const,
-          session_id: this.reshareInfo.session_id,
-          package: pkg,
+          webrtc_msg_type: "SimpleMessage",
+          text: `RESHARE_ROUND2:${this._hexToBase64(this._frostWire("round2", pkg))}`,
         };
         this.sendWebRTCAppMessage(peerId, msg);
         sent++;

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { openInvites } from "../../utils/wallet-id";
     // Removed single-party WASM functions - this is now an MPC-only wallet
     import { onMount, onDestroy } from "svelte";
     import {
@@ -651,6 +652,11 @@
         activeWallet: null,
         pendingImport: false
     };
+    // Invitations worth showing: finished DKGs linger on the signal server.
+    $: shownInvites = openInvites(
+        appState.invites ?? [],
+        (keystoreStatus.wallets ?? []).map((w) => w.id),
+    );
     
     // Password prompt state
     let showPasswordPrompt = false;
@@ -2443,8 +2449,8 @@
         {/if}
 
         <!-- Discovered shared-wallet sessions you can join -->
-        {#if !appState.sessionInfo && appState.invites && appState.invites.length > 0}
-            {@const joinable = appState.invites.filter(
+        {#if !appState.sessionInfo && shownInvites.length > 0}
+            {@const joinable = shownInvites.filter(
                 (inv) =>
                     ((inv.session_type ?? "dkg") === "dkg" ||
                         // M3 reshare: only show if we hold a share in
@@ -3162,10 +3168,10 @@
                 </div>
             {/if}
         </div>
-    {:else if appState.invites && appState.invites.length > 0}
+    {:else if shownInvites.length > 0}
         <!-- Pending invitations -->
         <div class="space-y-2">
-            {#each appState.invites as invite}
+            {#each shownInvites as invite}
                 <div class="card card-pad">
                     <div class="mb-2 flex items-center justify-between">
                         <h3 class="flex items-center gap-1.5 text-sm font-bold">
@@ -3259,7 +3265,7 @@
                             {@const isOwnDevice = peer === appState.deviceId}
                             {@const showCheckbox =
                                 !isOwnDevice &&
-                                !appState.invites?.length &&
+                                !shownInvites.length &&
                                 !appState.sessionInfo}
                             {@const isInSession =
                                 appState.sessionInfo &&
@@ -3320,7 +3326,7 @@
                             </li>
                         {/each}
                     </ul>
-                    {#if selectedDevices.size > 0 && !appState.invites?.length && !appState.sessionInfo}
+                    {#if selectedDevices.size > 0 && !shownInvites.length && !appState.sessionInfo}
                         <p class="mt-2 text-xs text-primary">
                             Selected {selectedDevices.size} of {appState.totalParticipants -
                                 1} required
@@ -3334,7 +3340,7 @@
             </div>
 
             <!-- Manual session + keystore import/export -->
-            {#if !appState.sessionInfo && !(appState.invites && appState.invites.length)}
+            {#if !appState.sessionInfo && !shownInvites.length}
                 <div class="divider"></div>
 
                 <div class="space-y-2">

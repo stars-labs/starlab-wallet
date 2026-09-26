@@ -182,7 +182,8 @@ export function runCli(opts: {
       "--signal-server", opts.signal,
       "--room", opts.room,
       "--password-env", "MPC_INTEROP_PW",
-      "--log-level", "warn",
+      // INTEROP_CLI_LOG=info (debug aid) for the CLI's own protocol logs.
+      "--log-level", process.env.INTEROP_CLI_LOG ?? "warn",
     ],
     { env: { ...process.env, MPC_INTEROP_PW: opts.password }, stdio: ["ignore", "pipe", "pipe"] },
   );

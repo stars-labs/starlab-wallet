@@ -4,7 +4,8 @@ import { startPeers, runCli } from "./cli-peers";
 import { acceptInvitation, approveSigningRequest, dkgResult, extSignature, saveWallet } from "./extension-actions";
 import { setupExtension, CURVE, PASSWORD, type Env } from "./scenario";
 
-test.describe.configure({ mode: "serial", timeout: 180_000 });
+// Independent tests (each gets its own signal server + room).
+test.describe.configure({ timeout: 180_000 });
 
 /** `Group key:  <hex>` from `starlab-cli wallet create`'s summary. */
 const groupKeyOf = (out: string) => /Group key:\s+([0-9a-f]+)/.exec(out)?.[1];
@@ -64,6 +65,48 @@ test("CLI-initiated signing: the extension co-signs", async ({ page, context, ex
     });
     await approveSigningRequest(page);
 
+    const out = await signer.done;
+    const cliSig = /"signature"\s*:\s*"(?:0x)?([0-9a-f]+)"/.exec(out)?.[1];
+    expect(cliSig, `no signature in CLI output: ${out}`).toBeTruthy();
+    expect(await extSignature(page)).toBe(cliSig);
+  } finally {
+    env?.cleanup();
+  }
+});
+
+test("CLI-initiated reshare: the extension refreshes its share, then co-signs", async ({ page, context, extensionId }) => {
+  let env: Env | undefined;
+  try {
+    env = await setupExtension(page, context, extensionId);
+    env.peers = startPeers({ count: 1, signal: env.signal, room: env.room, curve: CURVE, password: PASSWORD });
+    const cli = { deviceId: "interop-creator", signal: env.signal, room: env.room, password: PASSWORD };
+    const creator = runCli({
+      ...cli,
+      args: ["wallet", "create", "--threshold", "2", "--total", "3", "--curve", CURVE, "--timeout", "120"],
+    });
+    await acceptInvitation(page);
+    const created = await creator.done;
+    const walletId = walletIdOf(created)!;
+    await dkgResult(page);
+    await saveWallet(page, PASSWORD);
+
+    // Refresh every share; the CLI peer (serve) auto-joins, the extension accepts.
+    const reshare = runCli({
+      ...cli,
+      keystore: creator.keystore,
+      args: ["reshare", "--wallet-id", walletId, "--curve", CURVE, "--timeout", "120"],
+    });
+    await acceptInvitation(page);
+    await reshare.done;
+
+    // The refreshed extension share must sign with the refreshed CLI share.
+    env.peers[0].kill();
+    const signer = runCli({
+      ...cli,
+      keystore: creator.keystore,
+      args: ["sign", "--wallet-id", walletId, "--message", "after-reshare", "--curve", CURVE, "--timeout", "120", "--json"],
+    });
+    await approveSigningRequest(page);
     const out = await signer.done;
     const cliSig = /"signature"\s*:\s*"(?:0x)?([0-9a-f]+)"/.exec(out)?.[1];
     expect(cliSig, `no signature in CLI output: ${out}`).toBeTruthy();

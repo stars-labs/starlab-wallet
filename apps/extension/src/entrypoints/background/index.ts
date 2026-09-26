@@ -36,6 +36,7 @@ import { YubiKeyManager } from './yubikeyManager';
 // Import types
 import { INITIAL_APP_STATE } from "@stars-labs/types/appstate";
 import { getRoom, getSignalServerUrl } from "../../config/signal-server";
+import { getDeviceId } from "../../config/device";
 import { DkgState } from "@stars-labs/types/dkg";
 import {
     type PopupToBackgroundMessage,
@@ -252,6 +253,25 @@ function setupMessageHandlers(): void {
             return true;
         }
 
+        // dApp RPC relayed by a content script: permissions are keyed by the
+        // sending frame's origin as Chrome reports it — never by a value the
+        // message carries, and never empty (empty means "internal caller").
+        if (sender.tab && isRpcMessage(message as PopupToBackgroundMessage)) {
+            let origin = sender.origin ?? "";
+            if (!origin && sender.url) {
+                try {
+                    origin = new URL(sender.url).origin;
+                } catch {
+                    origin = "";
+                }
+            }
+            if (!origin || origin === "null") {
+                sendResponse({ success: false, error: "Unknown request origin" });
+                return true;
+            }
+            (message as { origin?: string }).origin = origin;
+        }
+
         // Handle async operations
         (async () => {
             const startTime = Date.now();
@@ -386,8 +406,7 @@ export async function checkAndRestoreKeystores(): Promise<void> {
         const keystoreManager = KeystoreManager.getInstance();
         
         // Initialize with device ID
-        const deviceId = stateManager.getState().deviceId || 'mpc-2';
-        await keystoreManager.initialize(deviceId);
+        await keystoreManager.initialize(stateManager.getState().deviceId);
         
         // Check if keystore is initialized
         if (!await keystoreManager.isInitialized()) {
@@ -454,8 +473,6 @@ async function initializeWebSocket(): Promise<void> {
         // exists yet, do not dial a URL the server will reject with HTTP 400.
         const room = await getRoom();
         if (!room) {
-            const deviceId = "mpc-2"; // TODO: Generate unique device ID
-            stateManager.updateState({ deviceId });
             stateManager.updateWebSocketStatus(false, "No signal room configured");
             console.log("🌐 [Background] Signal room not configured; skipping WebSocket startup");
             return;
@@ -466,12 +483,8 @@ async function initializeWebSocket(): Promise<void> {
         // so TUI and extension nodes land on the same signal server.
         const WEBSOCKET_URL = await getSignalServerUrl();
 
-        // Generate device ID
-        const deviceId = "mpc-2"; // TODO: Generate unique device ID
-        stateManager.updateState({ deviceId });
-
         // Initialize WebSocket manager and connect
-        await webSocketManager.initialize(WEBSOCKET_URL, deviceId);
+        await webSocketManager.initialize(WEBSOCKET_URL, stateManager.getState().deviceId);
 
         // Store WebSocket client reference for legacy compatibility
         wsClient = webSocketManager.getClient();
@@ -508,7 +521,10 @@ export default defineBackground(() => {
     // popup.html in a tab so the user still has a path forward.
     if (typeof chrome !== "undefined" && chrome.notifications) {
         chrome.notifications.onClicked.addListener(async (notificationId) => {
-            if (!notificationId.startsWith("mpc-signing-req:")) return;
+            const opensPopup = ["mpc-signing-req:", "mpc-dapp-connect:", "mpc-dapp-sig:"].some(
+                (prefix) => notificationId.startsWith(prefix),
+            );
+            if (!opensPopup) return;
             try {
                 if (chrome.action && (chrome.action as any).openPopup) {
                     await (chrome.action as any).openPopup();
@@ -530,6 +546,10 @@ export default defineBackground(() => {
     // Async startup runs detached so the entrypoint itself stays synchronous.
     // Order preserved: restore keystores → create offscreen → connect WS.
     void (async () => {
+        // Resolve this install's persisted device id before anything that
+        // identifies us (keystore index, signal server, sessions) reads it.
+        stateManager.updateState({ deviceId: await getDeviceId() });
+
         // Check for existing keystores and restore state
         await checkAndRestoreKeystores();
 

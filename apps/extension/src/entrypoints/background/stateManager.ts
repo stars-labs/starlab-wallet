@@ -22,6 +22,8 @@ import {
 } from "@stars-labs/types/appstate";
 import { MeshStatusType } from "@stars-labs/types/mesh";
 import { DkgState } from "@stars-labs/types/dkg";
+import type { KeyShareData } from "@stars-labs/types/keystore";
+import { keyShareCoreFromEngine } from "../../utils/engineKeystore";
 import type {
     BackgroundToPopupMessage,
     InitialStateMessage,
@@ -33,6 +35,20 @@ import type {
  *  start/stop the offscreen ping timer; also available for any
  *  future subscriber (e.g. logging, metrics). */
 export type DkgStateListener = (state: DkgState) => void;
+
+/**
+ * Keys holding the DKG keystore JSON (secret share included). It stays in the
+ * background until the wallet is saved; the popup never needs it, and the
+ * popup logs every port message it receives.
+ */
+const SECRET_KEYS = ["pendingKeystoreJson", "keystoreJson"] as const;
+
+function withoutSecrets<T extends object>(message: T): T {
+    if (!SECRET_KEYS.some((k) => k in message)) return message;
+    const copy = { ...message } as Record<string, unknown>;
+    for (const k of SECRET_KEYS) delete copy[k];
+    return copy as T;
+}
 
 /**
  * Manages central application state and popup communication
@@ -408,7 +424,7 @@ export class StateManager {
             dkgState: this.appState.dkgState,
             dkgAddress: this.appState.dkgAddress
         });
-        port.postMessage(initialStateMessage);
+        port.postMessage(withoutSecrets(initialStateMessage));
 
         port.onDisconnect.addListener(() => {
             console.log("[StateManager] Popup disconnected");
@@ -419,7 +435,8 @@ export class StateManager {
     /**
      * Broadcast message to all connected popup ports
      */
-    broadcastToPopupPorts(message: BackgroundToPopupMessage): void {
+    broadcastToPopupPorts(unsafeMessage: BackgroundToPopupMessage): void {
+        const message = withoutSecrets(unsafeMessage);
         console.log("[StateManager] Broadcasting to", this.popupPorts.size, "popup ports:", message);
         this.popupPorts.forEach(port => {
             try {
@@ -597,6 +614,7 @@ export class StateManager {
                         total: info.total,
                         participants: info.participants,
                         participantIndex: info.participantIndex,
+                        participantIdentifiers: info.participantIdentifiers,
                         completedAt: Date.now(),
                     };
                     (this.appState as any).pendingKeystoreJson =
@@ -941,13 +959,12 @@ export class StateManager {
         threshold: number;
         total: number;
         participants: string[];
-        participantIndex: number | null;
+        participantIdentifiers: Record<string, number>;
         blockchain: "ethereum" | "solana";
     }): Promise<void> {
         let saved = false;
         let error: string | undefined;
         try {
-            const parsed = JSON.parse(info.newKeystoreJson);
             const { KeystoreManager } = await import(
                 "../../services/keystoreManager"
             );
@@ -957,38 +974,20 @@ export class StateManager {
                     "Keystore locked before the new share could be saved — unlock and redo the reshare",
                 );
             }
-            const oldShare: any = await km.getKeyShare(info.walletId);
+            const oldShare = await km.getKeyShare(info.walletId);
             if (!oldShare) {
                 throw new Error(`No stored share for wallet ${info.walletId}`);
             }
-            // Convention quirk: DKG-created wallets store the FULL
-            // engine keystore JSON in group_public_key (it's what
-            // finalize_dkg() returned). If that's the case, the field
-            // must now carry the NEW keystore JSON — otherwise the
-            // next reshare/keystore-resolution would pick up the old,
-            // now-useless share material. Plain-hex group keys are
-            // kept as the canonical (unchanged) hex.
-            let groupKeyField: string =
-                info.groupPublicKey || oldShare.group_public_key;
-            try {
-                const oldParsed = JSON.parse(oldShare.group_public_key);
-                if (oldParsed && typeof oldParsed.public_key_package === "string") {
-                    groupKeyField = info.newKeystoreJson;
-                }
-            } catch {
-                /* plain hex — keep canonical hex */
-            }
-            const newShare: any = {
+            // Overlay the engine's fresh share material (new key
+            // package, public key package, threshold, cohort + ids) on
+            // the existing record; addresses / session_id / curve stay.
+            const newShare: KeyShareData = {
                 ...oldShare,
-                key_package: parsed.key_package ?? oldShare.key_package,
-                group_public_key: groupKeyField,
-                participant_index:
-                    parsed.participant_index ??
-                    info.participantIndex ??
-                    oldShare.participant_index,
-                threshold: parsed.min_signers ?? info.threshold,
-                total_participants: parsed.max_signers ?? info.total,
-                participants: info.participants,
+                ...keyShareCoreFromEngine(
+                    info.newKeystoreJson,
+                    info.groupPublicKey,
+                    info.participantIdentifiers,
+                ),
             };
             const ok = await km.updateWalletKeyShare(info.walletId, newShare);
             if (!ok) {

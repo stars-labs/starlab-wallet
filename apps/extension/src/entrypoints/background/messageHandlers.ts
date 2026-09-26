@@ -26,6 +26,8 @@ import NetworkService from "../../services/networkService";
 import { KeystoreManager } from "../../services/keystoreManager";
 import { handleGetPortfolio, handleGetActivity, handleRecordActivity } from "./assetHandlers";
 import { DkgState } from "@stars-labs/types/dkg";
+import type { KeyShareData } from "@stars-labs/types/keystore";
+import { keyShareCoreFromEngine, type KeyShareCore } from "../../utils/engineKeystore";
 import {
     getDefaultChainForCurve,
     getProtocolBlockchainForChain,
@@ -171,6 +173,24 @@ export class PopupMessageHandler {
                 case "approveMessageSignature":
                     console.log("✍️ [PopupMessageHandler] APPROVE_MESSAGE_SIGNATURE: Handling signature approval");
                     await this.handleApproveMessageSignature(message, sendResponse);
+                    break;
+
+                case "getPendingSignatureRequests":
+                    sendResponse({
+                        success: true,
+                        requests: this.rpcHandler.getPendingSignatureRequests(),
+                    });
+                    break;
+
+                case "getPendingConnectRequests":
+                    sendResponse({
+                        success: true,
+                        requests: this.rpcHandler.getPendingConnectRequests(),
+                    });
+                    break;
+
+                case "resolveConnectRequest":
+                    await this.handleResolveConnectRequest(message, sendResponse);
                     break;
 
                 // Session restore removed - sessions are ephemeral for security
@@ -636,6 +656,26 @@ export class PopupMessageHandler {
             }
         }
         sendResponse({ success: true });
+    }
+
+    /** Popup Approve/Reject on a dApp Connect request card. */
+    private async handleResolveConnectRequest(
+        message: any,
+        sendResponse: (response: any) => void,
+    ): Promise<void> {
+        const selected = message.selectedAddresses;
+        if (
+            typeof message.requestId !== "string" ||
+            typeof message.approved !== "boolean" ||
+            (selected !== undefined &&
+                (!Array.isArray(selected) || !selected.every((a: unknown) => typeof a === "string")))
+        ) {
+            sendResponse({ success: false, error: "Invalid connect resolution message" });
+            return;
+        }
+        sendResponse(
+            await this.rpcHandler.resolveConnectRequest(message.requestId, message.approved, selected),
+        );
     }
 
     // Session restore removed - sessions are ephemeral for security
@@ -1156,20 +1196,24 @@ export class PopupMessageHandler {
                 return;
             }
 
-            let parsed: any;
+            let keyShareCore: KeyShareCore;
             try {
-                parsed = JSON.parse(pendingJson);
-            } catch (parseErr) {
+                keyShareCore = keyShareCoreFromEngine(
+                    pendingJson,
+                    lastResult.groupPublicKey ?? "",
+                    lastResult.participantIdentifiers ?? {},
+                );
+            } catch (coreErr) {
                 sendResponse({
                     success: false,
-                    error: `Corrupt keystore JSON from WASM: ${(parseErr as Error).message}`,
+                    error: `DKG result can't be saved: ${(coreErr as Error).message}`,
                 });
                 return;
             }
 
             const curve: "secp256k1" | "ed25519" =
                 lastResult.blockchain === "ethereum" ? "secp256k1" : "ed25519";
-            const deviceId = state.deviceId || "mpc-2";
+            const deviceId = state.deviceId;
             const primaryChain: SupportedChain = isSupportedChain(lastResult.chain)
                 ? lastResult.chain
                 : getDefaultChainForCurve(curve);
@@ -1261,23 +1305,13 @@ export class PopupMessageHandler {
             }
             addBlockchainEntry(primaryChain, primaryAddress, true);
 
-            const keyShareData: any = {
-                // Core FROST material — `parsed` shape is
-                // `KeystoreData` from frost-core/keystore.rs.
-                key_package: parsed.key_package ?? "",
-                group_public_key:
-                    lastResult.groupPublicKey ?? parsed.public_key_package ?? "",
+            const keyShareData: KeyShareData = {
+                // Canonical FROST material: engine keystore fields +
+                // hex group key + explicit device→FROST-id map.
+                ...keyShareCore,
                 // Session context
                 session_id: lastResult.sessionId ?? "",
                 device_id: deviceId,
-                participant_index:
-                    parsed.participant_index ?? lastResult.participantIndex ?? 1,
-                threshold: parsed.min_signers ?? lastResult.threshold ?? 0,
-                total_participants:
-                    parsed.max_signers ?? lastResult.total ?? 0,
-                participants: lastResult.participants ?? [],
-                // Curve + chain
-                curve,
                 blockchains: Array.from(blockchainEntries.values()),
                 ethereum_address: addressFor("ethereum"),
                 solana_address: addressFor("solana"),
@@ -1517,16 +1551,21 @@ export class PopupMessageHandler {
 
     private async handleRpcMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
         try {
-            // Set origin if provided (from content script)
-            if (message.origin) {
-                this.rpcHandler.setOrigin(message.origin);
-            }
-            
+            // Always reset: an origin-less (internal) request must never
+            // inherit the previous dApp's origin, and vice versa.
+            this.rpcHandler.setOrigin(typeof message.origin === "string" ? message.origin : "");
+
             const result = await this.rpcHandler.handleRpcRequest(message.payload);
             sendResponse({ success: true, result });
         } catch (error) {
             console.error("[PopupMessageHandler] RPC request failed:", error);
-            sendResponse({ success: false, error: (error as Error).message });
+            const text = error instanceof Error ? error.message : String(error);
+            const code = (error as { code?: unknown } | null)?.code;
+            // Keep EIP-1193 codes (4001 user rejected, …) so the page sees them.
+            sendResponse({
+                success: false,
+                error: typeof code === "number" ? { code, message: text } : text,
+            });
         }
     }
 
@@ -1651,13 +1690,17 @@ export class PopupMessageHandler {
                             // Create key share data from the exported keystore
                             const keyShareData = {
                                 key_package: exportedData.key_package || '',
-                                group_public_key: exportedData.group_public_key || response.sessionInfo.group_public_key || '',
+                                public_key_package: exportedData.public_key_package || '',
+                                group_public_key: response.sessionInfo.group_public_key || '',
                                 session_id: response.sessionInfo.session_id,
                                 device_id: response.sessionInfo.device_id,
                                 participant_index: response.sessionInfo.participant_index,
                                 threshold: response.sessionInfo.threshold,
                                 total_participants: response.sessionInfo.total_participants,
                                 participants: [response.sessionInfo.device_id],
+                                participant_identifiers: {
+                                    [response.sessionInfo.device_id]: response.sessionInfo.participant_index,
+                                },
                                 curve: response.sessionInfo.curve_type as 'secp256k1' | 'ed25519',
                                 blockchains: response.sessionInfo.blockchains || [],
                                 ethereum_address: response.addresses?.ethereum,
@@ -1852,7 +1895,7 @@ export class PopupMessageHandler {
             }
             
             const keystoreManager = KeystoreManager.getInstance();
-            const deviceId = this.stateManager.getState().deviceId || 'mpc-2';
+            const deviceId = this.stateManager.getState().deviceId;
             
             await keystoreManager.createKeystore(message.password, deviceId);
             

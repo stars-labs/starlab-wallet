@@ -210,7 +210,7 @@ describe("StateManager: reshareComplete persists the new share", () => {
         threshold: 2,
         total: 2,
         participants: ["ext-alice", "ext-carol"],
-        participantIndex: 1,
+        participantIdentifiers: { "ext-alice": 1, "ext-carol": 3 },
         blockchain: "ethereum" as const,
     };
 
@@ -231,8 +231,11 @@ describe("StateManager: reshareComplete persists the new share", () => {
         expect(newShare.threshold).toBe(2);
         expect(newShare.total_participants).toBe(2);
         expect(newShare.participants).toEqual(["ext-alice", "ext-carol"]);
-        // Old group key was plain hex → stays canonical hex.
+        // Canonical shape: hex group key, engine public_key_package in
+        // its own field, gapped FROST ids kept explicitly.
         expect(newShare.group_public_key).toBe("02cafe");
+        expect(newShare.public_key_package).toBe("pkp-NEW");
+        expect(newShare.participant_identifiers).toEqual({ "ext-alice": 1, "ext-carol": 3 });
 
         const done = broadcasts.find((b) => b.type === "reshareCompleted");
         expect(done).toBeDefined();
@@ -243,33 +246,23 @@ describe("StateManager: reshareComplete persists the new share", () => {
         expect(status.saved).toBe(true);
     });
 
-    it("when the old group_public_key held the engine keystore JSON, the new JSON replaces it", async () => {
-        const oldEngineJson = JSON.stringify({
-            key_package: "kp-old",
-            public_key_package: "pkp-old",
-            min_signers: 2,
-            max_signers: 3,
-            participant_index: 1,
-        });
-        const stub = plantKeystoreStub({
-            getKeyShare: jest.fn(async () => ({
-                key_package: "kp-old",
-                group_public_key: oldEngineJson,
-                participant_index: 1,
-                threshold: 2,
-                total_participants: 3,
-                participants: ["ext-alice", "ext-bob", "ext-carol"],
-                curve: "secp256k1",
-            })),
-        });
+    it("refuses to save when the identifier map disagrees with the engine keystore", async () => {
+        const stub = plantKeystoreStub();
         const mgr = makeStateManager();
-        (mgr as any).broadcastToPopupPorts = () => {};
+        const broadcasts: any[] = [];
+        (mgr as any).broadcastToPopupPorts = (m: any) => broadcasts.push(m);
 
-        mgr.handleOffscreenStateUpdate(completePayload as any);
+        mgr.handleOffscreenStateUpdate({
+            ...completePayload,
+            // Position-derived ids — wrong for the {1,3} cohort.
+            participantIdentifiers: { "ext-alice": 1, "ext-carol": 2 },
+        } as any);
         await new Promise((r) => setTimeout(r, 10));
 
-        const [, newShare] = stub.updateWalletKeyShare.mock.calls[0];
-        expect(newShare.group_public_key).toBe(completePayload.newKeystoreJson);
+        expect(stub.updateWalletKeyShare).not.toHaveBeenCalled();
+        const done = broadcasts.find((b) => b.type === "reshareCompleted");
+        expect(done.saved).toBe(false);
+        expect(String(done.error)).toContain("participant_indices");
     });
 
     it("reports saved:false when the keystore locked mid-ceremony", async () => {

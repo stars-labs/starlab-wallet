@@ -28,10 +28,16 @@ import {
 } from "bun:test";
 import {
     ReshareState,
+    SigningState,
     WebRTCManager,
     MeshStatusType,
 } from "../../../src/entrypoints/offscreen/webrtc";
 import { initializeWasmIfNeeded, isWasmInitialized } from "./test-utils";
+import type { KeyShareData } from "@stars-labs/types/keystore";
+import {
+    dkgParticipantIdentifiers,
+    keyShareCoreFromEngine,
+} from "../../../src/utils/engineKeystore";
 
 let originalLog: any, originalErr: any, originalWarn: any;
 beforeAll(async () => {
@@ -109,35 +115,21 @@ class MockReshare {
     free() {}
 }
 
-class MockDkgProbe {
-    import_keystore(_json: string) {}
-    get_group_public_key(): string {
-        return GROUP_KEY;
-    }
-    free() {}
-}
-
-const ENGINE_KEYSTORE_JSON = JSON.stringify({
-    key_package: "kp-old",
-    public_key_package: "pkp-old",
-    min_signers: 2,
-    max_signers: 3,
-    participant_index: 1,
-    participant_indices: [1, 2, 3],
-    curve: "secp256k1",
-});
-
-function mockKeyShare(participantIndex = 1) {
+function mockKeyShare(participantIndex = 1): KeyShareData {
     return {
         key_package: "kp-old",
-        // DKG-created wallets store the full engine keystore JSON here.
-        group_public_key: ENGINE_KEYSTORE_JSON,
+        public_key_package: "pkp-old",
+        group_public_key: GROUP_KEY,
         session_id: "wallet-1",
-        device_id: `dev-${participantIndex}`,
+        device_id: ["a", "b", "c"][participantIndex - 1],
         participant_index: participantIndex,
         threshold: 2,
         total_participants: 3,
-        curve: "secp256k1" as const,
+        participants: ["a", "b", "c"],
+        participant_identifiers: { a: 1, b: 2, c: 3 },
+        curve: "secp256k1",
+        blockchains: [],
+        created_at: 0,
     };
 }
 
@@ -164,11 +156,9 @@ describe("WebRTCManager reshare (mock WASM)", () => {
         savedGlobals = {
             FrostReshareSecp256k1: (globalThis as any).FrostReshareSecp256k1,
             FrostReshareEd25519: (globalThis as any).FrostReshareEd25519,
-            FrostDkgSecp256k1: (globalThis as any).FrostDkgSecp256k1,
         };
         (globalThis as any).FrostReshareSecp256k1 = MockReshare;
         (globalThis as any).FrostReshareEd25519 = MockReshare;
-        (globalThis as any).FrostDkgSecp256k1 = MockDkgProbe;
     });
     afterEach(() => {
         for (const [k, v] of Object.entries(savedGlobals)) {
@@ -314,6 +304,27 @@ describe("WebRTCManager reshare (mock WASM)", () => {
         expect(mgr.reshareState).toBe(ReshareState.Complete);
         expect(completions[0].total).toBe(2);
         expect(completions[0].participants).toEqual(["a", "c"]);
+        expect(completions[0].participantIdentifiers).toEqual({ a: 1, c: 3 });
+    });
+
+    it("reshare of a gapped cohort {1,3} uses the stored ids, not sorted positions", () => {
+        const { mgr } = makeManager("c");
+        const gapped: KeyShareData = {
+            ...mockKeyShare(3),
+            participants: ["a", "c"],
+            participant_identifiers: { a: 1, c: 3 },
+            total_participants: 2,
+        };
+        mgr.startReshare(reshareSession(["a", "c"], 2, ["a", "c"]), "wallet-1", gapped, "ethereum");
+        (mgr as any)._updateMeshStatus({ type: MeshStatusType.Ready });
+        expect(mgr.reshareState).toBe(ReshareState.Round1InProgress);
+        expect(MockReshare.created[0].newIds).toEqual([1, 3]); // position-derived would be [1,2]
+    });
+
+    it("refuses a reshare when the wallet record lacks an id for an old-cohort device", () => {
+        const { mgr } = makeManager("a");
+        const ks = { ...mockKeyShare(), participant_identifiers: { a: 1, c: 3 } };
+        expect(mgr.startReshare(reshareSession(["a", "b", "c"]), "wallet-1", ks, "ethereum")).toBe(false);
     });
 
     it("resetSession clears in-flight reshare state", () => {
@@ -329,10 +340,14 @@ describe("WebRTCManager reshare (mock WASM)", () => {
 
 // ---------------------------------------------------------------
 // Real-WASM integration: 3 managers, loopback transport, actual
-// FROST reshare over keystores produced by an actual DKG.
+// FROST reshare over keystores produced by an actual DKG. Key shares
+// are built through the SAME boundary the background uses
+// (keyShareCoreFromEngine), so these tests also pin the stored shape.
 // ---------------------------------------------------------------
 describe("WebRTCManager reshare (real WASM, loopback mesh)", () => {
-    async function makeRealKeystores(): Promise<string[] | null> {
+    const OLD_IDS = ["dev-a", "dev-b", "dev-c"]; // sorted
+
+    async function makeRealKeystores(): Promise<{ groupKey: string; keystores: string[] } | null> {
         if (!isWasmInitialized()) return null;
         const { FrostDkgSecp256k1 } = await import("@stars-labs/core-wasm");
         const n = 3, t = 2;
@@ -353,11 +368,26 @@ describe("WebRTCManager reshare (real WASM, loopback mesh)", () => {
         for (let i = 0; i < n; i++)
             for (let j = 0; j < n; j++)
                 if (i !== j) dkgs[i].add_round2_package(j + 1, r2[j][String(i + 1)]);
-        dkgs.forEach((d) => d.finalize_dkg());
-        const keystores = dkgs.map((d) => (d as any).export_keystore() as string);
+        const keystores = dkgs.map((d) => d.finalize_dkg());
         const groupKey = dkgs[0].get_group_public_key();
         dkgs.forEach((d) => d.free());
-        return [groupKey, ...keystores];
+        return { groupKey, keystores };
+    }
+
+    /** Stored KeyShareData exactly as the background would persist it. */
+    function storedShare(
+        engineJson: string,
+        groupKey: string,
+        identifiers: Record<string, number>,
+        deviceId: string,
+    ): KeyShareData {
+        return {
+            ...keyShareCoreFromEngine(engineJson, groupKey, identifiers),
+            session_id: "wallet-real",
+            device_id: deviceId,
+            blockchains: [],
+            created_at: 0,
+        };
     }
 
     function wireLoopback(managers: Map<string, WebRTCManager>) {
@@ -369,159 +399,183 @@ describe("WebRTCManager reshare (real WASM, loopback mesh)", () => {
         }
     }
 
+    function withRealReshareGlobals<T>(fn: () => Promise<T>): Promise<T> {
+        return (async () => {
+            const { FrostReshareSecp256k1 } = await import("@stars-labs/core-wasm");
+            const saved = (globalThis as any).FrostReshareSecp256k1;
+            (globalThis as any).FrostReshareSecp256k1 = FrostReshareSecp256k1;
+            try {
+                return await fn();
+            } finally {
+                (globalThis as any).FrostReshareSecp256k1 = saved;
+            }
+        })();
+    }
+
+    /** Run a reshare over the loopback mesh; returns completions by device. */
+    async function runReshare(
+        shares: Map<string, KeyShareData>,
+        newCohort: string[],
+        oldCohort: string[],
+        threshold: number,
+    ): Promise<Map<string, any>> {
+        const managers = new Map<string, WebRTCManager>();
+        const completions = new Map<string, any>();
+        for (const id of newCohort) {
+            const mgr = new WebRTCManager(id, () => {});
+            mgr.onReshareComplete = (p) => completions.set(id, p);
+            managers.set(id, mgr);
+        }
+        wireLoopback(managers);
+        const session = {
+            session_id: `reshare_${newCohort.join("_")}`,
+            proposer_id: newCohort[0],
+            total: newCohort.length,
+            threshold,
+            participants: newCohort,
+            session_type: "reshare",
+            curve_type: "secp256k1",
+            wallet_name: "wallet-real",
+            reshare_old_participants: oldCohort,
+            accepted_devices: newCohort,
+        } as any;
+        // Arm everyone, then flip each mesh Ready (broadcasts cascade
+        // synchronously through the loopback transport; earlier-armed
+        // managers buffer packets until their own mesh flips).
+        for (const id of newCohort) {
+            expect(
+                managers.get(id)!.startReshare(session, "wallet-real", shares.get(id)!, "ethereum"),
+            ).toBe(true);
+        }
+        for (const id of newCohort) {
+            (managers.get(id) as any)._updateMeshStatus({ type: MeshStatusType.Ready });
+        }
+        // Drain microtasks — _initializeReshare is async.
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+        for (const id of newCohort) {
+            expect(managers.get(id)!.reshareState).toBe(ReshareState.Complete);
+        }
+        return completions;
+    }
+
+    function dkgShares(made: { groupKey: string; keystores: string[] }): Map<string, KeyShareData> {
+        const ids = dkgParticipantIdentifiers(OLD_IDS);
+        return new Map(
+            OLD_IDS.map((id, i) => [id, storedShare(made.keystores[i], made.groupKey, ids, id)]),
+        );
+    }
+
     it("rotation: all 3 devices end with fresh shares, group key unchanged", async () => {
-        const { FrostReshareSecp256k1, FrostDkgSecp256k1 } = await import("@stars-labs/core-wasm");
         const made = await makeRealKeystores();
         if (!made) {
             console.warn("WASM unavailable — skipping real reshare test");
             return;
         }
-        const [groupKey, ...keystores] = made;
-        const saved = {
-            r: (globalThis as any).FrostReshareSecp256k1,
-            d: (globalThis as any).FrostDkgSecp256k1,
-        };
-        (globalThis as any).FrostReshareSecp256k1 = FrostReshareSecp256k1;
-        (globalThis as any).FrostDkgSecp256k1 = FrostDkgSecp256k1;
-        try {
-            const ids = ["dev-a", "dev-b", "dev-c"]; // sorted
-            const managers = new Map<string, WebRTCManager>();
-            const completions = new Map<string, any>();
-            ids.forEach((id, i) => {
-                const mgr = new WebRTCManager(id, () => {});
-                mgr.onReshareComplete = (p) => completions.set(id, p);
-                managers.set(id, mgr);
-                void i;
-            });
-            wireLoopback(managers);
-
-            const session = {
-                session_id: "reshare_real",
-                proposer_id: "dev-a",
-                total: 3,
-                threshold: 2,
-                participants: ids,
-                session_type: "reshare",
-                curve_type: "secp256k1",
-                wallet_name: "wallet-real",
-                reshare_old_participants: ids,
-                accepted_devices: ids,
-            } as any;
-
-            // Arm everyone, then flip each mesh Ready (broadcasts
-            // cascade synchronously through the loopback transport;
-            // earlier-armed managers buffer packets until their own
-            // mesh flips).
-            ids.forEach((id, i) => {
-                const ks = {
-                    key_package: JSON.parse(keystores[i]).key_package,
-                    group_public_key: keystores[i], // DKG-wallet convention: full engine JSON
-                    session_id: "wallet-real",
-                    device_id: id,
-                    participant_index: i + 1,
-                    threshold: 2,
-                    total_participants: 3,
-                    curve: "secp256k1",
-                };
-                expect(
-                    managers.get(id)!.startReshare(session, "wallet-real", ks, "ethereum"),
-                ).toBe(true);
-            });
-            for (const id of ids) {
-                (managers.get(id) as any)._updateMeshStatus({ type: MeshStatusType.Ready });
-            }
-            // Drain microtasks — _initializeReshare is async.
-            for (let i = 0; i < 10; i++) await Promise.resolve();
-
-            for (const id of ids) {
-                expect(managers.get(id)!.reshareState).toBe(ReshareState.Complete);
+        await withRealReshareGlobals(async () => {
+            const completions = await runReshare(dkgShares(made), OLD_IDS, OLD_IDS, 2);
+            for (const [i, id] of OLD_IDS.entries()) {
                 const done = completions.get(id);
                 expect(done).toBeDefined();
-                expect(done.groupPublicKey).toBe(groupKey);
+                expect(done.groupPublicKey).toBe(made.groupKey);
+                expect(done.participantIdentifiers).toEqual({ "dev-a": 1, "dev-b": 2, "dev-c": 3 });
                 const newKs = JSON.parse(done.newKeystoreJson);
                 expect(typeof newKs.key_package).toBe("string");
                 expect(newKs.min_signers).toBe(2);
                 expect(newKs.max_signers).toBe(3);
                 // Fresh share — not byte-identical to the old one.
-                expect(newKs.key_package).not.toBe(JSON.parse(keystores[ids.indexOf(id)]).key_package);
+                expect(newKs.key_package).not.toBe(JSON.parse(made.keystores[i]).key_package);
             }
-        } finally {
-            (globalThis as any).FrostReshareSecp256k1 = saved.r;
-            (globalThis as any).FrostDkgSecp256k1 = saved.d;
-        }
+        });
     }, 30000);
 
-    it("replace device: 2-of-2 subset resharing keeps the group key", async () => {
-        const { FrostReshareSecp256k1, FrostDkgSecp256k1 } = await import("@stars-labs/core-wasm");
+    it("replace device: 2-of-2 subset resharing keeps the group key and the old ids", async () => {
         const made = await makeRealKeystores();
         if (!made) {
             console.warn("WASM unavailable — skipping real subset reshare test");
             return;
         }
-        const [groupKey, ...keystores] = made;
-        const saved = {
-            r: (globalThis as any).FrostReshareSecp256k1,
-            d: (globalThis as any).FrostDkgSecp256k1,
-        };
-        (globalThis as any).FrostReshareSecp256k1 = FrostReshareSecp256k1;
-        (globalThis as any).FrostDkgSecp256k1 = FrostDkgSecp256k1;
-        try {
-            const oldIds = ["dev-a", "dev-b", "dev-c"];
-            const newIds = ["dev-a", "dev-c"]; // dev-b lost its phone
-            const managers = new Map<string, WebRTCManager>();
-            const completions = new Map<string, any>();
-            for (const id of newIds) {
-                const mgr = new WebRTCManager(id, () => {});
-                mgr.onReshareComplete = (p) => completions.set(id, p);
-                managers.set(id, mgr);
-            }
-            wireLoopback(managers);
-
-            const session = {
-                session_id: "reshare_subset",
-                proposer_id: "dev-a",
-                total: 2,
-                threshold: 2,
-                participants: newIds,
-                session_type: "reshare",
-                curve_type: "secp256k1",
-                wallet_name: "wallet-real",
-                reshare_old_participants: oldIds,
-                accepted_devices: newIds,
-            } as any;
-
-            for (const id of newIds) {
-                const i = oldIds.indexOf(id);
-                const ks = {
-                    key_package: JSON.parse(keystores[i]).key_package,
-                    group_public_key: keystores[i],
-                    session_id: "wallet-real",
-                    device_id: id,
-                    participant_index: i + 1,
-                    threshold: 2,
-                    total_participants: 3,
-                    curve: "secp256k1",
-                };
-                expect(
-                    managers.get(id)!.startReshare(session, "wallet-real", ks, "ethereum"),
-                ).toBe(true);
-            }
-            for (const id of newIds) {
-                (managers.get(id) as any)._updateMeshStatus({ type: MeshStatusType.Ready });
-            }
-            for (let i = 0; i < 10; i++) await Promise.resolve();
-
-            for (const id of newIds) {
-                expect(managers.get(id)!.reshareState).toBe(ReshareState.Complete);
+        await withRealReshareGlobals(async () => {
+            const newCohort = ["dev-a", "dev-c"]; // dev-b lost its phone
+            const completions = await runReshare(dkgShares(made), newCohort, OLD_IDS, 2);
+            for (const id of newCohort) {
                 const done = completions.get(id);
-                expect(done.groupPublicKey).toBe(groupKey);
+                expect(done.groupPublicKey).toBe(made.groupKey);
                 expect(done.total).toBe(2);
                 expect(done.threshold).toBe(2);
-                expect(JSON.parse(done.newKeystoreJson).max_signers).toBe(2);
+                expect(done.participantIdentifiers).toEqual({ "dev-a": 1, "dev-c": 3 });
+                const newKs = JSON.parse(done.newKeystoreJson);
+                expect(newKs.max_signers).toBe(2);
+                expect(newKs.participant_indices).toEqual([1, 3]);
             }
-        } finally {
-            (globalThis as any).FrostReshareSecp256k1 = saved.r;
-            (globalThis as any).FrostDkgSecp256k1 = saved.d;
+        });
+    }, 30000);
+
+    // #63 acceptance: a 2-of-3 wallet reshared down to {1,3} signs.
+    it("a 2-of-3 wallet reshared down to {1,3} signs with the gapped identifiers", async () => {
+        const made = await makeRealKeystores();
+        if (!made) {
+            console.warn("WASM unavailable — skipping reshare→sign test");
+            return;
         }
+        const newCohort = ["dev-a", "dev-c"];
+        const completions = await withRealReshareGlobals(() =>
+            runReshare(dkgShares(made), newCohort, OLD_IDS, 2),
+        );
+
+        // Persist exactly as StateManager.handleReshareComplete does.
+        const shares = new Map<string, KeyShareData>();
+        for (const id of newCohort) {
+            const done = completions.get(id);
+            shares.set(
+                id,
+                storedShare(done.newKeystoreJson, done.groupPublicKey, done.participantIdentifiers, id),
+            );
+        }
+        expect(shares.get("dev-c")!.participant_index).toBe(3);
+        expect(shares.get("dev-c")!.participant_identifiers).toEqual({ "dev-a": 1, "dev-c": 3 });
+
+        // Signing ceremony over a queued loopback (delivery after both
+        // signers armed, as over a real mesh).
+        const managers = new Map<string, WebRTCManager>();
+        const queue: Array<{ from: string; to: string; msg: any }> = [];
+        const signatures = new Map<string, string>();
+        for (const id of newCohort) {
+            const mgr = new WebRTCManager(id, () => {});
+            mgr.sendWebRTCAppMessage = (to: string, msg: any) => {
+                queue.push({ from: id, to, msg });
+            };
+            mgr.onSigningComplete = (p) => signatures.set(id, p.signature);
+            managers.set(id, mgr);
+            expect(await mgr.loadKeystoreForSigning(shares.get(id)!, "ethereum")).toBe(true);
+        }
+
+        const messageHex = "11".repeat(32);
+        const session = {
+            session_id: "sign_after_reshare",
+            proposer_id: "dev-a",
+            total: 2,
+            threshold: 2,
+            // Wire (join) order deliberately unsorted.
+            participants: ["dev-c", "dev-a"],
+            session_type: "signing",
+            curve_type: "secp256k1",
+            signing_message_hex: messageHex,
+            accepted_devices: ["dev-c", "dev-a"],
+        } as any;
+        for (const id of newCohort) {
+            expect(await managers.get(id)!.initiateSigningCeremony(session, messageHex)).toBe(true);
+            expect(managers.get(id)!.signingInfo!.signer_identifiers).toEqual({ "dev-a": 1, "dev-c": 3 });
+        }
+        while (queue.length > 0) {
+            const { from, to, msg } = queue.shift()!;
+            managers.get(to)?.handleWebRTCAppMessage(from, msg);
+        }
+
+        for (const id of newCohort) {
+            expect(managers.get(id)!.signingState).toBe(SigningState.Complete);
+        }
+        const sig = signatures.get("dev-a");
+        expect(sig).toMatch(/^[0-9a-f]+$/);
+        expect(signatures.get("dev-c")).toBe(sig);
     }, 30000);
 });

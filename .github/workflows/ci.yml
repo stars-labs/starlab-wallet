@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      # The extension's postinstall (`wxt prepare`) imports @stars-labs/types,
+      # whose dist/ is gitignored — build it before running install scripts.
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun run build:types
+      - run: cd apps/extension && bun run postinstall
+      - run: bun run check
+      - run: bun run test
+      - run: bun run build

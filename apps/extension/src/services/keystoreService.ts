@@ -205,6 +205,7 @@ export class KeystoreService {
         // Convert CLI data to extension format
         const keyShareData: KeyShareData = {
             key_package: cliKeyData.key_package || '',
+            public_key_package: cliKeyData.public_key_package || '',
             group_public_key: cliMetadata.group_public_key,
             session_id: cliMetadata.wallet_id,
             device_id: cliMetadata.device_id,
@@ -212,6 +213,7 @@ export class KeystoreService {
             threshold: cliMetadata.threshold,
             total_participants: cliMetadata.total_participants,
             participants: [cliMetadata.device_id], // Only this device known from CLI
+            participant_identifiers: { [cliMetadata.device_id]: cliMetadata.participant_index },
             curve: cliMetadata.curve_type as 'secp256k1' | 'ed25519',
             blockchains: cliMetadata.blockchains,
             ethereum_address: cliMetadata.blockchains.find(b => b.blockchain === 'ethereum')?.address,

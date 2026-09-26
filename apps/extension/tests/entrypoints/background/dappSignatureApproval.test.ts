@@ -238,3 +238,47 @@ describe("RpcHandler.approveDappSignature", () => {
         );
     });
 });
+
+describe("RpcHandler.getPendingSignatureRequests", () => {
+    function enqueue(rpc: RpcHandler, address: string) {
+        // Never settles in these tests; swallow the timeout rejection.
+        (rpc as any)
+            .enqueueDappSignature({
+                walletId: "w1",
+                walletName: "Wallet",
+                groupPublicKey: "gpk",
+                blockchain: "ethereum",
+                threshold: 2,
+                total: 3,
+                messageHex: "0x68656c6c6f",
+                originalMessage: "hello",
+                address,
+            })
+            .catch(() => {});
+    }
+
+    beforeEach(() => {
+        augmentChromeNotifications();
+        // enqueueDappSignature broadcasts via runtime.sendMessage; don't rely
+        // on whichever chrome global an earlier test file left behind.
+        const chromeGlobal = (global as any).chrome;
+        chromeGlobal.runtime = { ...chromeGlobal.runtime, sendMessage: jest.fn() };
+    });
+
+    it("lists a queued request in the popup's signatureRequest shape", () => {
+        const rpc = new RpcHandler();
+        rpc.setOrigin("https://app.example.org");
+        enqueue(rpc, "0xabc");
+        const [req] = rpc.getPendingSignatureRequests();
+        expect(req).toMatchObject({
+            message: "hello",
+            origin: "https://app.example.org",
+            fromAddress: "0xabc",
+        });
+        expect(req.signingId).toStartWith("dapp_req_");
+    });
+
+    it("is empty when nothing is queued", () => {
+        expect(new RpcHandler().getPendingSignatureRequests()).toEqual([]);
+    });
+});

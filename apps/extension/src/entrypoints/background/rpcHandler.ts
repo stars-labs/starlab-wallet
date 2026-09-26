@@ -19,6 +19,18 @@ import { checkOrigin } from '../../services/phishingService';
 import type { SessionManager } from './sessionManager';
 import type { YubiKeyManager } from './yubikeyManager';
 import type { YubiKeySigner } from '../../signers';
+import {
+    ProviderRpcError,
+    USER_REJECTED,
+    UNAUTHORIZED,
+    REQUEST_ALREADY_PENDING,
+    isEvmAddress,
+    type ConnectChain,
+    type ConnectRequestView,
+} from './connectRequest';
+
+/** How long a connect request waits for the user before failing (5 min). */
+const CONNECT_REQUEST_TIMEOUT_MS = 300_000;
 
 /**
  * Handles JSON-RPC requests from web applications
@@ -67,6 +79,8 @@ export class RpcHandler {
         originalMessage: string;
         address: string;
         origin: string;
+        /** Text shown on the popup's approve card (phishing banner included). */
+        display: string;
     }> = new Map();
     /**
      * Ext-4: injected so RPC calls (e.g. personal_sign from a dApp)
@@ -82,6 +96,18 @@ export class RpcHandler {
      * the FROST-only path works before it's wired / when no host exists.
      */
     private yubiKeyManager?: YubiKeyManager;
+    /**
+     * dApp connect requests (eth_requestAccounts / solana_connect from an
+     * origin with no stored permission) awaiting the user's decision in the
+     * popup. Nothing is exposed to the origin until resolveConnectRequest
+     * approves it.
+     */
+    private pendingConnectRequests: Map<string, {
+        view: ConnectRequestView;
+        resolve: (accounts: string[]) => void;
+        reject: (reason: Error) => void;
+        timer: ReturnType<typeof setTimeout>;
+    }> = new Map();
 
     constructor() {
         this.accountService = AccountService.getInstance();
@@ -108,13 +134,18 @@ export class RpcHandler {
      * Process a JSON-RPC request and return the response
      */
     async handleRpcRequest(request: JsonRpcRequest): Promise<unknown> {
+        // Snapshot the origin: `this.origin` is shared across concurrent
+        // requests and a connect prompt can stay open for minutes.
+        const origin = this.origin;
         try {
             console.log(`[RpcHandler] Processing RPC request: ${request.method}`);
 
             switch (request.method) {
                 case 'eth_accounts':
+                    return await this.handleEthAccounts(origin);
+
                 case 'eth_requestAccounts':
-                    return await this.handleAccountsRequest(request.method);
+                    return await this.handleEthRequestAccounts(origin);
 
                 case 'eth_chainId':
                     return await this.handleChainIdRequest();
@@ -138,7 +169,7 @@ export class RpcHandler {
                     return await this.handleSignTypedDataRequest(request.params as unknown[]);
 
                 case 'solana_connect':
-                    return await this.handleSolanaConnect();
+                    return await this.handleSolanaConnect(origin);
                 case 'solana_signBytes':
                     return await this.handleSolanaSignBytes(request.params as unknown[]);
                 case 'solana_signTransaction':
@@ -169,74 +200,251 @@ export class RpcHandler {
     }
 
     /**
-     * Handle eth_accounts and eth_requestAccounts
+     * eth_accounts: the EVM accounts this origin is already connected to.
+     * Never prompts. Internal callers (no origin, e.g. the popup) get the
+     * current account.
      */
-    private async handleAccountsRequest(method: string): Promise<string[]> {
-        // For eth_accounts, return already connected accounts
-        if (method === 'eth_accounts') {
-            // If no origin (e.g., from popup), return current account
-            if (!this.origin) {
-                const currentAccount = this.accountService.getCurrentAccount();
-                return currentAccount ? [currentAccount.address] : [];
-            }
-            
-            const connectedAccounts = this.permissionService.getConnectedAccounts(this.origin);
-            console.log(`[RpcHandler] eth_accounts for ${this.origin}: ${connectedAccounts.length} connected`);
-            return connectedAccounts;
+    private async handleEthAccounts(origin: string): Promise<string[]> {
+        if (!origin) {
+            const currentAccount = this.accountService.getCurrentAccount();
+            return currentAccount ? [currentAccount.address] : [];
+        }
+        await this.permissionService.ensureInitialized();
+        return this.permissionService.getConnectedAccounts(origin).filter(isEvmAddress);
+    }
+
+    /**
+     * eth_requestAccounts: an already-connected origin gets its existing
+     * accounts back without a prompt. Otherwise the user must approve the
+     * connection (and pick which accounts to expose) in the popup; a reject
+     * surfaces to the dApp as EIP-1193 4001.
+     */
+    private async handleEthRequestAccounts(origin: string): Promise<string[]> {
+        if (!origin) {
+            return this.handleEthAccounts(origin);
+        }
+        const warning = this.phishingGate(origin);
+
+        await this.permissionService.ensureInitialized();
+        const connected = this.permissionService.getConnectedAccounts(origin).filter(isEvmAddress);
+        if (connected.length > 0) {
+            console.log(`[RpcHandler] Returning existing connections for ${origin}`);
+            return connected;
         }
 
-        // For eth_requestAccounts, we need to prompt user for permission
-        if (method === 'eth_requestAccounts') {
-            // Phishing gate (#36): a known-phishing origin never gets a
-            // connect prompt at all. Lookalikes still connect (fail-open) but
-            // every signing request will carry the warning.
-            if (this.origin) {
-                const { checkOrigin } = await import('../../services/phishingService');
-                const check = checkOrigin(this.origin);
-                if (check.verdict === 'block') {
-                    throw new Error(
-                        `Connection refused: ${this.origin} is a known phishing site.`,
-                    );
-                }
+        await this.accountService.ensureInitialized();
+        let accounts = this.accountService.getAccountsByBlockchain('ethereum');
+        if (accounts.length === 0) {
+            console.log('[RpcHandler] No accounts exist, creating default account');
+            const defaultAccount = await this.accountService.ensureDefaultAccount();
+            if (!defaultAccount) {
+                throw new Error('Failed to create default account');
             }
+            accounts = [defaultAccount];
+        }
 
-            // First ensure we have at least one account
-            await this.accountService.ensureInitialized();
-            let accounts = this.accountService.getAccountsByBlockchain('ethereum');
-            
-            if (accounts.length === 0) {
-                console.log('[RpcHandler] No accounts exist, creating default account');
-                const defaultAccount = await this.accountService.ensureDefaultAccount();
-                if (!defaultAccount) {
-                    throw new Error('Failed to create default account');
-                }
-                accounts = [defaultAccount];
-            }
+        const current = this.accountService.getCurrentAccount();
+        const currentOffered = accounts.find(
+            (a) => current !== null && a.address.toLowerCase() === current.address.toLowerCase(),
+        );
 
-            // Check if we already have permissions
-            const connectedAccounts = this.permissionService.getConnectedAccounts(this.origin);
-            if (connectedAccounts.length > 0) {
-                console.log(`[RpcHandler] Returning existing connections for ${this.origin}`);
-                return connectedAccounts;
-            }
+        return this.requestConnectApproval({
+            origin,
+            blockchain: 'ethereum',
+            accounts: accounts.map((a) => ({ address: a.address, name: a.name })),
+            selected: [(currentOffered ?? accounts[0]).address],
+            warning,
+        });
+    }
 
-            // For now, auto-connect all accounts (in production, show UI selector)
-            // TODO: Implement UI account selector
-            const accountAddresses = accounts.map(acc => acc.address);
-            const currentNetwork = this.networkService.getCurrentNetwork();
-            const chainId = currentNetwork ? toHex(currentNetwork.id) : '0x1';
-            
-            await this.permissionService.connectAccounts(
-                this.origin, 
-                accountAddresses,
-                chainId
+    /**
+     * Phishing gate (#36): a known-phishing origin never gets a connect
+     * prompt at all. Returns the lookalike warning to show on the prompt,
+     * if any.
+     */
+    private phishingGate(origin: string): string | undefined {
+        const check = checkOrigin(origin);
+        if (check.verdict === 'block') {
+            throw new ProviderRpcError(
+                UNAUTHORIZED,
+                `Connection refused: ${origin} is a known phishing site.`,
             );
+        }
+        if (check.verdict === 'warn') {
+            return `${check.reason}${check.imitates ? ` (imitates ${check.imitates})` : ''}`;
+        }
+        return undefined;
+    }
 
-            console.log(`[RpcHandler] Connected ${accountAddresses.length} accounts to ${this.origin}`);
-            return accountAddresses;
+    /**
+     * Park a connect request until the user decides in the popup. Resolves
+     * with the approved addresses; rejects with 4001 on reject/timeout and
+     * -32002 if the same origin already has a request pending for this chain.
+     */
+    private requestConnectApproval(req: Omit<ConnectRequestView, 'requestId'>): Promise<string[]> {
+        for (const { view } of this.pendingConnectRequests.values()) {
+            if (view.origin === req.origin && view.blockchain === req.blockchain) {
+                return Promise.reject(new ProviderRpcError(
+                    REQUEST_ALREADY_PENDING,
+                    `A connection request from ${req.origin} is already pending. Open the wallet to respond.`,
+                ));
+            }
         }
 
-        return [];
+        const requestId = `dapp_connect_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        const view: ConnectRequestView = { requestId, ...req };
+
+        const approval = new Promise<string[]>((resolve, reject) => {
+            const timer = setTimeout(() => {
+                if (this.finishConnectRequest(requestId)) {
+                    reject(new ProviderRpcError(USER_REJECTED, 'Connection request timed out.'));
+                }
+            }, CONNECT_REQUEST_TIMEOUT_MS);
+            this.pendingConnectRequests.set(requestId, { view, resolve, reject, timer });
+        });
+
+        this.sendToExtensionPages({ type: 'connectRequest', request: view });
+
+        if (typeof chrome !== 'undefined' && chrome.notifications) {
+            try {
+                chrome.notifications.create(`mpc-dapp-connect:${requestId}`, {
+                    type: 'basic',
+                    iconUrl: 'icon/128.png',
+                    title: 'Connection request',
+                    message: `${req.origin} wants to connect to your wallet`,
+                    priority: 2,
+                    requireInteraction: true,
+                });
+            } catch (e) {
+                console.warn('[RpcHandler] Failed to create connect notification:', e);
+            }
+        }
+        // Best effort: open the popup straight away. Chrome may refuse
+        // without a user gesture; the notification click is the fallback.
+        try {
+            const opened = (chrome.action as any)?.openPopup?.();
+            if (opened && typeof opened.catch === 'function') opened.catch(() => {});
+        } catch {
+            /* notification click remains the path to the popup */
+        }
+
+        return approval;
+    }
+
+    /** Connect requests still awaiting the user (the popup loads these on open). */
+    /**
+     * dApp signing requests still awaiting approval, in the shape of the
+     * `signatureRequest` broadcast. The popup is usually closed when a
+     * request arrives, so it loads these on open.
+     */
+    getPendingSignatureRequests(): Array<{
+        signingId: string;
+        message: string;
+        origin: string;
+        fromAddress: string;
+    }> {
+        return Array.from(this.pendingDappRequests, ([signingId, r]) => ({
+            signingId,
+            message: r.display,
+            origin: r.origin,
+            fromAddress: r.address,
+        }));
+    }
+
+    getPendingConnectRequests(): ConnectRequestView[] {
+        return Array.from(this.pendingConnectRequests.values(), (p) => p.view);
+    }
+
+    /**
+     * Called from the popup's Connect request card. On approve, stores the
+     * permission for exactly the selected accounts and resolves the dApp's
+     * pending request with them; on reject, fails it with 4001.
+     */
+    async resolveConnectRequest(
+        requestId: string,
+        approved: boolean,
+        selectedAddresses: string[] = [],
+    ): Promise<{ success: boolean; error?: string }> {
+        const pending = this.pendingConnectRequests.get(requestId);
+        if (!pending) {
+            return { success: false, error: `No pending connect request ${requestId}` };
+        }
+
+        if (!approved) {
+            this.finishConnectRequest(requestId);
+            pending.reject(new ProviderRpcError(USER_REJECTED, 'User rejected the request.'));
+            return { success: true };
+        }
+
+        const offered = new Map(pending.view.accounts.map((a) => [a.address.toLowerCase(), a.address]));
+        const chosen: string[] = [];
+        for (const address of selectedAddresses) {
+            const match = offered.get(address.toLowerCase());
+            if (!match) {
+                return { success: false, error: `Account ${address} was not offered to ${pending.view.origin}` };
+            }
+            if (!chosen.includes(match)) chosen.push(match);
+        }
+        if (chosen.length === 0) {
+            return { success: false, error: 'Select at least one account to connect' };
+        }
+
+        this.finishConnectRequest(requestId);
+        try {
+            await this.storeConnection(pending.view.origin, pending.view.blockchain, chosen);
+        } catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
+            pending.reject(new Error(`Failed to store connection: ${message}`));
+            return { success: false, error: message };
+        }
+        pending.resolve(chosen);
+        return { success: true };
+    }
+
+    /**
+     * Remove a request from the queue and tell every open popup it is gone.
+     * Returns false if it was already finished.
+     */
+    private finishConnectRequest(requestId: string): boolean {
+        const pending = this.pendingConnectRequests.get(requestId);
+        if (!pending) return false;
+        clearTimeout(pending.timer);
+        this.pendingConnectRequests.delete(requestId);
+        if (typeof chrome !== 'undefined' && chrome.notifications) {
+            try {
+                chrome.notifications.clear(`mpc-dapp-connect:${requestId}`);
+            } catch {
+                /* non-fatal */
+            }
+        }
+        this.sendToExtensionPages({ type: 'connectRequestResolved', requestId });
+        return true;
+    }
+
+    /**
+     * Persist the approved accounts for this chain, keeping the origin's
+     * connections on the other chain (one permission record per origin).
+     */
+    private async storeConnection(origin: string, blockchain: ConnectChain, accounts: string[]): Promise<void> {
+        const otherChain = this.permissionService
+            .getConnectedAccounts(origin)
+            .filter((a) => isEvmAddress(a) !== (blockchain === 'ethereum'));
+        const currentNetwork = this.networkService.getCurrentNetwork();
+        const chainId = currentNetwork ? toHex(currentNetwork.id) : '0x1';
+        await this.permissionService.connectAccounts(origin, [...accounts, ...otherChain], chainId);
+        console.log(`[RpcHandler] Connected ${accounts.length} ${blockchain} account(s) to ${origin}`);
+    }
+
+    /** runtime.sendMessage that tolerates "no receiver" when the popup is closed. */
+    private sendToExtensionPages(message: Record<string, unknown>): void {
+        try {
+            const sent = chrome.runtime.sendMessage(message) as unknown;
+            if (sent && typeof (sent as Promise<unknown>).catch === 'function') {
+                (sent as Promise<unknown>).catch(() => {});
+            }
+        } catch {
+            /* no extension page listening */
+        }
     }
 
     /**
@@ -526,17 +734,37 @@ export class RpcHandler {
     }
 
     /**
-     * Solana wallet-standard: return the connected Solana (ed25519) address.
-     * dApps call this on `standard:connect`.
+     * Solana wallet-standard `standard:connect`. Same gate as
+     * eth_requestAccounts: an origin already connected to one of our Solana
+     * accounts gets it back; otherwise the user must approve in the popup.
      */
-    private async handleSolanaConnect(): Promise<string> {
-        const wallet = await this.findSolanaWallet();
-        if (!wallet) {
+    private async handleSolanaConnect(origin: string): Promise<string> {
+        const wallets = await this.listSolanaWallets();
+        if (wallets.length === 0) {
             throw new Error(
                 'No Solana account available. Create or unlock a wallet with a Solana (ed25519) address.',
             );
         }
-        return (wallet as any).address as string;
+        if (!origin) {
+            return wallets[0].address;
+        }
+        const warning = this.phishingGate(origin);
+
+        await this.permissionService.ensureInitialized();
+        const connected = new Set(this.permissionService.getConnectedAccounts(origin));
+        const existing = wallets.find((w) => connected.has(w.address.toLowerCase()));
+        if (existing) {
+            return existing.address;
+        }
+
+        const approved = await this.requestConnectApproval({
+            origin,
+            blockchain: 'solana',
+            accounts: wallets.map((w) => ({ address: w.address, name: w.name })),
+            selected: [wallets[0].address],
+            warning,
+        });
+        return approved[0];
     }
 
     /**
@@ -636,20 +864,25 @@ export class RpcHandler {
         return json.result as string;
     }
 
-    /**
-     * Find a Solana (ed25519) wallet — by address if given, else the first one.
-     */
-    private async findSolanaWallet(address?: string): Promise<unknown | undefined> {
+    /** All Solana (ed25519) wallets in the keystore that carry an address. */
+    private async listSolanaWallets(): Promise<{ id: string; name: string; address: string }[]> {
         const { KeystoreManager } = await import('../../services/keystoreManager');
-        const wallets = KeystoreManager.getInstance().getWallets();
-        const isSolana = (w: any) => w.blockchain === 'solana' || w.curve === 'ed25519';
-        if (address) {
-            const norm = address.toLowerCase();
-            return wallets.find(
-                (w: any) => isSolana(w) && typeof w.address === 'string' && w.address.toLowerCase() === norm,
-            );
-        }
-        return wallets.find(isSolana);
+        return KeystoreManager.getInstance()
+            .getWallets()
+            .filter((w: any) => (w.blockchain === 'solana' || w.curve === 'ed25519') && typeof w.address === 'string')
+            .map((w: any) => ({ id: w.id, name: w.name ?? w.id, address: w.address }));
+    }
+
+    /** Find the Solana (ed25519) keystore wallet with this address. */
+    private async findSolanaWallet(address: string): Promise<unknown | undefined> {
+        const { KeystoreManager } = await import('../../services/keystoreManager');
+        const norm = address.toLowerCase();
+        return KeystoreManager.getInstance().getWallets().find(
+            (w: any) =>
+                (w.blockchain === 'solana' || w.curve === 'ed25519') &&
+                typeof w.address === 'string' &&
+                w.address.toLowerCase() === norm,
+        );
     }
 
     /**
@@ -678,20 +911,6 @@ export class RpcHandler {
         /** Human-readable text shown in the popup (defaults to originalMessage). */
         displayMessage?: string;
     }): Promise<string> {
-        const requestId = `dapp_req_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-        this.pendingDappRequests.set(requestId, {
-            walletId: ctx.walletId,
-            walletName: ctx.walletName,
-            groupPublicKey: ctx.groupPublicKey,
-            blockchain: ctx.blockchain,
-            threshold: ctx.threshold,
-            total: ctx.total,
-            messageHex: ctx.messageHex,
-            originalMessage: ctx.originalMessage,
-            address: ctx.address,
-            origin: this.origin || 'Unknown',
-        });
-
         // Phishing gate (#36): every signing request re-checks the origin —
         // a lookalike that slipped past connect still gets flagged where it
         // matters, on the approve screen.
@@ -706,6 +925,21 @@ export class RpcHandler {
                 /* never let the gate break signing */
             }
         }
+
+        const requestId = `dapp_req_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        this.pendingDappRequests.set(requestId, {
+            walletId: ctx.walletId,
+            walletName: ctx.walletName,
+            groupPublicKey: ctx.groupPublicKey,
+            blockchain: ctx.blockchain,
+            threshold: ctx.threshold,
+            total: ctx.total,
+            messageHex: ctx.messageHex,
+            originalMessage: ctx.originalMessage,
+            address: ctx.address,
+            origin: this.origin || 'Unknown',
+            display,
+        });
 
         chrome.runtime.sendMessage({
             type: 'signatureRequest',

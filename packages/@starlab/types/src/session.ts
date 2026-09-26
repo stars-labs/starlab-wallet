@@ -30,7 +30,7 @@
  * key. Carries the same wallet-identifying siblings as signing
  * (wallet_name, group_public_key, blockchain) plus
  * `reshare_old_participants` (the wallet's current cohort, so every
- * joiner maps device ids → FROST identifiers consistently).
+ * joiner can check it holds the same cohort).
  */
 export type SessionTypeTag = "dkg" | "signing" | "reshare";
 
@@ -86,8 +86,9 @@ export interface SessionInfo {
     /** Reshare-only: the wallet's CURRENT cohort (sorted device ids).
      *  Every member of the NEW cohort must appear here — the engine's
      *  reshare requires every new participant to already hold a
-     *  share. FROST identifiers are derived from the sorted position
-     *  in THIS list (old indices), not the session's participants. */
+     *  share. FROST identifiers are NOT derived from this list — each
+     *  device looks them up in its stored wallet record
+     *  (KeyShareData.participant_identifiers). */
     reshare_old_participants?: string[];
 
     // ----- Extension-local bookkeeping (not on the TUI wire) -----

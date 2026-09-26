@@ -36,6 +36,8 @@
     import Settings from "../../components/Settings.svelte";
     import AccountManager from "../../components/AccountManager.svelte";
     import SignatureRequest from "../../components/SignatureRequest.svelte";
+    import ConnectRequest from "../../components/ConnectRequest.svelte";
+    import type { ConnectRequestView } from "../background/connectRequest";
     import PasswordPrompt from "./components/PasswordPrompt.svelte";
     import WalletSelector from "./components/WalletSelector.svelte";
     import CreateWalletForm from "../../components/CreateWalletForm.svelte";
@@ -542,6 +544,15 @@
     };
     let peerDeclineToasts: PeerDeclineToast[] = [];
 
+    // A dApp signing request that failed in the background (ceremony
+    // error, timeout, …). Same transient-toast pattern as declines.
+    type SigningErrorToast = {
+        signingId: string;
+        error: string;
+        expiresAt: number;
+    };
+    let signingErrorToasts: SigningErrorToast[] = [];
+
     // Ext-2d-progress: live per-peer roster during an active FROST
     // signing ceremony. Updated by the `signingProgress` event from
     // background every time a commitment or share lands on
@@ -573,7 +584,53 @@
         origin: string;
         fromAddress: string;
     }> = [];
-    
+
+    // dApp connect requests. Loaded on open (the request usually predates
+    // the popup) and kept live by the RpcHandler's runtime broadcasts.
+    let connectRequests: ConnectRequestView[] = [];
+
+    function removeConnectRequest(requestId: string) {
+        connectRequests = connectRequests.filter((r) => r.requestId !== requestId);
+    }
+
+    function onConnectRequestMessage(message: any) {
+        if (message?.type === "signatureRequest") {
+            // Sent via runtime.sendMessage, not the popup port.
+            handleBackgroundMessage(message);
+        } else if (message?.type === "connectRequest" && message.request?.requestId) {
+            if (!connectRequests.some((r) => r.requestId === message.request.requestId)) {
+                connectRequests = [...connectRequests, message.request];
+            }
+        } else if (message?.type === "connectRequestResolved" && message.requestId) {
+            removeConnectRequest(message.requestId);
+        }
+    }
+
+    onMount(() => {
+        chrome.runtime.onMessage.addListener(onConnectRequestMessage);
+        chrome.runtime.sendMessage({ type: "getPendingConnectRequests" }, (response) => {
+            if (chrome.runtime.lastError) {
+                console.warn("[UI] Failed to load connect requests:", chrome.runtime.lastError.message);
+                return;
+            }
+            if (response?.success && Array.isArray(response.requests)) {
+                connectRequests = response.requests;
+            }
+        });
+        chrome.runtime.sendMessage({ type: "getPendingSignatureRequests" }, (response) => {
+            if (chrome.runtime.lastError) {
+                console.warn("[UI] Failed to load signature requests:", chrome.runtime.lastError.message);
+                return;
+            }
+            if (response?.success && Array.isArray(response.requests)) {
+                for (const request of response.requests) {
+                    handleBackgroundMessage({ type: "signatureRequest", ...request });
+                }
+            }
+        });
+    });
+    onDestroy(() => chrome.runtime.onMessage.removeListener(onConnectRequestMessage));
+
     // Keystore state
     // Explicit typing so `.wallets.find(...)` returns
     // `ExtensionWalletMetadata | undefined` instead of `never`.
@@ -1022,8 +1079,10 @@
                 break;
                 
             case "signatureRequest":
-//                 console.log("[UI] Processing signatureRequest:", message);
-                if (message.signingId && message.message && message.origin && message.fromAddress) {
+                if (
+                    message.signingId && message.message && message.origin && message.fromAddress &&
+                    !signatureRequests.some((req) => req.signingId === message.signingId)
+                ) {
                     // Add new signature request to the list
                     signatureRequests = [...signatureRequests, {
                         signingId: message.signingId,
@@ -1125,11 +1184,20 @@
                 break;
                 
             case "signatureError":
-//                 console.log("[UI] Processing signatureError:", message);
                 if (message.signingId) {
                     // Remove the failed request from the list
                     signatureRequests = signatureRequests.filter(req => req.signingId !== message.signingId);
-                    // TODO: Show error notification
+                    const toast: SigningErrorToast = {
+                        signingId: message.signingId,
+                        error: String(message.error ?? "Unknown error"),
+                        expiresAt: Date.now() + 8000,
+                    };
+                    signingErrorToasts = [...signingErrorToasts, toast];
+                    setTimeout(() => {
+                        signingErrorToasts = signingErrorToasts.filter(
+                            (t) => t.expiresAt !== toast.expiresAt,
+                        );
+                    }, 8000);
                 }
                 break;
 
@@ -2063,6 +2131,18 @@
     {:else}
         <!-- ===================== Main wallet view ===================== -->
 
+        <!-- dApp connect requests: nothing is shared with a site until approved -->
+        {#if connectRequests.length > 0}
+            <div class="space-y-2">
+                {#each connectRequests as request (request.requestId)}
+                    <ConnectRequest
+                        {request}
+                        on:complete={(e) => removeConnectRequest(e.detail)}
+                    />
+                {/each}
+            </div>
+        {/if}
+
         {#if keystoreStatus.wallets.length > 0}
             <WalletSelector
                 wallets={keystoreStatus.wallets}
@@ -2594,6 +2674,18 @@
                         <p class="mono text-[10px] opacity-80">
                             {toast.declinerId}
                         </p>
+                    </div>
+                {/each}
+            </div>
+        {/if}
+
+        <!-- Signing-error toasts (auto-dismiss after 8s) -->
+        {#if signingErrorToasts.length > 0}
+            <div class="fixed right-4 top-4 z-40 space-y-2">
+                {#each signingErrorToasts as toast (toast.expiresAt)}
+                    <div class="alert alert-error shadow-lg">
+                        <p class="font-semibold">Signing failed</p>
+                        <p class="text-[11px] opacity-80">{toast.error}</p>
                     </div>
                 {/each}
             </div>

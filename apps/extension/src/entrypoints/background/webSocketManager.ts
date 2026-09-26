@@ -514,8 +514,12 @@ export class WebSocketManager {
         // reshare need the full cohort (every NEW shareholder must
         // contribute to / receive from the reshare rounds).
         if (sessionType === "signing") {
-            if (joined < session.threshold) {
-                return; // Not enough signers yet.
+            // Our own signing session was started by SessionManager when it
+            // announced (CLI/TUI co-signers never join, so there is nothing
+            // to wait for); a second trigger would reload the keystore
+            // mid-ceremony. As a co-signer, wait for threshold signers.
+            if (session.proposer_id === deviceId || joined < session.threshold) {
+                return;
             }
         } else {
             if (joined !== session.total) {

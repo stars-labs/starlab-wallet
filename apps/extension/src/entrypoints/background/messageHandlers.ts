@@ -2163,16 +2163,12 @@ export class OffscreenMessageHandler {
                 this.handleLogMessage(payload);
                 break;
 
-            case "signingComplete":
-                this.handleSigningComplete(payload);
-                break;
-
             case "signingError":
                 this.handleSigningError(payload);
                 break;
 
-            // NOTE: dkgComplete and dkgStateUpdate are INTENTIONALLY
-            // not matched here. The corresponding stateManager
+            // NOTE: signingComplete, dkgComplete and dkgStateUpdate are
+            // INTENTIONALLY not matched here. The corresponding stateManager
             // handler (StateManager.handleOffscreenStateUpdate, via
             // the default branch below) is the canonical path — it
             // stashes pendingKeystoreJson + broadcasts to popup for
@@ -2239,18 +2235,6 @@ export class OffscreenMessageHandler {
             console.log(`📄 [OffscreenMessageHandler] LOG from ${source}: ${payload.payload.message}`);
         } else {
             console.log("[OffscreenMessageHandler] LOG:", payload);
-        }
-    }
-
-    private handleSigningComplete(payload: any): void {
-        console.log("[OffscreenMessageHandler] Signing complete:", payload);
-        if (payload.signingId && payload.signature) {
-            // Forward to popup/content scripts if needed
-            chrome.runtime.sendMessage({
-                type: MESSAGE_TYPES.SIGNING_COMPLETE,
-                signingId: payload.signingId,
-                signature: payload.signature
-            });
         }
     }
 

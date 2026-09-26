@@ -23,6 +23,7 @@ import { WebSocketClient } from "./websocket";
 import { validateSessionProposal, validateSessionAcceptance } from "@stars-labs/types/messages";
 import type { BackgroundToPopupMessage, OffscreenMessage } from "@stars-labs/types/messages";
 import { buildWireSessionInfo } from "../../utils/session-parse";
+import { accountWalletId } from "../../utils/wallet-id";
 
 // Session persistence removed - sessions are ephemeral for security
 
@@ -743,8 +744,8 @@ export class SessionManager {
             coordination_type: "Network",
             // Signing-specific top-level siblings — TUI parser reads
             // these at the top level (not nested). `wallet_name` is the
-            // wallet id: CLI/TUI joiners load their share by it.
-            wallet_name: config.walletId,
+            // account-0 child wallet id — the key everyone signs with.
+            wallet_name: accountWalletId(config.walletId, config.blockchain, 0),
             group_public_key: config.groupPublicKey,
             blockchain: config.blockchain,
             signing_message_hex: config.signingMessageHex,
@@ -783,6 +784,13 @@ export class SessionManager {
                 type: "signingSessionCreated",
                 sessionInfo,
             } as any);
+            // Start our ceremony now: CLI/TUI co-signers start on the
+            // announce and never join, and the server doesn't echo our own
+            // announce, so no later event would trigger it.
+            void this.sendToOffscreen(
+                { type: "sessionReadyForSigning", sessionInfo, blockchain: config.blockchain } as any,
+                `sessionReadyForSigning(${sessionId})`,
+            );
             return { success: true, sessionId };
         } catch (error) {
             console.error(

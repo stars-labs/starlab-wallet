@@ -5,7 +5,7 @@
  * from the shared DKG session id.
  */
 import { describe, it, expect } from "bun:test";
-import { walletIdFromSession } from "../../src/utils/wallet-id";
+import { walletIdFromSession, accountWalletId } from "../../src/utils/wallet-id";
 
 describe("walletIdFromSession", () => {
     it("takes the first 12 hex digits of a uuid session id", () => {
@@ -22,5 +22,11 @@ describe("walletIdFromSession", () => {
 
     it("never returns an empty id", () => {
         expect(walletIdFromSession("---")).toBe("wallet");
+    });
+});
+
+describe("accountWalletId", () => {
+    it("names the BIP-44 account child like starlab-mpc's ensure_account_wallet", () => {
+        expect(accountWalletId("d9f249e966b3", "ethereum", 0)).toBe("d9f249e966b3-ethereum-0");
     });
 });

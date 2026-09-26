@@ -10,3 +10,13 @@ export function walletIdFromSession(sessionId: string): string {
     const alnum = [...sessionId].filter((c) => /[0-9a-zA-Z]/.test(c)).slice(0, 12).join("");
     return alnum || "wallet";
 }
+
+/**
+ * Id of a wallet's BIP-44 account child — starlab-mpc's
+ * `ensure_account_wallet` naming. Signing announces name this child: CLI/TUI
+ * co-signers load (or derive on first use) its share, the same account key
+ * the extension signs with; the root key never signs.
+ */
+export function accountWalletId(parentId: string, chain: string, account: number): string {
+    return `${parentId}-${chain}-${account}`;
+}

@@ -553,16 +553,15 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                 // block on this — ceremony progress flows back via
                 // signingStateUpdate + signingComplete events.
                 (async () => {
-                    // If the FROST instance isn't loaded yet, fetch
-                    // the active keystore from background and load
-                    // it. Uses an IIFE so the sendResponse below
-                    // returns eagerly — load can take hundreds of
-                    // ms on first call.
-                    const status = webRTCManager!.getDkgStatus?.();
-                    const alreadyLoaded = !!status?.frostDkgInitialized;
-                    if (!alreadyLoaded) {
+                    // Runs in an IIFE so the sendResponse below returns
+                    // eagerly — the keystore load takes hundreds of ms.
+                    // Always load the saved wallet: an instance left over
+                    // from a DKG in this document holds the ROOT key (which
+                    // never signs — signing uses the derived account-0
+                    // child) and none of the wallet's FROST identifiers.
+                    {
                         console.log(
-                            "[sessionReadyForSigning] FROST not loaded — requesting active keystore",
+                            "[sessionReadyForSigning] loading the active keystore for signing",
                         );
                         const loaded = await new Promise<boolean>((resolve) => {
                             chrome.runtime.sendMessage(

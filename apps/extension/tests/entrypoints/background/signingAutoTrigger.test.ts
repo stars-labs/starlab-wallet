@@ -53,6 +53,7 @@ function makeManager(opts?: {
         return { success: true };
     });
     const stateManager = {
+        getState: () => appState,
         updateInvites: jest.fn((inv: any[]) => {
             appState.invites = inv;
         }),

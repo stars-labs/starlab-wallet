@@ -472,6 +472,9 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
 
                 // Update session info and trigger mesh readiness check with blockchain parameter
                 webRTCManager.updateSessionInfo(payload.sessionInfo);
+                // The session creator never went through `sessionAccepted`,
+                // so it hasn't offered to anyone yet.
+                webRTCManager.initiateMeshOffers();
 
                 // Trigger DKG with the correct blockchain parameter
                 console.log("🚀 Offscreen: Triggering DKG with blockchain:", blockchain);
@@ -529,6 +532,7 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
 
                 webRTCManager.setBlockchain(blockchain);
                 webRTCManager.updateSessionInfo(payload.sessionInfo);
+                webRTCManager.initiateMeshOffers();
 
                 if (!signingMessageHex) {
                     console.warn(

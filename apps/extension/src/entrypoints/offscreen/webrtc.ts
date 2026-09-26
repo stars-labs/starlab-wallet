@@ -300,6 +300,10 @@ export class WebRTCManager {
       .join('');
   }
 
+  private _hexToBytes(hex: string): Uint8Array {
+    return new Uint8Array((hex.match(/.{1,2}/g) ?? []).map((byte) => parseInt(byte, 16)));
+  }
+
   private _base64ToHex(base64: string): string {
     if (typeof atob === 'function') {
       const binary = atob(base64);
@@ -1637,7 +1641,11 @@ export class WebRTCManager {
 
             // Extract the specific package for this peer from the map
             if (packageMap[peerIndexStr]) {
-              const individualPackage = packageMap[peerIndexStr];
+              // Each map value is hex(JSON). Send the parsed object, as
+              // for round 1 — CLI/TUI peers parse `package` as JSON.
+              const individualPackage = JSON.parse(
+                new TextDecoder().decode(this._hexToBytes(packageMap[peerIndexStr])),
+              );
 
               // Send the individual package (not the entire map)
               const message: WebRTCAppMessage = {
@@ -2939,6 +2947,20 @@ export class WebRTCManager {
       receivedRound2Packages: Array.from(this.receivedRound2Packages),
       frostDkgInitialized: this.frostDkg !== null
     };
+  }
+
+  /**
+   * Offer to every session participant whose device id sorts after ours —
+   * the smaller id offers, the same rule as the Rust CLI/TUI. Skips peers
+   * we already have a connection with, so it is safe to call whenever a
+   * ceremony becomes ready.
+   */
+  public initiateMeshOffers(): void {
+    for (const peerId of this.sessionInfo?.participants ?? []) {
+      if (peerId > this.localPeerId && !this.peerConnections.has(peerId)) {
+        void this.initiatePeerConnection(peerId);
+      }
+    }
   }
 
   // Add the missing initiatePeerConnection method that offscreen/index.ts calls

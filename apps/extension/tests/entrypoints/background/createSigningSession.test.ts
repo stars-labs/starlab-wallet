@@ -109,7 +109,8 @@ describe("SessionManager.createSigningSession", () => {
         expect(wire.coordination_type).toBe("Network");
         // Signing-specific sibling fields TUI reads at top level
         // (not nested under a content object).
-        expect(wire.wallet_name).toBe("Treasury");
+        // CLI/TUI joiners look the wallet up by id, not display name.
+        expect(wire.wallet_name).toBe("wallet-xyz");
         expect(wire.group_public_key).toBe("02cafe");
         expect(wire.blockchain).toBe("ethereum");
         expect(wire.signing_message_hex).toBe("deadbeef");

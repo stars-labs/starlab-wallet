@@ -19,3 +19,6 @@ jobs:
       - run: bun run check
       - run: bun run test
       - run: bun run build
+      # The offscreen document (WebRTC + FROST) must not load the popup
+      # chunk: its top-level mount() throws there and kills the document.
+      - run: "! grep -q 'from\"./popup-' apps/extension/.output/chrome-mv3/chunks/offscreen-*.js"

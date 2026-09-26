@@ -2,6 +2,28 @@ import { defineConfig } from 'wxt';
 import tailwindcss from '@tailwindcss/vite';
 import wasm from 'vite-plugin-wasm';
 
+/**
+ * Rolldown otherwise parks its runtime helpers (e.g. the `import * as`
+ * namespace builder) in the first entry chunk of the HTML-pages build — the
+ * popup's. The offscreen document then imports the popup chunk, runs its
+ * top-level `mount(App, #app)`, throws (there is no #app) and never
+ * initialises WebRTC/FROST. Give the runtime its own chunk. Only the
+ * code-split ES build needs it; WXT's single-entry IIFE builds (background,
+ * content scripts) reject `codeSplitting` options.
+ */
+function isolateRolldownRuntime() {
+  return {
+    name: 'isolate-rolldown-runtime',
+    outputOptions(options: { format?: string }) {
+      if (options.format === 'iife' || options.format === 'umd') return;
+      return {
+        ...options,
+        codeSplitting: { groups: [{ name: 'rolldown-runtime', test: /rolldown\/runtime/ }] },
+      };
+    },
+  };
+}
+
 export default defineConfig({
   srcDir: 'src',
   modules: ['@wxt-dev/module-svelte'],
@@ -15,6 +37,7 @@ export default defineConfig({
     plugins: [
       wasm(),
       tailwindcss(),
+      isolateRolldownRuntime(),
     ],
     resolve: {
       alias: {

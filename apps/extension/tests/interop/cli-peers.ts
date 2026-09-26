@@ -10,12 +10,16 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import crypto from "node:crypto";
+import net from "node:net";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(HERE, "../../../..");
-const DRIVER = path.join(REPO_ROOT, "scripts/demo/serve_autojoin.py");
-const CLI_BIN = path.join(REPO_ROOT, "target/release/starlab-cli");
+// The CLI + its driver live in stars-labs/starlab-mpc; by default a sibling
+// checkout of this repo. Override with STARLAB_MPC_DIR.
+const MPC_DIR = process.env.STARLAB_MPC_DIR ?? path.resolve(HERE, "../../../../../starlab-mpc");
+const DRIVER = path.join(MPC_DIR, "scripts/demo/serve_autojoin.py");
+const CLI_BIN = path.join(MPC_DIR, "target/release/starlab-cli");
+const SIGNAL_BIN = path.join(MPC_DIR, "target/release/starlab-signal-server");
 
 export type DkgResult = { wallet: string; address: string; groupKey: string };
 
@@ -37,7 +41,7 @@ export function freshRoom(): string {
 export function ensurePrereqs(): void {
   if (!fs.existsSync(CLI_BIN)) {
     throw new Error(
-      `CLI binary not found at ${CLI_BIN}. Run \`cargo build --release -p starlab-cli\`.`,
+      `CLI binary not found at ${CLI_BIN}. Run \`cargo build --release -p starlab-cli\` in starlab-mpc (or set STARLAB_MPC_DIR).`,
     );
   }
   if (!fs.existsSync(DRIVER)) {
@@ -59,7 +63,9 @@ export function startPeers(opts: {
   ensurePrereqs();
   const peers: Peer[] = [];
   for (let i = 1; i <= opts.count; i++) {
-    const deviceId = `interop-cli-${i}`;
+    // Unique per run: a peer left over from an aborted run keeps its
+    // registration on the signal server, and a duplicate id breaks the mesh.
+    const deviceId = `interop-cli-${opts.room.slice(-6)}-${i}`;
     const keystore = fs.mkdtempSync(path.join(os.tmpdir(), `interop-ks-${i}-`));
     const pwVar = `MPC_INTEROP_PW_${i}`;
 
@@ -102,7 +108,7 @@ export function startPeers(opts: {
     });
     proc.stderr!.on("data", (d: Buffer) => console.error(`[${deviceId}:err] ${d}`));
 
-    peers.push({
+    const peer: Peer = {
       deviceId,
       proc,
       dkg,
@@ -111,10 +117,51 @@ export function startPeers(opts: {
         proc.kill("SIGTERM");
         try { fs.rmSync(keystore, { recursive: true, force: true }); } catch { /* best effort */ }
       },
-    });
+    };
+    live.add(peer);
+    peers.push(peer);
   }
   return peers;
 }
+
+/**
+ * Start a private signal server on a free local port. The server keeps
+ * sessions announced by earlier runs, and CLI peers auto-join any DKG they
+ * see — so a shared server lets a stale session capture them. A fresh one
+ * per test keeps runs independent.
+ */
+export async function startSignalServer(): Promise<{ url: string; kill(): void }> {
+  if (!fs.existsSync(SIGNAL_BIN)) {
+    throw new Error(
+      `Signal server not found at ${SIGNAL_BIN}. Run \`cargo build --release -p starlab-signal-server\` in starlab-mpc.`,
+    );
+  }
+  const port = await new Promise<number>((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address() as net.AddressInfo;
+      srv.close(() => resolve(port));
+    });
+    srv.on("error", reject);
+  });
+  const proc = spawn(SIGNAL_BIN, [], {
+    env: { ...process.env, MPC_SIGNAL_BIND: `127.0.0.1:${port}` },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  await new Promise<void>((resolve, reject) => {
+    proc.stderr!.on("data", (d: Buffer) => {
+      if (d.toString().includes("listening")) resolve();
+    });
+    proc.once("exit", (code) => reject(new Error(`signal server exited with ${code}`)));
+  });
+  const server = { url: `ws://127.0.0.1:${port}`, kill: () => proc.kill("SIGTERM") };
+  live.add(server);
+  return server;
+}
+
+// A run killed from outside (Ctrl-C, CI timeout) skips the spec's `finally`.
+const live = new Set<{ kill(): void }>();
+process.once("exit", () => live.forEach((p) => p.kill()));
 
 export function killPeers(peers: Peer[]): void {
   for (const p of peers) p.kill();

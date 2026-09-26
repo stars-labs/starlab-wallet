@@ -37,6 +37,7 @@ import { YubiKeyManager } from './yubikeyManager';
 import { INITIAL_APP_STATE } from "@stars-labs/types/appstate";
 import { getRoom, getSignalServerUrl } from "../../config/signal-server";
 import { getDeviceId } from "../../config/device";
+import { redactForLog } from "../../utils/redact";
 import { DkgState } from "@stars-labs/types/dkg";
 import {
     type PopupToBackgroundMessage,
@@ -243,7 +244,7 @@ function setupMessageHandlers(): void {
         console.log(`│ Type: ${(message as any)?.type || 'unknown'}`);
         console.log(`│ From: ${senderType} (${tabInfo})`);
         console.log(`│ URL: ${sender.url || 'unknown'}`);
-        console.log(`│ Message:`, message);
+        console.log(`│ Message:`, redactForLog(message));
 //         console.log("└─────────────────────────────────────────────────────────────────");
 
         // Validate basic message structure

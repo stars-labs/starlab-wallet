@@ -76,8 +76,12 @@ test output.
 
 ## Status
 
-Verified passing (2026-09-26) against starlab-mpc with the dual-format
-package decoding and frost-native identifiers, for both secp256k1 and ed25519:
+Verified passing (2026-09-26) for both secp256k1 and ed25519 against a
+starlab-mpc CLI that has (a) the engine fixes in `fix/wasm-accept-frost-binary`
+(frost-native identifiers, JSON-or-binary package decoding) and (b) the live
+data-channel handling of the extension's structured `DkgRound*Package`
+messages (local refactor `f753833`; not yet on starlab-mpc `main`, whose CLI
+ignores the extension's round-1 package and stalls at 2/3):
 the extension initiates DKG with two CLI peers, all three agree on the group
 key, and an extension-initiated signing produces the same signature on every
 peer. Not yet covered: CLI-initiated DKG/signing with the extension joining,

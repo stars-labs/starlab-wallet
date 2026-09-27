@@ -74,19 +74,33 @@ test output.
 - A private server per test matters: CLI peers auto-join any DKG they see,
   so a stale session on a shared server captures them.
 
+## Weak-network specs
+
+Specs that inject network faults (`netns.ts`) run only inside a user network
+namespace with `INTEROP_NETNS=1` and are skipped otherwise. No sudo needed:
+
+```bash
+nix shell nixpkgs#xvfb-run nixpkgs#chromium -c unshare --user --map-root-user --net bash -c '
+  ip link set lo up
+  ip link add d0 type dummy && ip addr add 10.99.0.1/24 dev d0 && ip link set d0 up
+  ip route add default dev d0
+  PLAYWRIGHT_CHROME_PATH=$(which chromium) INTEROP_NETNS=1 INTEROP_SIGNAL=local \
+    xvfb-run -a bun run test:interop'
+```
+
+The dummy interface and default route are required: webrtc-rs skips loopback,
+and its mDNS multicast join fails with `ENODEV` when there is no route.
+
 ## Status
 
-Against starlab-mpc `main` + stars-labs/starlab-mpc#110 (frost-native
-identifiers, JSON-or-binary decoding, `to_frost_wire`), with the extension
-speaking the CLI's native `DKG_ROUND*:` / `SIGN_*:` frames:
+Passing: extension- and CLI-initiated DKG, signing and reshare; recovery from
+a signal-server outage; with `INTEROP_NETNS=1`, recovery from a WebRTC (UDP)
+outage.
 
-- **DKG — passing** for secp256k1 and ed25519: extension-initiated, two CLI
-  peers, all three agree on the group key.
-- **Signing — the extension-participation assertion fails, deliberately.**
-  The CLI signs with whichever threshold-many commitments arrive first and
-  doesn't announce joins, so the two CLI peers complete a 2-of-3 signature
-  among themselves before the extension's ceremony starts. This needs a
-  protocol decision (proposer-chosen signer list in the signing announce).
+Known failures, both protocol-level:
 
-Not yet covered: CLI-initiated DKG/signing with the extension joining, and
-mixed extension/CLI reshare.
+- **3 online signers.** The CLI signs with whichever threshold-many
+  commitments arrive first, so which signers participate is a race. Fixing it
+  needs a proposer-chosen signer list in the signing announce.
+- **CLI-initiated reshare after the initiator restarts.** A `serve` peer keeps
+  a dead connection to the restarted initiator.

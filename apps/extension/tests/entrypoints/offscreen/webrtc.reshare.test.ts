@@ -173,15 +173,19 @@ describe("WebRTCManager reshare (mock WASM)", () => {
         mgr.sendWebRTCAppMessage = (to: string, msg: any) => {
             sent.push({ to, msg });
         };
+        // Mock packages aren't real FROST data; keep the wire hex as-is.
+        (mgr as any)._frostWire = (_kind: string, hex: string) => hex;
         return { mgr, sent };
     }
 
-    it("rejects a session without reshare_old_participants", () => {
+    it("takes the old cohort from the wallet when the announce has none (CLI/TUI)", () => {
+        // A CLI refresh announce lists only the retained signers; the old
+        // cohort is the wallet's original participant set.
         const { mgr } = makeManager("a");
         const session = reshareSession(["a", "b", "c"]);
         delete session.reshare_old_participants;
-        expect(mgr.startReshare(session, "wallet-1", mockKeyShare(), "ethereum")).toBe(false);
-        expect(mgr.reshareState).toBe(ReshareState.Idle);
+        expect(mgr.startReshare(session, "wallet-1", mockKeyShare(), "ethereum")).toBe(true);
+        expect((mgr as any).reshareInfo.old_participants).toEqual(["a", "b", "c"]);
     });
 
     it("rejects a new cohort containing a device with no old share", () => {
@@ -200,10 +204,10 @@ describe("WebRTCManager reshare (mock WASM)", () => {
         // Mesh becomes ready → round 1 broadcast to the other two.
         (mgr as any)._updateMeshStatus({ type: MeshStatusType.Ready });
         expect(mgr.reshareState).toBe(ReshareState.Round1InProgress);
-        const r1 = sent.filter((s) => s.msg.webrtc_msg_type === "ReshareRound1Package");
+        const r1 = sent.filter((s) => s.msg.text?.startsWith("RESHARE_ROUND1:"));
         expect(r1.map((s) => s.to).sort()).toEqual(["b", "c"]);
-        expect(r1[0].msg.session_id).toBe("reshare_test1");
-        expect(typeof r1[0].msg.package).toBe("string");
+        // Native frame: no session id on the wire (one ceremony at a time).
+        expect(r1[0].msg.webrtc_msg_type).toBe("SimpleMessage");
     });
 
     it("runs the full happy path: r1 → r2 → complete with new keystore", () => {
@@ -220,7 +224,7 @@ describe("WebRTCManager reshare (mock WASM)", () => {
         expect(mgr.reshareState).toBe(ReshareState.Round2InProgress);
 
         // Our round-2 packages went out per-recipient.
-        const r2sent = sent.filter((s) => s.msg.webrtc_msg_type === "ReshareRound2Package");
+        const r2sent = sent.filter((s) => s.msg.text?.startsWith("RESHARE_ROUND2:"));
         expect(r2sent.map((s) => s.to).sort()).toEqual(["b", "c"]);
 
         // Peer round-2 packages complete the ceremony.
@@ -278,6 +282,16 @@ describe("WebRTCManager reshare (mock WASM)", () => {
         expect(states).toContain("Failed");
     });
 
+    it("accepts the CLI's native RESHARE_ROUND1 frames", () => {
+        const { mgr } = makeManager("a");
+        mgr.startReshare(reshareSession(["a", "b", "c"]), "wallet-1", mockKeyShare(), "ethereum");
+        (mgr as any)._maybeInitReshare?.();
+        // base64 of 0xaa01
+        mgr.handleWebRTCAppMessage("b", { webrtc_msg_type: "SimpleMessage", text: "RESHARE_ROUND1:qgE=" } as any);
+        expect((mgr as any).receivedReshareRound1.has("b") ||
+            (mgr as any).bufferedReshareRound1.some((f: any) => f.fromPeerId === "b" && f.packageHex === "aa01")).toBe(true);
+    });
+
     it("ignores packages from devices outside the old cohort", () => {
         const { mgr } = makeManager("a");
         mgr.startReshare(reshareSession(["a", "b", "c"]), "wallet-1", mockKeyShare(), "ethereum");
@@ -298,7 +312,7 @@ describe("WebRTCManager reshare (mock WASM)", () => {
 
         mgr.handleWebRTCAppMessage("c", { webrtc_msg_type: "ReshareRound1Package", session_id: "reshare_test1", package: "aa01" } as any);
         expect(mgr.reshareState).toBe(ReshareState.Round2InProgress);
-        const r2 = sent.filter((s) => s.msg.webrtc_msg_type === "ReshareRound2Package");
+        const r2 = sent.filter((s) => s.msg.text?.startsWith("RESHARE_ROUND2:"));
         expect(r2.map((s) => s.to)).toEqual(["c"]);
         mgr.handleWebRTCAppMessage("c", { webrtc_msg_type: "ReshareRound2Package", session_id: "reshare_test1", package: "bb03" } as any);
         expect(mgr.reshareState).toBe(ReshareState.Complete);

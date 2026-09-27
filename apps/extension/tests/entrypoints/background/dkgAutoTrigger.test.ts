@@ -54,6 +54,7 @@ function makeManager(opts?: {
     });
     const stateManager = {
         getState: () => appState,
+        updateConnectedDevices: jest.fn(),
         updateInvites: jest.fn((inv: any[]) => {
             appState.invites = inv;
         }),
@@ -319,5 +320,19 @@ describe("WebSocketManager: active session source", () => {
         (env.mgr as any).handleWebSocketMessage(frame(session));
 
         expect(env.sentToOffscreen.map((s) => s.msg.type)).toEqual(["sessionAllAccepted"]);
+    });
+});
+
+describe("WebSocketManager: peers leaving the signal server", () => {
+    // A peer that disconnects (e.g. a one-shot CLI that exited) leaves a
+    // dead WebRTC connection behind; offscreen must drop it so the peer's
+    // next process gets a fresh connection.
+    it("tells offscreen which peers left", () => {
+        const env = makeManager({ deviceId: "ext-bob" });
+        const devices = (list: string[]) =>
+            (env.mgr as any).handleWebSocketMessage({ type: "devices", devices: list });
+        devices(["ext-bob", "cli-a", "cli-b"]);
+        devices(["ext-bob", "cli-b"]);
+        expect(env.sentToOffscreen.map((s) => s.msg)).toEqual([{ type: "peersLeft", peers: ["cli-a"] }]);
     });
 });

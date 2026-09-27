@@ -75,6 +75,8 @@ export class WebRTCManager {
   private localPeerId: string;
   private peerConnections: Map<string, RTCPeerConnection> = new Map();
   private dataChannels: Map<string, RTCDataChannel> = new Map();
+  /** Messages for peers whose data channel isn't open yet, sent on open. */
+  private pendingSends: Map<string, WebRTCAppMessage[]> = new Map();
 
   public sessionInfo: SessionInfo | null = null;
   public invites: SessionInfo[] = []; // Store incoming session proposals/invites
@@ -122,6 +124,8 @@ export class WebRTCManager {
   public signingInfo: SigningInfo | null = null;
   private signingCommitments: Map<string, any> = new Map(); // Map peer to commitment data
   private signingShares: Map<string, any> = new Map(); // Map peer to signature share data
+  /** Signing frames that arrived before our ceremony / signer set existed. */
+  private earlySigningFrames: Array<{ fromPeerId: string; kind: "commitment" | "share"; hex: string }> = [];
 
   // Callbacks
   public onLog: (message: string) => void = console.log;
@@ -590,8 +594,12 @@ export class WebRTCManager {
       dc.send(JSON.stringify(message));
       this._log(`Sent WebRTCAppMessage to ${toPeerId}: ${JSON.stringify(message)}`);
     } else {
-      // Use verbose logging for expected failures in test environment
-      this._logVerbose(`Cannot send WebRTCAppMessage to ${toPeerId}: data channel not open or doesn't exist.`);
+      // The channel may still be opening (a peer that just (re)connected);
+      // deliver when it opens rather than dropping the message.
+      const queue = this.pendingSends.get(toPeerId) ?? [];
+      queue.push(message);
+      this.pendingSends.set(toPeerId, queue);
+      this._logVerbose(`Queued WebRTCAppMessage for ${toPeerId}: data channel not open yet.`);
     }
   }
 
@@ -1109,6 +1117,14 @@ export class WebRTCManager {
                 } catch (error) {
                   this._log(`Failed to decode DKG_ROUND2 from ${fromPeerId}: ${this._getErrorMessage(error)}`);
                 }
+              } else if (text.startsWith('RESHARE_ROUND1:')) {
+                this._handleReshareRound1Package(fromPeerId, {
+                  package: this._base64ToHex(text.slice('RESHARE_ROUND1:'.length)),
+                });
+              } else if (text.startsWith('RESHARE_ROUND2:')) {
+                this._handleReshareRound2Package(fromPeerId, {
+                  package: this._base64ToHex(text.slice('RESHARE_ROUND2:'.length)),
+                });
               } else if (text.startsWith('SIGN_COMMIT:') || text.startsWith('SIGN_SHARE:')) {
                 // Signing frames carry no ceremony id — one ceremony runs
                 // at a time, so they belong to the active one.
@@ -1180,11 +1196,10 @@ export class WebRTCManager {
       return;
     }
 
-    // If we are the initiator, aggregate the signature
-    if (this.signingInfo.initiator === this.localPeerId) {
+    // Every signer aggregates for itself (CLI/TUI peers never broadcast
+    // the aggregate).
+    if (this.signingState !== SigningState.Complete) {
       this._aggregateSignatureAndBroadcast();
-    } else {
-      this._log(`Not the initiator, waiting for aggregated signature from ${this.signingInfo.initiator}`);
     }
   }
 
@@ -1880,11 +1895,14 @@ export class WebRTCManager {
       this._log(`Cannot start reshare: already in state ${this.reshareState}`);
       return false;
     }
+    // Extension announces name the old cohort; CLI/TUI refresh announces
+    // don't — there it is the wallet's original participant set.
     const oldParticipants = [
-      ...((sessionInfo as any).reshare_old_participants ?? []),
+      ...((sessionInfo as any).reshare_old_participants ??
+        Object.keys(keyShare?.participant_identifiers ?? {})),
     ].sort();
     if (oldParticipants.length === 0) {
-      this._log(`Cannot start reshare: session missing reshare_old_participants`);
+      this._log(`Cannot start reshare: no old cohort (announce or wallet)`);
       return false;
     }
     const newParticipants = [...sessionInfo.participants].sort();
@@ -2011,10 +2029,10 @@ export class WebRTCManager {
       // Round 1: broadcast our package to every other new participant.
       const round1Hex: string = this.frostReshare.reshare_round1();
       this.receivedReshareRound1.add(this.localPeerId);
+      // The CLI/TUI native frame (FROST binary, base64).
       const msg: WebRTCAppMessage = {
-        webrtc_msg_type: "ReshareRound1Package" as const,
-        session_id: this.reshareInfo.session_id,
-        package: round1Hex,
+        webrtc_msg_type: "SimpleMessage",
+        text: `RESHARE_ROUND1:${this._hexToBase64(this._frostWire("round1", round1Hex))}`,
       };
       for (const peerId of this.reshareInfo.new_participants) {
         if (peerId !== this.localPeerId) {
@@ -2151,9 +2169,8 @@ export class WebRTCManager {
           continue;
         }
         const msg: WebRTCAppMessage = {
-          webrtc_msg_type: "ReshareRound2Package" as const,
-          session_id: this.reshareInfo.session_id,
-          package: pkg,
+          webrtc_msg_type: "SimpleMessage",
+          text: `RESHARE_ROUND2:${this._hexToBase64(this._frostWire("round2", pkg))}`,
         };
         this.sendWebRTCAppMessage(peerId, msg);
         sent++;
@@ -2462,30 +2479,14 @@ export class WebRTCManager {
       return false;
     }
 
-    // Select the first `threshold` shareholders deterministically.
-    // All peers must pick the same subset: sort the session's
-    // participants (wire order is join order, which peers may see
-    // differently) and skip devices that hold no share of this wallet.
+    // CLI/TUI semantics: the signer set is not fixed up front — it is us
+    // plus whichever shareholders' commitments arrive first, until
+    // `threshold` (see _handleSigningCommitment). CLI peers never join a
+    // signing session, so its participant list can't be used to pick.
     const threshold = sessionInfo.threshold;
-    const shareholders = [...sessionInfo.participants]
-      .sort()
-      .filter((p) => identifiers[p] > 0);
-    const selectedSigners = shareholders.slice(0, threshold);
-    if (selectedSigners.length < threshold) {
-      this._log(
-        `Cannot start signing ceremony: only ${selectedSigners.length} of ${threshold} required shareholders joined`,
-      );
-      return false;
-    }
-
-    if (!selectedSigners.includes(this.localPeerId)) {
-      this._log(
-        `Not a selected signer for this ceremony (we're not in the first ${threshold} of ${shareholders.length} shareholders) — idle until re-invited`,
-      );
-      return false;
-    }
-    const signerIdentifiers: Record<string, number> = {};
-    for (const p of selectedSigners) signerIdentifiers[p] = identifiers[p];
+    const cohort = Object.keys(identifiers).filter((p) => p !== this.localPeerId);
+    const selectedSigners = [this.localPeerId];
+    const signerIdentifiers: Record<string, number> = { ...identifiers };
 
     const signingId = `sign_${sessionInfo.session_id}`;
     this.signingInfo = {
@@ -2502,7 +2503,7 @@ export class WebRTCManager {
     };
 
     this._log(
-      `Initiating signing ceremony ${signingId}: ${threshold} of ${sessionInfo.participants.length}, signers=[${selectedSigners.join(", ")}]`,
+      `Initiating signing ceremony ${signingId}: ${threshold} of ${cohort.length + 1} shareholders (first ${threshold} commitments sign)`,
     );
 
     // Generate our round-1 commitment. Returns hex string.
@@ -2521,23 +2522,21 @@ export class WebRTCManager {
     // how _handleSigningCommitment records incoming ones.
     this.signingCommitments.set(this.localPeerId, commitmentHex);
 
-    // Broadcast to all other selected signers.
+    // Broadcast to every other shareholder.
     const broadcast: WebRTCAppMessage = {
       webrtc_msg_type: "SimpleMessage",
       text: `SIGN_COMMIT:${this._hexToBase64(this._frostWire("commitment", commitmentHex))}`,
     };
-    for (const peerId of selectedSigners) {
-      if (peerId !== this.localPeerId) {
-        this.sendWebRTCAppMessage(peerId, broadcast);
-      }
+    for (const peerId of cohort) {
+      this.sendWebRTCAppMessage(peerId, broadcast);
     }
 
     this.signingState = SigningState.CommitmentPhase;
     this.onSigningStateUpdate(this.signingState, this.signingInfo);
     this._emitSigningProgress();
-    this._log(
-      `Round 1: broadcast our commitment to ${selectedSigners.length - 1} co-signers`,
-    );
+    this._log(`Round 1: broadcast our commitment to ${cohort.length} shareholders`);
+
+    this._replayEarlySigningFrames();
     return true;
   }
 
@@ -2584,6 +2583,9 @@ export class WebRTCManager {
 
     channel.onopen = () => {
       this._log(`Data channel opened with ${peerId}`);
+      const queued = this.pendingSends.get(peerId) ?? [];
+      this.pendingSends.delete(peerId);
+      for (const message of queued) this.sendWebRTCAppMessage(peerId, message);
       this._checkMeshStatus();
     };
 
@@ -2622,7 +2624,14 @@ export class WebRTCManager {
   private _handleSigningCommitment(fromPeerId: string, message: any): void {
     this._log(`Handling signing commitment from ${fromPeerId}`);
 
-    if (!this.signingInfo || this.signingInfo.signing_id !== message.signing_id) {
+    if (!this.signingInfo) {
+      // A CLI proposer commits the moment it announces — often before we
+      // approved. Keep it for when our ceremony starts.
+      this._log(`Buffering early signing commitment from ${fromPeerId}`);
+      this.earlySigningFrames.push({ fromPeerId, kind: "commitment", hex: message.commitment });
+      return;
+    }
+    if (this.signingInfo.signing_id !== message.signing_id) {
       this._log(`Ignoring signing commitment: no matching signing process`);
       return;
     }
@@ -2633,9 +2642,7 @@ export class WebRTCManager {
 
     const senderIndex = this.signingInfo.signer_identifiers[fromPeerId] ?? 0;
     if (senderIndex <= 0) {
-      this._log(
-        `Ignoring ${fromPeerId}: not a selected signer (no FROST identifier)`,
-      );
+      this._log(`Ignoring ${fromPeerId}: holds no share of this wallet`);
       return;
     }
 
@@ -2652,6 +2659,11 @@ export class WebRTCManager {
       this._log(`Duplicate commitment from ${fromPeerId} — ignoring`);
       return;
     }
+    if (this.signingInfo.selected_signers.length >= this.signingInfo.threshold) {
+      // The signing package is fixed once threshold commitments are in.
+      this._log(`Signer set already complete — ${fromPeerId}'s commitment is not part of it`);
+      return;
+    }
 
     try {
       this.frostDkg.add_signing_commitment(senderIndex, commitmentHex);
@@ -2663,20 +2675,31 @@ export class WebRTCManager {
     }
 
     this.signingCommitments.set(fromPeerId, commitmentHex);
+    this.signingInfo.selected_signers.push(fromPeerId);
     this._log(
-      `Registered commitment from ${fromPeerId} (idx ${senderIndex}). Total: ${this.signingCommitments.size}/${this.signingInfo.selected_signers.length}`,
+      `Registered commitment from ${fromPeerId} (idx ${senderIndex}). Signers: ${this.signingInfo.selected_signers.length}/${this.signingInfo.threshold}`,
     );
     this._emitSigningProgress();
 
-    // When we've collected commitments from all selected signers
-    // (including our own, which was recorded in initiateSigningCeremony),
-    // move to the share phase.
-    if (
-      this.signingCommitments.size >= this.signingInfo.selected_signers.length
-    ) {
-      this._log(`All commitments received. Transitioning to share phase.`);
+    if (this.signingInfo.selected_signers.length >= this.signingInfo.threshold) {
+      this._log(`Signer set complete [${this.signingInfo.selected_signers.join(", ")}]. Transitioning to share phase.`);
       this._updateSigningState(SigningState.SharePhase, this.signingInfo);
       this._generateAndSendSignatureShare();
+      this._replayEarlySigningFrames();
+    }
+  }
+
+  /** Feed frames buffered before the ceremony (or its signer set) was ready. */
+  private _replayEarlySigningFrames(): void {
+    const frames = this.earlySigningFrames;
+    this.earlySigningFrames = [];
+    const signing_id = this.signingInfo?.signing_id;
+    for (const f of frames) {
+      if (f.kind === "commitment") {
+        this._handleSigningCommitment(f.fromPeerId, { signing_id, commitment: f.hex });
+      } else {
+        this._handleSignatureShare(f.fromPeerId, { signing_id, share: f.hex });
+      }
     }
   }
 
@@ -2693,7 +2716,14 @@ export class WebRTCManager {
   private _handleSignatureShare(fromPeerId: string, message: any): void {
     this._log(`Handling signature share from ${fromPeerId}`);
 
-    if (!this.signingInfo || this.signingInfo.signing_id !== message.signing_id) {
+    const info = this.signingInfo;
+    if (!info || (info.selected_signers.length < info.threshold && message.signing_id === info.signing_id)) {
+      // Before our ceremony / signer set exists — replayed once it does.
+      this._log(`Buffering early signature share from ${fromPeerId}`);
+      this.earlySigningFrames.push({ fromPeerId, kind: "share", hex: message.share });
+      return;
+    }
+    if (info.signing_id !== message.signing_id) {
       this._log(`Ignoring signature share: no matching signing process`);
       return;
     }
@@ -2702,11 +2732,9 @@ export class WebRTCManager {
       return;
     }
 
-    const senderIndex = this.signingInfo.signer_identifiers[fromPeerId] ?? 0;
-    if (senderIndex <= 0) {
-      this._log(
-        `Ignoring ${fromPeerId}: not a selected signer (no FROST identifier)`,
-      );
+    const senderIndex = info.signer_identifiers[fromPeerId] ?? 0;
+    if (senderIndex <= 0 || !info.selected_signers.includes(fromPeerId)) {
+      this._log(`Ignoring ${fromPeerId}'s share: not in this signer set`);
       return;
     }
 
@@ -2741,7 +2769,7 @@ export class WebRTCManager {
 
     this.signingShares.set(fromPeerId, shareHex);
     this._log(
-      `Registered share from ${fromPeerId} (idx ${senderIndex}). Total: ${this.signingShares.size}/${this.signingInfo.selected_signers.length}`,
+      `Registered share from ${fromPeerId} (idx ${senderIndex}). Total: ${this.signingShares.size}/${info.selected_signers.length}`,
     );
     this._emitSigningProgress();
 
@@ -2935,6 +2963,17 @@ export class WebRTCManager {
     };
   }
 
+  /** Close and forget the connections of peers that left the signal server. */
+  public dropPeers(peerIds: string[]): void {
+    for (const peerId of peerIds) {
+      this.peerConnections.get(peerId)?.close();
+      this.peerConnections.delete(peerId);
+      this.dataChannels.delete(peerId);
+      this.pendingSends.delete(peerId);
+      this._log(`Dropped connection to ${peerId} (left the signal server)`);
+    }
+  }
+
   /**
    * Offer to every session participant whose device id sorts after ours —
    * the smaller id offers, the same rule as the Rust CLI/TUI. Skips peers
@@ -3020,6 +3059,10 @@ export class WebRTCManager {
   // Method to update session info and trigger mesh status check
   public updateSessionInfo(sessionInfo: SessionInfo): void {
     this._log(`Updating session info for session ${sessionInfo.session_id}`);
+    if (this.sessionInfo && this.sessionInfo.session_id !== sessionInfo.session_id) {
+      // Undelivered frames belong to the previous ceremony.
+      this.pendingSends.clear();
+    }
     this._log(`Participants: [${sessionInfo.participants.join(', ')}]`);
     this._log(`Accepted devices: [${sessionInfo.accepted_devices.join(', ')}]`);
 

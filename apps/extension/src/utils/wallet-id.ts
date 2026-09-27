@@ -10,3 +10,29 @@ export function walletIdFromSession(sessionId: string): string {
     const alnum = [...sessionId].filter((c) => /[0-9a-zA-Z]/.test(c)).slice(0, 12).join("");
     return alnum || "wallet";
 }
+
+/**
+ * Id of a wallet's BIP-44 account child — starlab-mpc's
+ * `ensure_account_wallet` naming. Signing announces name this child: CLI/TUI
+ * co-signers load (or derive on first use) its share, the same account key
+ * the extension signs with; the root key never signs.
+ */
+export function accountWalletId(parentId: string, chain: string, account: number): string {
+    return `${parentId}-${chain}-${account}`;
+}
+
+/**
+ * Invitations still worth offering: a finished DKG stays on the signal
+ * server (and is replayed on reconnect), so drop DKG sessions whose wallet
+ * this device already holds. Signing / reshare sessions for held wallets
+ * are exactly the ones to show.
+ */
+export function openInvites<T extends { session_id: string; session_type?: string }>(
+    invites: T[],
+    heldWalletIds: string[],
+): T[] {
+    const held = new Set(heldWalletIds);
+    return invites.filter(
+        (inv) => (inv.session_type ?? "dkg") !== "dkg" || !held.has(walletIdFromSession(inv.session_id)),
+    );
+}

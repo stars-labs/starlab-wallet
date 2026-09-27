@@ -48,9 +48,11 @@ function makeSigningInfo(signingId: string, transactionData: string) {
         threshold: 2,
         participants: ['a', 'b', 'c'],
         acceptances: new Map<string, boolean>(),
-        accepted_participants: ['a', 'b'],
-        selected_signers: ['a', 'b'],
-        signer_identifiers: { a: 1, b: 2 },
+        accepted_participants: ['a'],
+        // First-come signer set: our own commitment is in; peers join it
+        // as their commitments arrive (up to threshold).
+        selected_signers: ['a'],
+        signer_identifiers: { a: 1, b: 2, c: 3 },
         step: 'commitment_phase' as const,
         initiator: 'a',
     };
@@ -122,39 +124,36 @@ describe('WebRTCManager FROST Signing Process', () => {
 
             const signingId = 'complete-flow-test';
             const transactionData = '{"transaction": "complete-flow-test-data", "amount": 1000, "recipient": "recipient-address"}';
-
-            // Mid-ceremony state for both signers (commitment phase).
-            (managerA as any).signingInfo = makeSigningInfo(signingId, transactionData);
-            (managerB as any).signingInfo = makeSigningInfo(signingId, transactionData);
-
-            // Round 1: commitments (using real FROST DKG)
-            const commitmentHexA = frostDkgA.signing_commit();
-            const commitmentHexB = frostDkgB.signing_commit();
-
-            // Real handlers expect the commitment payload as a hex string.
-            await (managerA as any)._handleSigningCommitment('b', {
-                webrtc_msg_type: 'SigningCommitment' as const,
-                signing_id: signingId,
-                commitment: commitmentHexB
-            });
-
-            // managerA registered b's commitment under FROST index 2.
-            expect((managerA as any).signingCommitments.has('b')).toBe(true);
-
-            frostDkgB.add_signing_commitment(1, commitmentHexA);
-
-            // Convert transaction data to hex for FROST signing
             const transactionMessageHex = Array.from(new TextEncoder().encode(transactionData))
                 .map(b => b.toString(16).padStart(2, '0'))
                 .join('');
 
-            // Round 2: signature shares
-            const signatureShareHexA = frostDkgA.sign(transactionMessageHex);
-            const signatureShareHexB = frostDkgB.sign(transactionMessageHex);
+            // A is mid-ceremony: it has committed (signing_commit registers
+            // its own commitment in the engine) and waits for a co-signer.
+            (managerA as any).signingInfo = makeSigningInfo(signingId, transactionMessageHex);
+            (managerB as any).signingInfo = makeSigningInfo(signingId, transactionMessageHex);
+            const commitmentHexA = frostDkgA.signing_commit();
+            (managerA as any).signingCommitments.set('a', commitmentHexA);
+            const commitmentHexB = frostDkgB.signing_commit();
 
-            // Aggregate on A using real FROST aggregation
-            frostDkgA.add_signature_share(2, signatureShareHexB);
-            const aggregatedSignature = frostDkgA.aggregate_signature(transactionMessageHex);
+            // B's commitment completes A's 2-of-3 signer set → A signs.
+            await (managerA as any)._handleSigningCommitment('b', {
+                signing_id: signingId,
+                commitment: commitmentHexB
+            });
+            expect((managerA as any).signingCommitments.has('b')).toBe(true);
+            expect(managerA.signingInfo!.selected_signers).toEqual(['a', 'b']);
+            const signatureShareHexA = (managerA as any).signingShares.get('a');
+            expect(signatureShareHexA).toBeTruthy();
+
+            // B signs over the same package; its share lets A aggregate.
+            frostDkgB.add_signing_commitment(1, commitmentHexA);
+            const signatureShareHexB = frostDkgB.sign(transactionMessageHex);
+            await (managerA as any)._handleSignatureShare('b', {
+                signing_id: signingId,
+                share: signatureShareHexB
+            });
+            const aggregatedSignature = managerA.signingInfo!.final_signature!;
 
             // B learns the result via the AggregatedSignature broadcast handler.
             await (managerB as any)._handleAggregatedSignature('a', {
@@ -164,11 +163,8 @@ describe('WebRTCManager FROST Signing Process', () => {
             });
 
             // Assertions
-            expect(managerB.signingInfo).toBeDefined();
             expect(managerB.signingInfo!.final_signature).toBe(aggregatedSignature);
             expect(aggregatedSignature).toMatch(/^[a-f0-9]{128}$/); // Ed25519 signature format
-            expect(aggregatedSignature.length).toBe(128); // 64 bytes = 128 hex characters
-            expect(signatureShareHexA.length).toBeGreaterThan(0);
 
             console.log(`✅ Generated authentic FROST signature: ${aggregatedSignature}`);
 

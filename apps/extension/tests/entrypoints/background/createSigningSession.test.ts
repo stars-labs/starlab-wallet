@@ -51,7 +51,7 @@ function makeSessionManager() {
         sendToOffscreen as any,
         stateManager as any,
     );
-    return { mgr, appState, announces, broadcast, wsClient };
+    return { mgr, appState, announces, broadcast, wsClient, sendToOffscreen };
 }
 
 const validConfig = () => ({
@@ -109,13 +109,26 @@ describe("SessionManager.createSigningSession", () => {
         expect(wire.coordination_type).toBe("Network");
         // Signing-specific sibling fields TUI reads at top level
         // (not nested under a content object).
-        // CLI/TUI joiners look the wallet up by id, not display name.
-        expect(wire.wallet_name).toBe("wallet-xyz");
+        // CLI/TUI co-signers load (materializing if needed) the account-0
+        // child wallet named here — the key the extension signs with too.
+        expect(wire.wallet_name).toBe("wallet-xyz-ethereum-0");
         expect(wire.group_public_key).toBe("02cafe");
         expect(wire.blockchain).toBe("ethereum");
         expect(wire.signing_message_hex).toBe("deadbeef");
         // accepted_devices is extension-local — must NOT be on the wire.
         expect("accepted_devices" in wire).toBe(false);
+    });
+
+    it("starts our own signing ceremony right after announcing", async () => {
+        // CLI/TUI co-signers start on the announce and never join the
+        // session, so the proposer can't wait for joins; the server
+        // doesn't echo our own announce back either.
+        const res = await env.mgr.createSigningSession(validConfig());
+        const [msg] = env.sendToOffscreen.mock.calls.map((c: any[]) => c[0]);
+        expect(msg.type).toBe("sessionReadyForSigning");
+        expect(msg.sessionInfo.session_id).toBe(res.sessionId);
+        expect(msg.sessionInfo.signing_message_hex).toBe("deadbeef");
+        expect(msg.blockchain).toBe("ethereum");
     });
 
     it("maps ed25519 curve correctly on the wire", async () => {

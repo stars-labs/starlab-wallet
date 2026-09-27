@@ -75,10 +75,13 @@ function signingSession(
     threshold = 2,
     total = 3,
     curve: "secp256k1" | "ed25519" = "secp256k1",
+    proposer = "cli-alice",
 ): SessionInfo {
     return {
         session_id: sessionId,
-        proposer_id: deviceId,
+        // We're a co-signer by default; the proposer starts its own
+        // ceremony from SessionManager, not from these broadcasts.
+        proposer_id: proposer,
         total,
         threshold,
         participants,
@@ -188,18 +191,18 @@ describe("WebSocketManager: signing auto-trigger at threshold", () => {
         expect(env.sentToOffscreen[0].msg.blockchain).toBe("solana");
     });
 
-    it("does NOT trigger below threshold", () => {
-        // Signing needs AT LEAST threshold participants. A 1-of-2
-        // pre-threshold update should not start the ceremony.
-        const seed = signingSession(
-            "sign_partial",
-            "ext-bob",
-            ["ext-bob"],
-            2,
-            3,
-        );
+    it("does NOT trigger a joiner below threshold", () => {
+        // A co-signer waits until threshold signers are in the session.
+        const seed = signingSession("sign_partial", "ext-bob", ["cli-alice", "ext-bob"], 3, 3);
         env.appState.sessionInfo = seed;
-        // Still only 1 participant (ourself) — below threshold=2.
+        (env.mgr as any).handleWebSocketMessage(frame(seed));
+        expect(env.sentToOffscreen.length).toBe(0);
+    });
+
+    it("leaves our own signing session alone (SessionManager starts it)", () => {
+        // A second trigger would reload the keystore mid-ceremony.
+        const seed = signingSession("sign_own", "ext-bob", ["ext-bob", "cli-alice"], 2, 3, "secp256k1", "ext-bob");
+        env.appState.sessionInfo = seed;
         (env.mgr as any).handleWebSocketMessage(frame(seed));
         expect(env.sentToOffscreen.length).toBe(0);
     });

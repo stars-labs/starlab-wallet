@@ -514,8 +514,12 @@ export class WebSocketManager {
         // reshare need the full cohort (every NEW shareholder must
         // contribute to / receive from the reshare rounds).
         if (sessionType === "signing") {
-            if (joined < session.threshold) {
-                return; // Not enough signers yet.
+            // Our own signing session was started by SessionManager when it
+            // announced (CLI/TUI co-signers never join, so there is nothing
+            // to wait for); a second trigger would reload the keystore
+            // mid-ceremony. As a co-signer, wait for threshold signers.
+            if (session.proposer_id === deviceId || joined < session.threshold) {
+                return;
             }
         } else {
             if (joined !== session.total) {
@@ -618,6 +622,13 @@ export class WebSocketManager {
      */
     private handleDeviceListMessage(msg: ServerMsg & { type: "devices" | "DEVICES" }, messageType: string): void {
         const deviceList = msg.devices || [];
+        // A peer that left (e.g. a one-shot CLI that exited) leaves a dead
+        // WebRTC connection in offscreen; drop it so the peer's next
+        // process gets a fresh one.
+        const left = this.devices.filter((d: string) => !deviceList.includes(d));
+        if (left.length > 0) {
+            void this.sendToOffscreen({ type: "peersLeft", peers: left } as any, `peersLeft(${left.join(",")})`);
+        }
         this.devices = deviceList;
 
         // Exclude current peer from connected devices list

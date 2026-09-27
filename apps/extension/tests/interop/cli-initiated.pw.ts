@@ -115,3 +115,43 @@ test("CLI-initiated reshare: the extension refreshes its share, then co-signs", 
     env?.cleanup();
   }
 });
+
+test("signal-server outage: everyone reconnects, then the extension co-signs", async ({ page, context, extensionId }) => {
+  test.skip(process.env.INTEROP_SIGNAL !== "local", "needs a private signal server to restart");
+  let env: Env | undefined;
+  try {
+    env = await setupExtension(page, context, extensionId);
+    env.peers = startPeers({ count: 1, signal: env.signal, room: env.room, curve: CURVE, password: PASSWORD });
+    const cli = { deviceId: "interop-creator", signal: env.signal, room: env.room, password: PASSWORD };
+    const creator = runCli({
+      ...cli,
+      args: ["wallet", "create", "--threshold", "2", "--total", "3", "--curve", CURVE, "--timeout", "120"],
+    });
+    await acceptInvitation(page);
+    const walletId = walletIdOf(await creator.done)!;
+    await dkgResult(page);
+    await saveWallet(page, PASSWORD);
+
+    // Outage: the socket drops; the extension must come back on its own.
+    await env.server!.restart();
+    await expect
+      .poll(() => page.evaluate(() => chrome.runtime.sendMessage({ type: "getState" }).then((s) => s.wsConnected)), {
+        timeout: 60_000,
+      })
+      .toBe(true);
+
+    env.peers[0].kill();
+    const signer = runCli({
+      ...cli,
+      keystore: creator.keystore,
+      args: ["sign", "--wallet-id", walletId, "--message", "after-outage", "--curve", CURVE, "--timeout", "120", "--json"],
+    });
+    await approveSigningRequest(page);
+    const out = await signer.done;
+    const cliSig = /"signature"\s*:\s*"(?:0x)?([0-9a-f]+)"/.exec(out)?.[1];
+    expect(cliSig, `no signature in CLI output: ${out}`).toBeTruthy();
+    expect(await extSignature(page)).toBe(cliSig);
+  } finally {
+    env?.cleanup();
+  }
+});

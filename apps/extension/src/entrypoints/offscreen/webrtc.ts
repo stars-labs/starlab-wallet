@@ -1,5 +1,6 @@
 import { SessionInfo, DkgState, MeshStatus, MeshStatusType } from "@stars-labs/types/appstate";
 import { WebRTCAppMessage } from "@stars-labs/types/webrtc";
+import { ICE_SERVERS } from "../../config/ice";
 import { to_frost_wire } from "@stars-labs/core-wasm";
 import { WebSocketMessagePayload, WebRTCSignal } from "@stars-labs/types/websocket";
 import type { KeyShareData } from "@stars-labs/types/keystore";
@@ -69,7 +70,6 @@ export interface SigningInfo {
 }
 
 // --- WebRTCManager Class ---
-const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }]; // Example STUN server
 
 export class WebRTCManager {
   private localPeerId: string;

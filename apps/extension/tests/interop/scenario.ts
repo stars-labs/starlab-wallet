@@ -13,6 +13,8 @@ export const PASSWORD = process.env.INTEROP_PW ?? "interop-test-password";
 export type Env = {
   room: string;
   signal: string;
+  /** The private signal server (INTEROP_SIGNAL=local), for outage tests. */
+  server: Awaited<ReturnType<typeof startSignalServer>> | null;
   peers: Peer[];
   cleanup(): void;
 };
@@ -26,6 +28,7 @@ export async function setupExtension(page: Page, context: BrowserContext, extens
   const env: Env = {
     room,
     signal,
+    server,
     peers: [],
     cleanup() {
       killPeers(env.peers);

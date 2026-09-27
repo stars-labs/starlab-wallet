@@ -130,7 +130,7 @@ export function startPeers(opts: {
  * see — so a shared server lets a stale session capture them. A fresh one
  * per test keeps runs independent.
  */
-export async function startSignalServer(): Promise<{ url: string; kill(): void }> {
+export async function startSignalServer(): Promise<{ url: string; kill(): void; restart(): Promise<void> }> {
   if (!fs.existsSync(SIGNAL_BIN)) {
     throw new Error(
       `Signal server not found at ${SIGNAL_BIN}. Run \`cargo build --release -p starlab-signal-server\` in starlab-mpc.`,
@@ -144,17 +144,32 @@ export async function startSignalServer(): Promise<{ url: string; kill(): void }
     });
     srv.on("error", reject);
   });
-  const proc = spawn(SIGNAL_BIN, [], {
-    env: { ...process.env, MPC_SIGNAL_BIND: `127.0.0.1:${port}` },
-    stdio: ["ignore", "ignore", "pipe"],
-  });
-  await new Promise<void>((resolve, reject) => {
-    proc.stderr!.on("data", (d: Buffer) => {
-      if (d.toString().includes("listening")) resolve();
+  const launch = async () => {
+    const proc = spawn(SIGNAL_BIN, [], {
+      env: { ...process.env, MPC_SIGNAL_BIND: `127.0.0.1:${port}` },
+      stdio: ["ignore", "ignore", "pipe"],
     });
-    proc.once("exit", (code) => reject(new Error(`signal server exited with ${code}`)));
-  });
-  const server = { url: `ws://127.0.0.1:${port}`, kill: () => proc.kill("SIGTERM") };
+    await new Promise<void>((resolve, reject) => {
+      proc.stderr!.on("data", (d: Buffer) => {
+        if (d.toString().includes("listening")) resolve();
+      });
+      proc.once("exit", (code) => reject(new Error(`signal server exited with ${code}`)));
+    });
+    return proc;
+  };
+  let proc = await launch();
+  const server = {
+    url: `ws://127.0.0.1:${port}`,
+    kill: () => proc.kill("SIGTERM"),
+    /** Simulate an outage: stop, then come back on the same address. */
+    async restart() {
+      await new Promise<void>((resolve) => {
+        proc.once("exit", () => resolve());
+        proc.kill("SIGTERM");
+      });
+      proc = await launch();
+    },
+  };
   live.add(server);
   return server;
 }

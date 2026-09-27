@@ -54,37 +54,6 @@ export class FrostDkgSecp256k1 {
     signing_commit(): string;
 }
 
-export class FrostDkgSecp256k1Tr {
-    free(): void;
-    [Symbol.dispose](): void;
-    add_round1_package(participant_index: number, package_hex: string): void;
-    add_round2_package(sender_index: number, package_hex: string): void;
-    add_signature_share(participant_index: number, share_hex: string): void;
-    add_signing_commitment(participant_index: number, commitment_hex: string): void;
-    aggregate_signature(message_hex: string): string;
-    can_finalize(): boolean;
-    can_start_round2(): boolean;
-    clear_signing_state(): void;
-    export_keystore(): string;
-    finalize_dkg(): string;
-    generate_round1(): string;
-    generate_round2(): string;
-    get_address(): string;
-    get_group_public_key(): string;
-    /**
-     * BIP-340 x-only Taproot output key (32 bytes hex): the SEC1 key minus
-     * its parity prefix. This is what P2TR addresses / verifiers consume.
-     */
-    get_taproot_xonly_key(): string;
-    has_signing_nonces(): boolean;
-    import_keystore(keystore_json: string): void;
-    init_dkg(participant_index: number, total: number, threshold: number): void;
-    is_dkg_complete(): boolean;
-    constructor();
-    sign(message_hex: string): string;
-    signing_commit(): string;
-}
-
 export class FrostDkgUnified {
     free(): void;
     [Symbol.dispose](): void;
@@ -278,7 +247,7 @@ export function main(): void;
 
 /**
  * The pinned standard derivation path for a chain + account index
- * (ETH m/44'/60'/0'/0/i, BTC m/84'/0'/0'/0/i, SOL m/44'/501'/i'/0',
+ * (ETH m/44'/60'/0'/0/i, BTC m/86'/0'/0'/0/i, SOL m/44'/501'/i'/0',
  * Sui m/44'/784'/i'/0'/0'). Returns null for unknown chains.
  */
 export function standard_account_path(chain: string, account: number): string | undefined;
@@ -291,7 +260,7 @@ export function start(): void;
  * `serialize()` form, the CLI/TUI wire encoding (`DKG_ROUND1:`,
  * `DKG_ROUND2:`, `SIGN_COMMIT:`, `SIGN_SHARE:` frames). Returns hex.
  *
- * `curve`: "ed25519" | "secp256k1" | "secp256k1-tr";
+ * `curve`: "ed25519" | "secp256k1" (secp256k1 is the BIP-340 / Taproot suite);
  * `kind`: "round1" | "round2" | "commitment" | "share".
  */
 export function to_frost_wire(curve: string, kind: string, json_hex: string): string;
@@ -302,7 +271,6 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_frostdkged25519_free: (a: number, b: number) => void;
     readonly __wbg_frostdkgsecp256k1_free: (a: number, b: number) => void;
-    readonly __wbg_frostdkgsecp256k1tr_free: (a: number, b: number) => void;
     readonly __wbg_frostdkgunified_free: (a: number, b: number) => void;
     readonly __wbg_frostreshareed25519_free: (a: number, b: number) => void;
     readonly __wbg_frostresharesecp256k1_free: (a: number, b: number) => void;
@@ -353,28 +321,6 @@ export interface InitOutput {
     readonly frostdkgsecp256k1_new: () => number;
     readonly frostdkgsecp256k1_sign: (a: number, b: number, c: number) => [number, number, number, number];
     readonly frostdkgsecp256k1_signing_commit: (a: number) => [number, number, number, number];
-    readonly frostdkgsecp256k1tr_add_round1_package: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly frostdkgsecp256k1tr_add_round2_package: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly frostdkgsecp256k1tr_add_signature_share: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly frostdkgsecp256k1tr_add_signing_commitment: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly frostdkgsecp256k1tr_aggregate_signature: (a: number, b: number, c: number) => [number, number, number, number];
-    readonly frostdkgsecp256k1tr_can_finalize: (a: number) => number;
-    readonly frostdkgsecp256k1tr_can_start_round2: (a: number) => number;
-    readonly frostdkgsecp256k1tr_clear_signing_state: (a: number) => void;
-    readonly frostdkgsecp256k1tr_export_keystore: (a: number) => [number, number, number, number];
-    readonly frostdkgsecp256k1tr_finalize_dkg: (a: number) => [number, number, number, number];
-    readonly frostdkgsecp256k1tr_generate_round1: (a: number) => [number, number, number, number];
-    readonly frostdkgsecp256k1tr_generate_round2: (a: number) => [number, number, number, number];
-    readonly frostdkgsecp256k1tr_get_address: (a: number) => [number, number, number, number];
-    readonly frostdkgsecp256k1tr_get_group_public_key: (a: number) => [number, number, number, number];
-    readonly frostdkgsecp256k1tr_get_taproot_xonly_key: (a: number) => [number, number, number, number];
-    readonly frostdkgsecp256k1tr_has_signing_nonces: (a: number) => number;
-    readonly frostdkgsecp256k1tr_import_keystore: (a: number, b: number, c: number) => [number, number];
-    readonly frostdkgsecp256k1tr_init_dkg: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly frostdkgsecp256k1tr_is_dkg_complete: (a: number) => number;
-    readonly frostdkgsecp256k1tr_new: () => number;
-    readonly frostdkgsecp256k1tr_sign: (a: number, b: number, c: number) => [number, number, number, number];
-    readonly frostdkgsecp256k1tr_signing_commit: (a: number) => [number, number, number, number];
     readonly frostdkgunified_add_round1_package: (a: number, b: number, c: number, d: number) => [number, number];
     readonly frostdkgunified_add_round2_package: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly frostdkgunified_can_finalize: (a: number) => number;

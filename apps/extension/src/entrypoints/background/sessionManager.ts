@@ -690,6 +690,14 @@ export class SessionManager {
         if (!participants.includes(currentDeviceId)) {
             return { success: false, error: "This device is not in the wallet's cohort" };
         }
+        if (participants.length !== keyShare.total_participants) {
+            // A share that doesn't name every co-signer can't be announced:
+            // co-signers not listed would never be asked (and never sign).
+            return {
+                success: false,
+                error: `The wallet's share lists ${participants.length} of its ${keyShare.total_participants} devices (${participants.join(", ")}) — re-import it from a backup that carries the full cohort`,
+            };
+        }
         // Everyone signs with the account child, so the announce names its
         // key (as the engine does), not the root key.
         const account = { chain: config.blockchain, account: 0 };

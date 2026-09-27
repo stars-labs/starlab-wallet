@@ -111,6 +111,16 @@ describe("SessionManager.createSigningSession", () => {
         expect(env.announces).toHaveLength(0);
     });
 
+    it("refuses a share that names only part of the cohort (never announces self-only)", async () => {
+        const res = await env.mgr.createSigningSession({
+            ...validConfig(),
+            keyShare: { ...keyShare(), participants: ["ext-alice"], participant_identifiers: { "ext-alice": 2 } },
+        });
+        expect(res.success).toBe(false);
+        expect(res.error).toContain("1 of its 3");
+        expect(env.announces).toHaveLength(0);
+    });
+
     it("does not announce when the account key can't be derived", async () => {
         env.sendToOffscreen.mockImplementation(async () => ({ success: false, error: "locked" }) as any);
         const res = await env.mgr.createSigningSession(validConfig());

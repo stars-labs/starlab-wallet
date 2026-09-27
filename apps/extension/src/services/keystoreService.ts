@@ -33,9 +33,20 @@ export class KeystoreService {
     private readonly STORAGE_PREFIX = "mpc_keystore";
     private readonly INDEX_KEY = `${this.STORAGE_PREFIX}_index`;
     private readonly SHARES_KEY_PREFIX = `${this.STORAGE_PREFIX}_share_`;
+    /** The stored index, read once. Everything that decides whether an
+     *  index exists awaits it — deciding before it resolves is how an
+     *  empty index once overwrote a saved wallet on SW start. */
+    private readonly loaded: Promise<void>;
     
     private constructor() {
-        this.loadKeystoreIndex();
+        this.loaded = this.loadKeystoreIndex();
+        // Surface a failed load even if nobody awaits it yet.
+        this.loaded.catch((error) => console.error("[KeystoreService] Failed to load index:", error));
+    }
+
+    /** Resolves once the stored index is loaded; rejects if it can't be read. */
+    public ready(): Promise<void> {
+        return this.loaded;
     }
     
     public static getInstance(): KeystoreService {
@@ -62,6 +73,8 @@ export class KeystoreService {
      * Initialize or create keystore
      */
     public async initialize(deviceId: string): Promise<void> {
+        // Throws (and writes nothing) if the stored index can't be read.
+        await this.loaded;
         if (!this.keystoreIndex) {
             this.keystoreIndex = {
                 version: "1.0.0",
@@ -86,6 +99,9 @@ export class KeystoreService {
      * Unlock keystore with password
      */
     public async unlock(password: string): Promise<boolean> {
+        // The password is checked against a stored share — so the index
+        // must be loaded first (else any password "unlocks").
+        await this.loaded;
         try {
             this.password = password;
             
@@ -432,31 +448,36 @@ export class KeystoreService {
     
     // === Private Helper Methods ===
     
+    /**
+     * Read the stored index. Never writes: an index that can't be read or
+     * parsed is an error (the caller must not start over with an empty one
+     * and save it over the user's wallets).
+     */
     private async loadKeystoreIndex(): Promise<void> {
         // Skip loading in test mode to ensure clean state
         if (KeystoreService.testMode) {
             return;
         }
-        
-        try {
-            const stored = await storage.getItem<KeystoreIndex>(`local:${this.INDEX_KEY}`);
-            if (stored) {
-                this.keystoreIndex = stored;
-                console.log("[KeystoreService] Loaded keystore index with", stored.wallets?.length || 0, "wallets");
-            }
-        } catch (error) {
-            console.error("[KeystoreService] Failed to load index:", error);
+        const stored = await storage.getItem<KeystoreIndex>(`local:${this.INDEX_KEY}`);
+        if (stored == null) return; // nothing saved yet
+        if (typeof stored !== "object" || !Array.isArray((stored as any).wallets)) {
+            throw new Error(
+                `Unreadable ${this.INDEX_KEY} in storage (left untouched): ${JSON.stringify(stored).slice(0, 200)}`,
+            );
         }
+        this.keystoreIndex = stored;
+        console.log("[KeystoreService] Loaded keystore index with", stored.wallets.length, "wallets");
     }
     
     private async saveKeystoreIndex(): Promise<void> {
+        // Never write before the stored index was read (and never if it
+        // couldn't be): that is how a saved wallet got overwritten.
+        await this.loaded;
         if (!this.keystoreIndex) return;
         
-        try {
-            await storage.setItem(`local:${this.INDEX_KEY}`, this.keystoreIndex);
-        } catch (error) {
-            console.error("[KeystoreService] Failed to save index:", error);
-        }
+        // A failed write must reach the caller (it just told the user the
+        // wallet is saved) — no swallowing.
+        await storage.setItem(`local:${this.INDEX_KEY}`, this.keystoreIndex);
     }
     
     private async encryptKeyShare(walletId: string, keyShare: KeyShareData): Promise<EncryptedKeyShare> {

@@ -239,3 +239,25 @@ describe("a failed signing ceremony", () => {
         expect(state.dkgState).toBe(DkgState.Complete);
     });
 });
+
+describe("a finished signing request", () => {
+    for (const outcome of ["signingComplete", "signingError"] as const) {
+        it(`is dropped from invites after ${outcome}, and its re-announces are ignored`, async () => {
+            const env = await setup();
+            await completeDkg(env);
+            env.receive(signingAnnounce());
+            await env.sessionManager.joinDkgSession(X);
+
+            env.stateManager.handleOffscreenStateUpdate({
+                type: outcome,
+                signingId: `sign_${X}`,
+                sessionId: X,
+                signature: "aa",
+                error: "x",
+            } as any);
+            env.receive(signingAnnounce()); // the server keeps announcing it
+
+            expect(env.stateManager.getState().invites.map((s) => s.session_id)).not.toContain(X);
+        });
+    }
+});

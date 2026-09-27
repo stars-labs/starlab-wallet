@@ -1,5 +1,6 @@
 <script lang="ts">
     import { openInvites } from "../../utils/wallet-id";
+    import { signingInviteDecision } from "./signingInvite";
     // Removed single-party WASM functions - this is now an MPC-only wallet
     import { onMount, onDestroy } from "svelte";
     import {
@@ -532,6 +533,15 @@
     // the proposer or already in an active ceremony.
     let incomingSigningInvite: import("@stars-labs/types/session").SessionInfo | null = null;
     let dismissedSigningInvites: Set<string> = new Set();
+    // A signing invite that arrived during another ceremony; shown once
+    // that ceremony's session clears (see signingInviteDecision).
+    let deferredSigningInvite: import("@stars-labs/types/session").SessionInfo | null = null;
+    $: if (deferredSigningInvite && !appState.sessionInfo && !incomingSigningInvite) {
+        if (!dismissedSigningInvites.has(deferredSigningInvite.session_id)) {
+            incomingSigningInvite = deferredSigningInvite;
+        }
+        deferredSigningInvite = null;
+    }
 
     // Ext-3c: proposer-side toast when a co-signer explicitly
     // declines a signing invite we sent. Surfaced as a transient
@@ -1181,13 +1191,14 @@
                         | import("@stars-labs/types/session").SessionInfo
                         | undefined;
                     if (!s) break;
-                    if (s.session_type !== "signing") break;
-                    if (s.proposer_id === appState.deviceId) break;
-                    if (!s.participants.includes(appState.deviceId)) break;
-                    if (dismissedSigningInvites.has(s.session_id)) break;
-                    if (incomingSigningInvite) break;
-                    if (appState.sessionInfo) break;
-                    incomingSigningInvite = s;
+                    const decision = signingInviteDecision(s, {
+                        deviceId: appState.deviceId,
+                        dismissed: dismissedSigningInvites,
+                        modalOpen: incomingSigningInvite !== null,
+                        busy: !!appState.sessionInfo,
+                    });
+                    if (decision === "show") incomingSigningInvite = s;
+                    else if (decision === "defer") deferredSigningInvite = s;
                 }
                 break;
                 

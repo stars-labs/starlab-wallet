@@ -65,34 +65,43 @@ export function popupUrl(extensionId: string): string {
 
 /**
  * Debug aid (INTEROP_BROWSER_LOG=1): mirror the extension's offscreen
- * document console — where the WebRTC mesh and FROST rounds run — to the
- * test output. Offscreen documents aren't Playwright pages, so attach over
- * CDP (non-flattened: Playwright's CDPSession only surfaces its own
- * session's events).
+ * document (WebRTC mesh + FROST rounds) and background service worker
+ * (signal-server traffic, session state) consoles to the test output. Neither
+ * is a Playwright page, so attach over CDP (non-flattened: Playwright's
+ * CDPSession only surfaces its own session's events).
  */
 export async function mirrorOffscreenConsole(context: BrowserContext): Promise<void> {
   const cdp = await context.browser()!.newBrowserCDPSession();
-  cdp.on("Target.receivedMessageFromTarget", ({ message }: { message: string }) => {
+  const labels = new Map<string, string>();
+  cdp.on("Target.receivedMessageFromTarget", ({ sessionId, message }: { sessionId: string; message: string }) => {
+    const label = labels.get(sessionId) ?? "extension";
     const msg = JSON.parse(message);
     if (msg.method === "Runtime.consoleAPICalled") {
       const args = msg.params.args as Array<{ value?: unknown; description?: string }>;
-      console.log(`[offscreen] ${args.map((a) => a.value ?? a.description).join(" ")}`);
+      console.log(`[${label}] ${args.map((a) => a.value ?? a.description).join(" ")}`);
     } else if (msg.method === "Runtime.exceptionThrown") {
       const d = msg.params.exceptionDetails;
-      console.log(`[offscreen:exception] ${d.exception?.description ?? d.text} @ ${d.url}:${d.lineNumber}:${d.columnNumber}`);
+      console.log(`[${label}:exception] ${d.exception?.description ?? d.text} @ ${d.url}:${d.lineNumber}:${d.columnNumber}`);
     }
   });
+  const attach = async (targetId: string, label: string) => {
+    const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: false });
+    labels.set(sessionId, label);
+    await cdp.send("Target.sendMessageToTarget", {
+      sessionId,
+      message: JSON.stringify({ id: 1, method: "Runtime.enable" }),
+    });
+  };
   // The background creates the offscreen document during its async startup.
   let offscreen: { targetId: string } | undefined;
+  let background: { targetId: string } | undefined;
   for (let i = 0; i < 50 && !offscreen; i++) {
     const { targetInfos } = await cdp.send("Target.getTargets");
     offscreen = targetInfos.find((t) => t.url.endsWith("/offscreen.html"));
+    background = targetInfos.find((t) => t.type === "service_worker" && t.url.endsWith("/background.js"));
     if (!offscreen) await new Promise((r) => setTimeout(r, 200));
   }
   if (!offscreen) throw new Error("offscreen document not found after 10s");
-  const { sessionId } = await cdp.send("Target.attachToTarget", { targetId: offscreen.targetId, flatten: false });
-  await cdp.send("Target.sendMessageToTarget", {
-    sessionId,
-    message: JSON.stringify({ id: 1, method: "Runtime.enable" }),
-  });
+  await attach(offscreen.targetId, "offscreen");
+  if (background) await attach(background.targetId, "background");
 }

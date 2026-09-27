@@ -860,8 +860,12 @@
                         currentUIState.proposedSessionIdInput,
                     totalParticipants: currentUIState.totalParticipants,
                     threshold: currentUIState.threshold,
-                    // Other state fields
-                    dkgAddress: appState.dkgAddress || "",
+                    // Other state fields. The background owns the DKG
+                    // result: a popup opened after the ceremony only learns
+                    // the group key / address from this snapshot.
+                    dkgAddress: message.dkgAddress || appState.dkgAddress || "",
+                    dkgGroupPublicKey:
+                        message.dkgGroupPublicKey || appState.dkgGroupPublicKey || "",
                     dkgError: appState.dkgError || "",
                     sessionAcceptanceStatus:
                         message.sessionAcceptanceStatus ||
@@ -2196,8 +2200,11 @@
             </div>
         </div>
 
-        <!-- Hero: address card (shown once a wallet's keys exist) -->
-        {#if appState.dkgState === DkgState.Complete && appState.dkgAddress}
+        <!-- Hero: address card (shown once a wallet's keys exist). Keyed on
+             the group key: the AccountPicker derives every account address
+             from it, while the post-DKG `dkgAddress` fetch can lose a race
+             with the offscreen document and leave the whole card hidden. -->
+        {#if appState.dkgState === DkgState.Complete && appState.dkgGroupPublicKey}
             <div class="hero">
                 <div class="relative flex items-center justify-between">
                     <span class="flex items-center gap-2">
@@ -2342,8 +2349,11 @@
             </div>
         {/if}
 
-        <!-- Wallet assets + activity + send/receive (shown once a wallet exists) -->
-        {#if canSign && appState.dkgState === DkgState.Complete && appState.dkgAddress}
+        <!-- Wallet assets + activity + send/receive (shown once a wallet exists).
+             Gate on the account address the header already shows: the
+             post-DKG `dkgAddress` fetch is one-shot and racy, and a saved
+             wallet reloaded from the keystore never sets it. -->
+        {#if canSign && displayAddress}
             {#if showSend && isEvmChain(appState.chain)}
                 <div class="card card-pad">
                     <SendForm

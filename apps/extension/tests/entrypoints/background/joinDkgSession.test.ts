@@ -99,11 +99,10 @@ function makeSessionManager(opts?: {
         }),
     };
     const mgr = new SessionManager(
-        appState,
+        stateManager as any,
         wsClient,
         broadcastToPopup as any,
         sendToOffscreen as any,
-        stateManager as any,
     );
     return { mgr, appState, wsClient, sentUpdates, broadcastToPopup };
 }

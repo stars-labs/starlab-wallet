@@ -845,6 +845,9 @@
                     dkgState: message.dkgState || DkgState.Idle,
                     // Gates the post-DKG "Save this wallet" form.
                     pendingKeystoreReady: message.pendingKeystoreReady === true,
+                    // Saved wallet's threshold/total (restored from its key
+                    // share); shown when no ceremony session is active.
+                    dkgLastResult: message.dkgLastResult ?? appState.dkgLastResult,
                     webrtcConnections: message.webrtcConnections || {},
                     blockchain: protocolChainFor(incomingChain),
                     curve: incomingCurve,
@@ -2221,6 +2224,13 @@
                         >
                             {appState.sessionInfo.threshold}-of-{appState
                                 .sessionInfo.total}
+                        </span>
+                    {:else if appState.dkgLastResult}
+                        <span
+                            class="rounded-full bg-white/20 px-2 py-0.5 text-xs font-semibold"
+                        >
+                            {appState.dkgLastResult.threshold}-of-{appState
+                                .dkgLastResult.total}
                         </span>
                     {/if}
                 </div>

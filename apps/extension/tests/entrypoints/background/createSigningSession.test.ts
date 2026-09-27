@@ -45,11 +45,10 @@ function makeSessionManager() {
         }),
     };
     const mgr = new SessionManager(
-        appState,
+        stateManager as any,
         wsClient,
         broadcast as any,
         sendToOffscreen as any,
-        stateManager as any,
     );
     return { mgr, appState, announces, broadcast, wsClient, sendToOffscreen };
 }

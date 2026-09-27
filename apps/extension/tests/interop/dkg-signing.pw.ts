@@ -3,6 +3,7 @@
 import { test, expect } from "./fixtures";
 import { signMessage, extSignature } from "./extension-actions";
 import { setupExtension, extensionInitiatedDkg, type Env } from "./scenario";
+import { inNetns, blockUdp, unblockUdp } from "./netns";
 
 // Independent tests (each gets its own signal server + room).
 test.describe.configure({ timeout: 180_000 });
@@ -38,6 +39,29 @@ test("ext + 1 online CLI: the extension co-signs a 2-of-3 signature", async ({ p
     const cliSig = (await env.peers[0].signature).sig;
     expect(await extSignature(page)).toBe(cliSig.replace(/^0x/, "").toLowerCase());
   } finally {
+    env?.cleanup();
+  }
+});
+
+test("WebRTC outage: the mesh rebuilds and the extension co-signs", async ({ page, context, extensionId }) => {
+  test.skip(!inNetns, "needs INTEROP_NETNS=1 (run inside a user network namespace, see netns.ts)");
+  let env: Env | undefined;
+  try {
+    env = await setupExtension(page, context, extensionId);
+    await extensionInitiatedDkg(page, env, { threshold: 2, cliPeers: 2 });
+    env.peers[1].kill();
+
+    // Every P2P path dies; signaling (TCP) stays up. Long enough for ICE
+    // to go `failed` on both sides.
+    blockUdp();
+    await page.waitForTimeout(20_000);
+    unblockUdp();
+
+    await signMessage(page, "after-webrtc-outage");
+    const cliSig = (await env.peers[0].signature).sig;
+    expect(await extSignature(page)).toBe(cliSig.replace(/^0x/, "").toLowerCase());
+  } finally {
+    unblockUdp();
     env?.cleanup();
   }
 });

@@ -1,6 +1,14 @@
 import { SessionInfo, DkgState, MeshStatus, MeshStatusType } from "@stars-labs/types/appstate";
 import { WebRTCAppMessage } from "@stars-labs/types/webrtc";
 import { ICE_SERVERS } from "../../config/ice";
+
+const CEREMONY_PREFIXES = ["DKG_ROUND1:", "DKG_ROUND2:", "SIGN_COMMIT:", "SIGN_SHARE:", "RESHARE_ROUND1:", "RESHARE_ROUND2:"];
+
+/** A DKG / signing / reshare round frame (the CLI/TUI native SimpleMessage). */
+function isCeremonyFrame(message: WebRTCAppMessage): boolean {
+  const text = (message as { text?: unknown }).text;
+  return typeof text === "string" && CEREMONY_PREFIXES.some((p) => text.startsWith(p));
+}
 import { to_frost_wire } from "@stars-labs/core-wasm";
 import { WebSocketMessagePayload, WebRTCSignal } from "@stars-labs/types/websocket";
 import type { KeyShareData } from "@stars-labs/types/keystore";
@@ -77,6 +85,25 @@ export class WebRTCManager {
   private dataChannels: Map<string, RTCDataChannel> = new Map();
   /** Messages for peers whose data channel isn't open yet, sent on open. */
   private pendingSends: Map<string, WebRTCAppMessage[]> = new Map();
+  /**
+   * Ceremony frames (DKG/signing/reshare rounds) sent to each peer during the
+   * current ceremony — re-sent when that peer's channel (re)opens, since a
+   * rebuilt connection loses anything in flight. Receivers dedupe per sender.
+   */
+  private ceremonyOutbox: Map<string, WebRTCAppMessage[]> = new Map();
+  /** `disconnected` often heals by itself; wait this long before rebuilding. */
+  private disconnectGraceMs = 8000;
+  private graceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  /** Rebuild rate limit per peer: first retry after this, doubling to 30s. */
+  private rebuildBaseDelayMs = 5000;
+  private rebuildBackoff: Map<string, { nextAt: number; delay: number; timer?: ReturnType<typeof setTimeout> }> = new Map();
+  /**
+   * A re-offer made while the network is still down may never reach
+   * `failed` (Chrome can sit in `connecting` for minutes): rebuild again if
+   * it isn't connected within this window.
+   */
+  private offerWatchdogMs = 20_000;
+  private offerWatchdogs: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   public sessionInfo: SessionInfo | null = null;
   public invites: SessionInfo[] = []; // Store incoming session proposals/invites
@@ -381,11 +408,15 @@ export class WebRTCManager {
 
   private _updateDkgState(newState: DkgState) {
     this.dkgState = newState;
+    if (newState === DkgState.Complete || newState === DkgState.Failed) this.ceremonyOutbox.clear();
     this.onDkgStateUpdate(this.dkgState);
   }
 
   private _updateSigningState(newState: SigningState, info: SigningInfo | null = null) {
     this.signingState = newState;
+    // A frame from a finished ceremony must never reach the next one (CLI
+    // peers buffer pre-session SIGN_COMMITs).
+    if (newState === SigningState.Complete || newState === SigningState.Failed) this.ceremonyOutbox.clear();
     this.signingInfo = info;
     this.onSigningStateUpdate(this.signingState, this.signingInfo);
   }
@@ -462,6 +493,8 @@ export class WebRTCManager {
       }
 
       this._log(`Processing WebRTCSignal ${actualSignal.type} from ${fromPeerId}`);
+
+      if (actualSignal.type === 'Offer' && !this._acceptsOffer(fromPeerId)) return;
 
       const pc = await this._getOrCreatePeerConnection(fromPeerId);
       if (!pc) {
@@ -589,6 +622,11 @@ export class WebRTCManager {
   }
 
   public sendWebRTCAppMessage(toPeerId: string, message: WebRTCAppMessage): void {
+    if (isCeremonyFrame(message)) {
+      const outbox = this.ceremonyOutbox.get(toPeerId) ?? [];
+      outbox.push(message);
+      this.ceremonyOutbox.set(toPeerId, outbox);
+    }
     const dc = this.dataChannels.get(toPeerId);
     if (dc && dc.readyState === 'open') {
       dc.send(JSON.stringify(message));
@@ -643,60 +681,6 @@ export class WebRTCManager {
   }
 
   // Missing private methods that tests are calling
-  private _handlePeerDisconnection(peerId: string): void {
-    this._log(`Handling peer disconnection for ${peerId}`);
-
-    // Close and remove data channel
-    const dc = this.dataChannels.get(peerId);
-    if (dc) {
-      dc.close();
-      this.dataChannels.delete(peerId);
-    }
-
-    // Close and remove peer connection
-    const pc = this.peerConnections.get(peerId);
-    if (pc) {
-      pc.close();
-      this.peerConnections.delete(peerId);
-    }
-
-    // Clear any pending ICE candidates
-    this.pendingIceCandidates.delete(peerId);
-
-    // Update connection status
-    this.onWebRTCConnectionUpdate(peerId, false);
-
-    // Update mesh status - remove disconnected peer from ready_devices
-    if (this.meshStatus.type === MeshStatusType.Ready ||
-      (this.meshStatus.type === MeshStatusType.PartiallyReady && (this.meshStatus as any).ready_devices)) {
-      const currentStatus = this.meshStatus;
-      let readyPeers: Set<string>;
-
-      if (this.meshStatus.type === MeshStatusType.PartiallyReady && (this.meshStatus as any).ready_devices) {
-        // Copy existing ready_devices
-        readyPeers = new Set((currentStatus as any).ready_devices);
-      } else {
-        // Create from all participants except the disconnected one
-        readyPeers = new Set(this.sessionInfo?.participants || []);
-      }
-
-      // Remove the disconnected peer
-      readyPeers.delete(peerId);
-
-      // Update the mesh status
-      const totalPeers = this.sessionInfo?.participants.length || 0;
-      if (readyPeers.size >= totalPeers) {
-        this._updateMeshStatus({ type: MeshStatusType.Ready });
-      } else {
-        this._updateMeshStatus({
-          type: MeshStatusType.PartiallyReady,
-          ready_devices: readyPeers,
-          total_devices: totalPeers
-        });
-      }
-    }
-  }
-
   private _sendWebRTCMessage(toPeerId: string, message: WebRTCAppMessage): void {
     this._log(`Sending WebRTC message to ${toPeerId}: ${JSON.stringify(message)}`);
     this.sendWebRTCAppMessage(toPeerId, message);
@@ -1851,6 +1835,7 @@ export class WebRTCManager {
 
   private _updateReshareState(state: ReshareState, error?: string): void {
     this.reshareState = state;
+    if (state === ReshareState.Complete || state === ReshareState.Failed) this.ceremonyOutbox.clear();
     this._emitReshareState(error);
   }
 
@@ -2569,23 +2554,26 @@ export class WebRTCManager {
       this._setupDataChannel(event.channel, peerId);
     };
 
-    pc.onconnectionstatechange = () => {
-      const isConnected = pc.connectionState === 'connected';
-      this.onWebRTCConnectionUpdate(peerId, isConnected);
-      if (!isConnected && pc.connectionState === 'disconnected') {
-        this._handlePeerDisconnection(peerId);
-      }
-    };
+    pc.onconnectionstatechange = () => this._onPeerConnectionState(peerId, pc);
   }
 
   private _setupDataChannel(channel: RTCDataChannel, peerId: string): void {
     this.dataChannels.set(peerId, channel);
 
+    // A rebuild replaces the channel; the old one's late events must not
+    // touch the new one (its onclose used to delete the fresh channel).
+    const isCurrent = () => this.dataChannels.get(peerId) === channel;
+
     channel.onopen = () => {
+      if (!isCurrent()) return;
       this._log(`Data channel opened with ${peerId}`);
-      const queued = this.pendingSends.get(peerId) ?? [];
+      // Queued control messages, then every ceremony frame of the current
+      // ceremony (a rebuilt connection lost whatever was in flight).
+      const queued = (this.pendingSends.get(peerId) ?? []).filter((m) => !isCeremonyFrame(m));
       this.pendingSends.delete(peerId);
-      for (const message of queued) this.sendWebRTCAppMessage(peerId, message);
+      for (const message of [...queued, ...(this.ceremonyOutbox.get(peerId) ?? [])]) {
+        channel.send(JSON.stringify(message));
+      }
       this._checkMeshStatus();
     };
 
@@ -2599,6 +2587,7 @@ export class WebRTCManager {
     };
 
     channel.onclose = () => {
+      if (!isCurrent()) return;
       this._log(`Data channel closed with ${peerId}`);
       this.dataChannels.delete(peerId);
       this._checkMeshStatus();
@@ -2963,6 +2952,135 @@ export class WebRTCManager {
     };
   }
 
+  /**
+   * Weak-network recovery (same rules as the CLI/TUI): `disconnected` gets a
+   * grace period; `failed` — or a grace that expires — rebuilds the
+   * connection. Events from a connection we already replaced are ignored.
+   */
+  private _onPeerConnectionState(peerId: string, pc: RTCPeerConnection): void {
+    if (this.peerConnections.get(peerId) !== pc) return;
+    const state = pc.connectionState;
+    this.onWebRTCConnectionUpdate(peerId, state === "connected");
+    if (state === "connected") {
+      this._cancelRecovery(peerId);
+    } else if (state === "disconnected") {
+      if (this.graceTimers.has(peerId)) return;
+      this._log(`Connection to ${peerId} disconnected — waiting ${this.disconnectGraceMs}ms before rebuilding`);
+      this.graceTimers.set(peerId, setTimeout(() => {
+        this.graceTimers.delete(peerId);
+        const current = this.peerConnections.get(peerId);
+        if (current === pc && pc.connectionState !== "connected") this._rebuildPeer(peerId);
+      }, this.disconnectGraceMs));
+    } else if (state === "failed") {
+      this._clearGrace(peerId);
+      this._rebuildPeer(peerId);
+    }
+  }
+
+  private _cancelRecovery(peerId: string): void {
+    this._clearGrace(peerId);
+    this._clearOfferWatchdog(peerId);
+    const backoff = this.rebuildBackoff.get(peerId);
+    if (backoff?.timer) clearTimeout(backoff.timer);
+    this.rebuildBackoff.delete(peerId);
+  }
+
+  private _clearOfferWatchdog(peerId: string): void {
+    const timer = this.offerWatchdogs.get(peerId);
+    if (timer) clearTimeout(timer);
+    this.offerWatchdogs.delete(peerId);
+  }
+
+  private _clearGrace(peerId: string): void {
+    const timer = this.graceTimers.get(peerId);
+    if (timer) clearTimeout(timer);
+    this.graceTimers.delete(peerId);
+  }
+
+  /**
+   * Replace a dead connection: close it (keeping queued and ceremony frames
+   * for the new channel) and, if we're the offerer for this pair (smaller
+   * device id), offer again. Rate-limited per peer so a flapping link doesn't
+   * spin.
+   */
+  private _rebuildPeer(peerId: string): void {
+    const now = Date.now();
+    const backoff = this.rebuildBackoff.get(peerId) ?? { nextAt: 0, delay: this.rebuildBaseDelayMs };
+    if (now < backoff.nextAt) {
+      if (!backoff.timer) {
+        backoff.timer = setTimeout(() => {
+          backoff.timer = undefined;
+          this._rebuildPeer(peerId);
+        }, backoff.nextAt - now);
+        this.rebuildBackoff.set(peerId, backoff);
+      }
+      return;
+    }
+    this.rebuildBackoff.set(peerId, { nextAt: now + backoff.delay, delay: Math.min(backoff.delay * 2, 30_000) });
+
+    this._log(`Rebuilding connection to ${peerId}`);
+    this.peerConnections.get(peerId)?.close();
+    this.peerConnections.delete(peerId);
+    this.dataChannels.delete(peerId);
+    this.pendingIceCandidates.delete(peerId);
+    this.onWebRTCConnectionUpdate(peerId, false);
+    this._removeFromMeshReady(peerId);
+    // The mesh outlives a single ceremony (a signing session lists only its
+    // proposer), so don't gate on the current session: a peer that really
+    // left is removed by dropPeers, which also cancels these timers.
+    this._clearOfferWatchdog(peerId);
+    if (this.localPeerId < peerId) {
+      void this.initiatePeerConnection(peerId);
+      this.offerWatchdogs.set(peerId, setTimeout(() => {
+        this.offerWatchdogs.delete(peerId);
+        if (this.peerConnections.get(peerId)?.connectionState === "connected") return;
+        this._log(`Re-offered connection to ${peerId} not up after ${this.offerWatchdogMs}ms`);
+        this._rebuildPeer(peerId);
+      }, this.offerWatchdogMs));
+    }
+  }
+
+  /** A peer whose connection dropped is no longer mesh-ready. */
+  private _removeFromMeshReady(peerId: string): void {
+    const status = this.meshStatus as any;
+    if (status.type !== MeshStatusType.Ready && !(status.type === MeshStatusType.PartiallyReady && status.ready_devices)) {
+      return;
+    }
+    const readyPeers: Set<string> =
+      status.type === MeshStatusType.PartiallyReady
+        ? new Set(status.ready_devices)
+        : new Set(this.sessionInfo?.participants || []);
+    readyPeers.delete(peerId);
+    const totalPeers = this.sessionInfo?.participants.length || 0;
+    if (readyPeers.size >= totalPeers) {
+      this._updateMeshStatus({ type: MeshStatusType.Ready });
+    } else {
+      this._updateMeshStatus({ type: MeshStatusType.PartiallyReady, ready_devices: readyPeers, total_devices: totalPeers });
+    }
+  }
+
+  /**
+   * Whether to answer an incoming offer. A connection we already negotiated
+   * is replaced (the peer rebuilt or restarted); in glare — we're the offerer
+   * and mid-offer — the peer's offer is ignored.
+   */
+  private _acceptsOffer(peerId: string): boolean {
+    const existing = this.peerConnections.get(peerId);
+    if (!existing) return true;
+    if (this.localPeerId < peerId && existing.signalingState === "have-local-offer") {
+      this._log(`Ignoring offer from ${peerId}: glare, our offer is pending`);
+      return false;
+    }
+    if (existing.remoteDescription) {
+      this._log(`Replacing connection to ${peerId} for its new offer`);
+      existing.close();
+      this.peerConnections.delete(peerId);
+      this.dataChannels.delete(peerId);
+      this.pendingIceCandidates.delete(peerId);
+    }
+    return true;
+  }
+
   /** Close and forget the connections of peers that left the signal server. */
   public dropPeers(peerIds: string[]): void {
     for (const peerId of peerIds) {
@@ -2970,6 +3088,7 @@ export class WebRTCManager {
       this.peerConnections.delete(peerId);
       this.dataChannels.delete(peerId);
       this.pendingSends.delete(peerId);
+      this._cancelRecovery(peerId);
       this._log(`Dropped connection to ${peerId} (left the signal server)`);
     }
   }
@@ -3062,6 +3181,7 @@ export class WebRTCManager {
     if (this.sessionInfo && this.sessionInfo.session_id !== sessionInfo.session_id) {
       // Undelivered frames belong to the previous ceremony.
       this.pendingSends.clear();
+      this.ceremonyOutbox.clear();
     }
     this._log(`Participants: [${sessionInfo.participants.join(', ')}]`);
     this._log(`Accepted devices: [${sessionInfo.accepted_devices.join(', ')}]`);

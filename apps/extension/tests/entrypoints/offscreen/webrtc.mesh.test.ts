@@ -53,8 +53,11 @@ describe('WebRTCManager mesh readiness', () => {
             total_devices: 3
         });
 
-        // Simulate peer 'b' disconnecting
-        (manager as any)._handlePeerDisconnection('b');
+        // Peer 'b''s connection fails and is rebuilt
+        const pc = { connectionState: 'failed', close() {} };
+        (manager as any).peerConnections.set('b', pc);
+        (manager as any).initiatePeerConnection = async () => {};
+        (manager as any)._onPeerConnectionState('b', pc);
 
         expect(manager.meshStatus.type).toBe(MeshStatusType.PartiallyReady);
         const readydevices = (manager.meshStatus as any).ready_devices as Set<string>;

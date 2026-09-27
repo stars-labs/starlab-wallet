@@ -95,12 +95,7 @@ and its mDNS multicast join fails with `ENODEV` when there is no route.
 
 ## Status
 
-Passing: extension- and CLI-initiated DKG, signing and reshare; recovery from
-a signal-server outage; with `INTEROP_NETNS=1`, recovery from a WebRTC (UDP)
-outage.
-
-Known failure (protocol-level):
-
-- **3 online signers.** The CLI signs with whichever threshold-many
-  commitments arrive first, so which signers participate is a race. Fixing it
-  needs a proposer-chosen signer list in the signing announce.
+All specs pass on secp256k1 and ed25519: extension- and CLI-initiated DKG,
+signing (including more than threshold signers online — the proposer fixes
+the signer set with `SIGN_SET`) and reshare; recovery from a signal-server
+outage; with `INTEROP_NETNS=1`, recovery from a WebRTC (UDP) outage.

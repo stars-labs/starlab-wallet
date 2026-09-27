@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, jest } from 'bun:test';
-import { DkgState, WebRTCManager } from '../../../src/entrypoints/offscreen/webrtc';
+import { DkgState, SigningState, WebRTCManager } from '../../../src/entrypoints/offscreen/webrtc';
 import {
     initializeWasmIfNeeded,
     isWasmInitialized,
@@ -49,9 +49,8 @@ function makeSigningInfo(signingId: string, transactionData: string) {
         participants: ['a', 'b', 'c'],
         acceptances: new Map<string, boolean>(),
         accepted_participants: ['a'],
-        // First-come signer set: our own commitment is in; peers join it
-        // as their commitments arrive (up to threshold).
-        selected_signers: ['a'],
+        // Fixed by the proposer ('a') once threshold commitments are in.
+        selected_signers: [] as string[],
         signer_identifiers: { a: 1, b: 2, c: 3 },
         step: 'commitment_phase' as const,
         initiator: 'a',
@@ -132,11 +131,13 @@ describe('WebRTCManager FROST Signing Process', () => {
             // its own commitment in the engine) and waits for a co-signer.
             (managerA as any).signingInfo = makeSigningInfo(signingId, transactionMessageHex);
             (managerB as any).signingInfo = makeSigningInfo(signingId, transactionMessageHex);
+            (managerA as any).signingState = SigningState.CommitmentPhase;
             const commitmentHexA = frostDkgA.signing_commit();
             (managerA as any).signingCommitments.set('a', commitmentHexA);
             const commitmentHexB = frostDkgB.signing_commit();
 
-            // B's commitment completes A's 2-of-3 signer set → A signs.
+            // B's commitment completes proposer A's 2-of-3 signer set → A
+            // announces it and signs.
             await (managerA as any)._handleSigningCommitment('b', {
                 signing_id: signingId,
                 commitment: commitmentHexB

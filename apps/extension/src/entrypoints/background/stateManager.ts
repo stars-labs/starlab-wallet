@@ -478,30 +478,6 @@ export class StateManager {
                     this.appState.webrtcConnections[payload.deviceId] = payload.connected;
                     console.log("[StateManager] Updated appState.webrtcConnections:", this.appState.webrtcConnections);
 
-                    // Check if we should transition from KeystoreImported to Complete
-                    if (this.appState.dkgState === DkgState.KeystoreImported && this.appState.sessionInfo) {
-                        // For imported keystores, we need at least threshold participants connected
-                        const connectedParticipants = Object.keys(this.appState.webrtcConnections)
-                            .filter(peer => this.appState.webrtcConnections[peer] === true).length + 1; // +1 for self
-                        
-                        console.log(`[StateManager] WebRTC update - checking keystore imported transition: connected=${connectedParticipants}, threshold=${this.appState.sessionInfo.threshold}`);
-                        
-                        if (connectedParticipants >= this.appState.sessionInfo.threshold) {
-                            console.log("[StateManager] Transitioning from KeystoreImported to Complete - enough participants connected via WebRTC");
-                            this.appState.dkgState = DkgState.Complete;
-                            this.notifyDkgStateListenersIfChanged();
-                            
-                            // Broadcast DKG state update
-                            this.broadcastToPopupPorts({
-                                type: "dkgStateUpdate",
-                                state: DkgState.Complete
-                            } as any);
-                            
-                            // Auto-fetch DKG address when transitioning to Complete
-                            this.fetchAndUpdateDkgAddress();
-                        }
-                    }
-
                     // Send WebRTC connection update directly to popup
                     const webrtcMessage = {
                         type: "webrtcConnectionUpdate",
@@ -519,33 +495,6 @@ export class StateManager {
             case "meshStatusUpdate":
 //                 console.log("[StateManager] Received mesh status update from offscreen:", payload);
                 this.appState.meshStatus = payload.status || { type: MeshStatusType.Incomplete };
-
-                // Check if we should transition from KeystoreImported to Complete
-                if (this.appState.dkgState === DkgState.KeystoreImported && 
-                    this.appState.meshStatus.type === MeshStatusType.Ready &&
-                    this.appState.sessionInfo) {
-                    
-                    // For imported keystores, we need at least threshold participants connected
-                    const connectedParticipants = Object.keys(this.appState.webrtcConnections)
-                        .filter(peer => this.appState.webrtcConnections[peer] === true).length + 1; // +1 for self
-                    
-                    console.log(`[StateManager] Checking keystore imported transition: connected=${connectedParticipants}, threshold=${this.appState.sessionInfo.threshold}`);
-                    
-                    if (connectedParticipants >= this.appState.sessionInfo.threshold) {
-                        console.log("[StateManager] Transitioning from KeystoreImported to Complete - enough participants connected");
-                        this.appState.dkgState = DkgState.Complete;
-                        this.notifyDkgStateListenersIfChanged();
-
-                        // Broadcast DKG state update
-                        this.broadcastToPopupPorts({
-                            type: "dkgStateUpdate",
-                            state: DkgState.Complete
-                        } as any);
-
-                        // Auto-fetch DKG address when transitioning to Complete
-                        this.fetchAndUpdateDkgAddress();
-                    }
-                }
 
                 // No persistence - sessions are ephemeral
 

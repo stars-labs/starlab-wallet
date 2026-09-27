@@ -30,7 +30,8 @@ import { PopupMessageHandler } from "../../../src/entrypoints/background/message
 import { StateManager } from "../../../src/entrypoints/background/stateManager";
 import { restoreActiveWallet } from "../../../src/entrypoints/background/walletRestore";
 import { keyShareCoreFromEngine } from "../../../src/utils/engineKeystore";
-import { decryptShareBackupData } from "../../../src/utils/shareBackup";
+import { openShareBackup } from "../../../src/utils/shareBackup";
+import { toEngineKeystoreJson } from "../../../src/utils/engineKeystore";
 import { DkgState } from "@stars-labs/types/dkg";
 
 const PASSWORD = "correct horse battery";
@@ -139,28 +140,39 @@ describe("exportKeystore after a restore", () => {
         expect(res.keystoreData).not.toContain(keystore.keyShare.key_package);
     });
 
-    it("imports back to the same group key and address", async () => {
+    it("writes the engine's WalletMetadata: wallet id as session_id, sorted participants, no wallet_id", async () => {
         const res = await exportBackup(await restoredState());
-        const backup = JSON.parse(res.keystoreData);
+        const { version, metadata } = JSON.parse(res.keystoreData);
+        expect(version).toBe("2.0");
+        expect(Object.keys(metadata)).toEqual([
+            "session_id", "device_id", "curve_type", "threshold", "total_participants",
+            "participant_index", "group_public_key", "participants", "created_at", "last_modified", "label",
+        ]);
+        expect(metadata.session_id).toBe("wallet-1");
+        expect(metadata.participants).toEqual(["cli-alice", "ext-bob", "tui-carol"]);
+        expect(metadata.label).toBe("Team");
+    });
 
-        const engineJson = await decryptShareBackupData(backup.data, PASSWORD);
+    it("imports back to the same share, group key and address", async () => {
+        const res = await exportBackup(await restoredState());
+        const { metadata, keyShare } = await openShareBackup(res.keystoreData, PASSWORD);
+
+        expect(metadata.group_public_key).toBe(groupKey);
+        expect(keyShare.participant_identifiers).toEqual(COHORT);
+        expect(keyShare.participant_index).toBe(2);
+        expect(JSON.parse(toEngineKeystoreJson(keyShare))).toEqual(JSON.parse(toEngineKeystoreJson(keystore.keyShare)));
         const fresh = new FrostDkgSecp256k1();
         try {
-            fresh.import_keystore(engineJson);
+            fresh.import_keystore(toEngineKeystoreJson(keyShare));
             expect(fresh.get_group_public_key()).toBe(groupKey);
             expect(fresh.get_eth_address()).toBe(ethAddress);
         } finally {
             fresh.free();
         }
-        expect(backup.metadata.group_public_key).toBe(groupKey);
-        expect(backup.metadata.blockchains[0].address).toBe(ethAddress);
-        expect(backup.metadata.threshold).toBe(2);
-        expect(backup.metadata.total_participants).toBe(3);
     });
 
     it("cannot be opened with the wrong password", async () => {
         const res = await exportBackup(await restoredState());
-        const backup = JSON.parse(res.keystoreData);
-        await expect(decryptShareBackupData(backup.data, "wrong password!")).rejects.toThrow();
+        await expect(openShareBackup(res.keystoreData, "wrong password!")).rejects.toThrow("Wrong password");
     });
 });

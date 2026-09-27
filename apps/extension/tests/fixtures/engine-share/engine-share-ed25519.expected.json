@@ -1,0 +1,16 @@
+{
+  "account0": [
+    [
+      "Solana",
+      "m/44'/501'/0'/0'",
+      "EsABpqBoyL7zbbFFLtkiZbQXCpegi7xojJyCpBQfZ95j"
+    ],
+    [
+      "Sui",
+      "m/44'/784'/0'/0'/0'",
+      "0xa5dc22b8f66e1ae98fdbe0e639b0c3260b28a1595ff791e89390e14957e05556"
+    ]
+  ],
+  "group_public_key": "6cacca3c52772c0e6c005c85b8a680387209c2827ed50103a7b4fcc41a06c48a",
+  "password": "correct-horse-battery"
+}

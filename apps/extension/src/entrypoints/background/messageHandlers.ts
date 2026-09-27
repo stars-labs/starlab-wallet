@@ -34,12 +34,13 @@ import {
     getDefaultChainForCurve,
     getProtocolBlockchainForChain,
     getChainLabel,
+    getRequiredCurve,
     isSupportedChain,
     isEvmChain,
     normalizeDerivedAddressChain,
     type SupportedChain,
 } from "@stars-labs/types/appstate";
-import { encryptShareBackup } from "../../utils/shareBackup";
+import { encryptShareBackup, openShareBackup } from "../../utils/shareBackup";
 
 /**
  * Handles messages from popup interface
@@ -1221,92 +1222,12 @@ export class PopupMessageHandler {
                 ? lastResult.chain
                 : getDefaultChainForCurve(curve);
             const protocolBlockchain = getProtocolBlockchainForChain(primaryChain);
-            const chainIds: Partial<Record<SupportedChain, number>> = {
-                ethereum: 1,
-                polygon: 137,
-                arbitrum: 42161,
-                optimism: 10,
-                base: 8453,
-            };
-            const addressFormats: Partial<Record<SupportedChain, string>> = {
-                ethereum: "EIP-55",
-                polygon: "EIP-55",
-                arbitrum: "EIP-55",
-                optimism: "EIP-55",
-                base: "EIP-55",
-                bitcoin: "bech32",
-                solana: "base58",
-                sui: "hex",
-            };
-            let derivedAddresses: Array<{ chain: SupportedChain; path: string; address: string }> = [];
-            try {
-                if (lastResult.groupPublicKey) {
-                    const derived = await this.offscreenManager.sendToOffscreen(
-                        {
-                            type: "deriveAccounts",
-                            curve,
-                            groupPublicKey: lastResult.groupPublicKey,
-                            count: 1,
-                        } as any,
-                        "Derive wallet account 0 addresses for save",
-                    );
-                    if (derived?.success && Array.isArray(derived.accounts?.[0]?.addresses)) {
-                        derivedAddresses = derived.accounts[0].addresses
-                            .map((addr: any) => {
-                                const chain = normalizeDerivedAddressChain(addr.chain);
-                                return chain && typeof addr.address === "string"
-                                    ? {
-                                          chain,
-                                          path: String(addr.path ?? ""),
-                                          address: addr.address,
-                                      }
-                                    : null;
-                            })
-                            .filter(Boolean);
-                    }
-                }
-            } catch (deriveErr) {
-                console.warn(
-                    "[PopupMessageHandler] Failed to derive multi-chain addresses while saving wallet:",
-                    deriveErr,
-                );
-            }
-            const addressFor = (chain: SupportedChain): string | undefined => {
-                const exact = derivedAddresses.find((addr) => addr.chain === chain)?.address;
-                if (exact) return exact;
-                const protocol = getProtocolBlockchainForChain(chain);
-                return derivedAddresses.find((addr) => addr.chain === protocol)?.address;
-            };
-            const primaryAddress =
-                addressFor(primaryChain) ??
-                lastResult.address ??
-                "";
-            const blockchainEntries = new Map<string, any>();
-            const addBlockchainEntry = (
-                chain: SupportedChain,
-                address: string | undefined,
-                enabled = chain === primaryChain,
-                path = "",
-            ) => {
-                if (!address) return;
-                blockchainEntries.set(chain, {
-                    blockchain: chain,
-                    network: "mainnet",
-                    ...(chainIds[chain] ? { chain_id: chainIds[chain] } : {}),
-                    address,
-                    address_format: addressFormats[chain] ?? "unknown",
-                    enabled,
-                    metadata: {
-                        curve,
-                        label: getChainLabel(chain),
-                        derivation_path: path,
-                    },
-                });
-            };
-            for (const addr of derivedAddresses) {
-                addBlockchainEntry(addr.chain, addr.address, addr.chain === primaryChain, addr.path);
-            }
-            addBlockchainEntry(primaryChain, primaryAddress, true);
+            const { blockchains, addressFor, primaryAddress } = await this.deriveWalletAddresses(
+                curve,
+                lastResult.groupPublicKey ?? "",
+                primaryChain,
+                lastResult.address ?? undefined,
+            );
 
             const keyShareData: KeyShareData = {
                 // Canonical FROST material: engine keystore fields +
@@ -1315,7 +1236,7 @@ export class PopupMessageHandler {
                 // Session context
                 session_id: lastResult.sessionId ?? "",
                 device_id: deviceId,
-                blockchains: Array.from(blockchainEntries.values()),
+                blockchains,
                 ethereum_address: addressFor("ethereum"),
                 solana_address: addressFor("solana"),
                 created_at: Date.now(),
@@ -1403,6 +1324,105 @@ export class PopupMessageHandler {
                 error: (err as Error).message ?? String(err),
             });
         }
+    }
+
+    /**
+     * Account-0 addresses of a wallet (public derivation in the offscreen
+     * wasm) as the stored `blockchains` entries, plus the primary address.
+     */
+    private async deriveWalletAddresses(
+        curve: "secp256k1" | "ed25519",
+        groupPublicKey: string,
+        primaryChain: SupportedChain,
+        fallbackAddress?: string,
+    ): Promise<{ blockchains: any[]; addressFor: (chain: SupportedChain) => string | undefined; primaryAddress: string }> {
+        const chainIds: Partial<Record<SupportedChain, number>> = {
+            ethereum: 1,
+            polygon: 137,
+            arbitrum: 42161,
+            optimism: 10,
+            base: 8453,
+        };
+        const addressFormats: Partial<Record<SupportedChain, string>> = {
+            ethereum: "EIP-55",
+            polygon: "EIP-55",
+            arbitrum: "EIP-55",
+            optimism: "EIP-55",
+            base: "EIP-55",
+            bitcoin: "bech32",
+            solana: "base58",
+            sui: "hex",
+        };
+        let derivedAddresses: Array<{ chain: SupportedChain; path: string; address: string }> = [];
+        try {
+            if (groupPublicKey) {
+                const derived = await this.offscreenManager.sendToOffscreen(
+                    {
+                        type: "deriveAccounts",
+                        curve,
+                        groupPublicKey,
+                        count: 1,
+                    } as any,
+                    "Derive wallet account 0 addresses",
+                );
+                if (derived?.success && Array.isArray(derived.accounts?.[0]?.addresses)) {
+                    derivedAddresses = derived.accounts[0].addresses
+                        .map((addr: any) => {
+                            const chain = normalizeDerivedAddressChain(addr.chain);
+                            return chain && typeof addr.address === "string"
+                                ? {
+                                      chain,
+                                      path: String(addr.path ?? ""),
+                                      address: addr.address,
+                                  }
+                                : null;
+                        })
+                        .filter(Boolean);
+                }
+            }
+        } catch (deriveErr) {
+            console.warn(
+                "[PopupMessageHandler] Failed to derive multi-chain addresses while saving wallet:",
+                deriveErr,
+            );
+        }
+        const addressFor = (chain: SupportedChain): string | undefined => {
+            const exact = derivedAddresses.find((addr) => addr.chain === chain)?.address;
+            if (exact) return exact;
+            const protocol = getProtocolBlockchainForChain(chain);
+            return derivedAddresses.find((addr) => addr.chain === protocol)?.address;
+        };
+        const primaryAddress =
+            addressFor(primaryChain) ??
+            fallbackAddress ??
+            "";
+        const blockchainEntries = new Map<string, any>();
+        const addBlockchainEntry = (
+            chain: SupportedChain,
+            address: string | undefined,
+            enabled = chain === primaryChain,
+            path = "",
+        ) => {
+            if (!address) return;
+            blockchainEntries.set(chain, {
+                blockchain: chain,
+                network: "mainnet",
+                ...(chainIds[chain] ? { chain_id: chainIds[chain] } : {}),
+                address,
+                address_format: addressFormats[chain] ?? "unknown",
+                enabled,
+                metadata: {
+                    curve,
+                    label: getChainLabel(chain),
+                    derivation_path: path,
+                },
+            });
+        };
+        for (const addr of derivedAddresses) {
+            addBlockchainEntry(addr.chain, addr.address, addr.chain === primaryChain, addr.path);
+        }
+        addBlockchainEntry(primaryChain, primaryAddress, true);
+        return { blockchains: Array.from(blockchainEntries.values()), addressFor, primaryAddress };
     }
 
     private async handleAcceptSessionRequest(message: any, sendResponse: (response: any) => void): Promise<void> {
@@ -1605,176 +1625,65 @@ export class PopupMessageHandler {
     }
 
     /**
-     * Handle import keystore request from popup
+     * Import a key-share file — the engine's v2 share file, written by the
+     * TUI / desktop / CLI or by our own export. The file's password decrypts
+     * it and becomes the keystore password on a fresh profile (same UX as
+     * saving a DKG wallet). The wallet is added and made active; no session
+     * is created.
      */
     private async handleImportKeystoreMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
-        const messageId = `import-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-        console.log(`[PopupMessageHandler] Processing import keystore request (ID: ${messageId})`);
-        
         try {
-            console.log(`[PopupMessageHandler] Import keystore data received (ID: ${messageId}), chain:`, message.chain);
-            if (!message.keystoreData || !message.chain) {
-                sendResponse({ success: false, error: "Missing keystore data or chain" });
+            if (typeof message.keystoreData !== "string" || typeof message.password !== "string") {
+                sendResponse({ success: false, error: "Missing key share file or password" });
+                return;
+            }
+            const { metadata, keyShare } = await openShareBackup(message.keystoreData, message.password);
+
+            const km = KeystoreManager.getInstance();
+            if (!(await km.isInitialized())) {
+                await km.createKeystore(message.password, this.stateManager.getState().deviceId);
+            } else if (km.isLocked() && !(await km.unlock(message.password))) {
+                sendResponse({ success: false, error: "Unlock the wallet first (the file's password doesn't open this keystore)" });
+                return;
+            }
+            if (km.getWallets().some((w) => w.id === metadata.session_id)) {
+                sendResponse({ success: false, error: `Wallet ${metadata.session_id} is already in this keystore` });
                 return;
             }
 
-            // Ensure offscreen document exists
-            console.log(`[PopupMessageHandler] Creating offscreen document (ID: ${messageId})`);
-            const createResult = await this.offscreenManager.createOffscreenDocument();
-            if (!createResult.success) {
-                console.error(`[PopupMessageHandler] Failed to create offscreen document (ID: ${messageId}):`, createResult.error);
-                sendResponse({ success: false, error: createResult.error || "Failed to create offscreen document" });
+            const curve = keyShare.curve;
+            const primaryChain: SupportedChain =
+                isSupportedChain(message.chain) && getRequiredCurve(message.chain) === curve
+                    ? message.chain
+                    : getDefaultChainForCurve(curve);
+            const { blockchains, addressFor, primaryAddress } = await this.deriveWalletAddresses(
+                curve,
+                keyShare.group_public_key,
+                primaryChain,
+            );
+            const keyShareData: KeyShareData = {
+                ...keyShare,
+                blockchains,
+                ethereum_address: addressFor("ethereum"),
+                solana_address: addressFor("solana"),
+                created_at: Date.parse(metadata.created_at) || Date.now(),
+            };
+            const added = await km.addWallet(metadata.session_id, keyShareData, {
+                id: metadata.session_id,
+                name: metadata.label ?? metadata.session_id,
+                blockchain: primaryChain,
+                address: primaryAddress,
+                session_id: metadata.session_id,
+                isActive: true,
+                hasBackup: true,
+            });
+            if (!added) {
+                sendResponse({ success: false, error: "Saving the imported wallet failed" });
                 return;
             }
-            
-            console.log(`[PopupMessageHandler] Sending importKeystore to offscreen (ID: ${messageId})`);
-            const response = await this.offscreenManager.sendToOffscreen({
-                type: "importKeystore",
-                keystoreData: message.keystoreData,
-                chain: message.chain,
-                password: message.password // Include password for encrypted keystores
-            }, `Import keystore from CLI (ID: ${messageId})`);
-
-            // Check if message was queued
-            if (response?.error === "Message queued for when offscreen is ready") {
-                console.log("[PopupMessageHandler] Keystore import queued - offscreen not ready");
-                sendResponse({ success: false, error: "Extension is initializing. Please try again in a moment." });
-                return;
-            }
-
-            if (response && response.success && response.sessionInfo) {
-                // Update state via the public mutator rather than
-                // poking the private appState directly. Keeps listener
-                // dispatch + persistence consistent with how the rest
-                // of the app updates state.
-                this.stateManager.updateState({
-                    dkgState: DkgState.KeystoreImported,
-                    sessionInfo: {
-                        session_id: response.sessionInfo.session_id,
-                        proposer_id: response.sessionInfo.device_id,
-                        participants: [response.sessionInfo.device_id],
-                        accepted_devices: [response.sessionInfo.device_id],
-                        threshold: response.sessionInfo.threshold,
-                        total: response.sessionInfo.total_participants,
-                    } as any,
-                    dkgAddress: response.address,
-                    ...(response.group_public_key
-                        ? { dkgGroupPublicKey: response.group_public_key }
-                        : {}),
-                });
-                
-                // Now we need to export the keystore from WASM and save it to KeystoreService
-                console.log("[PopupMessageHandler] Exporting imported keystore for persistence");
-                const exportResponse = await this.offscreenManager.sendToOffscreen({
-                    type: "exportKeystore",
-                    chain: message.chain
-                }, `Export imported keystore for persistence (ID: ${messageId})`);
-                
-                if (exportResponse && exportResponse.success && exportResponse.keystoreData) {
-                    try {
-                        // Check if keystore is unlocked
-                        const keystoreManager = KeystoreManager.getInstance();
-                        
-                        if (keystoreManager.isLocked()) {
-                            // Store temporarily in chrome.storage for migration later
-                            const importedKeystoreData = {
-                                keystoreData: exportResponse.keystoreData,
-                                sessionInfo: response.sessionInfo,
-                                addresses: response.addresses,
-                                chain: message.chain,
-                                importedAt: Date.now()
-                            };
-                            
-                            await chrome.storage.local.set({
-                                [`mpc_imported_keystore_${response.sessionInfo.session_id}`]: importedKeystoreData,
-                                'mpc_pending_import': true
-                            });
-                            
-                            console.log("[PopupMessageHandler] Keystore locked - stored for later migration");
-                        } else {
-                            // Parse the exported keystore data
-                            const exportedData = JSON.parse(exportResponse.keystoreData);
-                            
-                            // Create key share data from the exported keystore
-                            const keyShareData = {
-                                key_package: exportedData.key_package || '',
-                                public_key_package: exportedData.public_key_package || '',
-                                group_public_key: response.sessionInfo.group_public_key || '',
-                                session_id: response.sessionInfo.session_id,
-                                device_id: response.sessionInfo.device_id,
-                                participant_index: response.sessionInfo.participant_index,
-                                threshold: response.sessionInfo.threshold,
-                                total_participants: response.sessionInfo.total_participants,
-                                participants: [response.sessionInfo.device_id],
-                                participant_identifiers: {
-                                    [response.sessionInfo.device_id]: response.sessionInfo.participant_index,
-                                },
-                                curve: response.sessionInfo.curve_type as 'secp256k1' | 'ed25519',
-                                blockchains: response.sessionInfo.blockchains || [],
-                                ethereum_address: response.addresses?.ethereum,
-                                solana_address: response.addresses?.solana,
-                                created_at: Date.now()
-                            };
-                            
-                            // Create wallet metadata
-                            const walletMetadata = {
-                                id: response.sessionInfo.session_id,
-                                name: response.sessionInfo.session_id,
-                                blockchain: message.chain,
-                                address: response.addresses?.[message.chain] || '',
-                                session_id: response.sessionInfo.session_id,
-                                isActive: true,
-                                hasBackup: true
-                            };
-                            
-                            // Save to keystore
-                            const saved = await keystoreManager.addWallet(
-                                response.sessionInfo.session_id,
-                                keyShareData,
-                                walletMetadata
-                            );
-                            
-                            if (saved) {
-                                console.log("[PopupMessageHandler] Successfully saved imported keystore to KeystoreManager");
-                            } else {
-                                console.error("[PopupMessageHandler] Failed to save imported keystore");
-                            }
-                        }
-                    } catch (error) {
-                        console.error("[PopupMessageHandler] Failed to save imported keystore:", error);
-                        // Don't fail the import, just log the error
-                    }
-                }
-                
-                // Broadcast state updates to popup
-                this.stateManager.broadcastToPopupPorts({
-                    type: "dkgStateUpdate",
-                    state: DkgState.KeystoreImported
-                } as any);
-                
-                const currentState = this.stateManager.getState();
-                this.stateManager.broadcastToPopupPorts({
-                    type: "sessionUpdate",
-                    sessionInfo: currentState.sessionInfo,
-                    invites: []
-                } as any);
-
-                // Chain-specific address fields aren't on AppState
-                // directly — dkgAddress (the "current chain" address)
-                // is the canonical place. Stash the chain-specific
-                // variant in dkgLastResult for callers that need both.
-                const addressForChain =
-                    message.chain === "ethereum"
-                        ? response.addresses?.ethereum || response.address
-                        : response.addresses?.solana || response.address;
-                this.stateManager.updateState({
-                    dkgAddress: addressForChain,
-                });
-                
-                sendResponse({ success: true, address: response.address });
-            } else {
-                sendResponse({ success: false, error: response?.error || "Failed to import keystore" });
-            }
+            await km.setActiveWallet(metadata.session_id);
+            await checkAndRestoreKeystores();
+            sendResponse({ success: true, walletId: metadata.session_id, address: primaryAddress });
         } catch (error) {
             console.error("[PopupMessageHandler] Error importing keystore:", error);
             sendResponse({ success: false, error: (error as Error).message });

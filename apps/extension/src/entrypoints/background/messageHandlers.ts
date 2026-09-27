@@ -2163,10 +2163,6 @@ export class OffscreenMessageHandler {
                 this.handleLogMessage(payload);
                 break;
 
-            case "signingError":
-                this.handleSigningError(payload);
-                break;
-
             // NOTE: signingComplete, dkgComplete and dkgStateUpdate are
             // INTENTIONALLY not matched here. The corresponding stateManager
             // handler (StateManager.handleOffscreenStateUpdate, via
@@ -2235,18 +2231,6 @@ export class OffscreenMessageHandler {
             console.log(`📄 [OffscreenMessageHandler] LOG from ${source}: ${payload.payload.message}`);
         } else {
             console.log("[OffscreenMessageHandler] LOG:", payload);
-        }
-    }
-
-    private handleSigningError(payload: any): void {
-        console.error("[OffscreenMessageHandler] Signing error:", payload);
-        if (payload.signingId && payload.error) {
-            // Forward to popup/content scripts if needed
-            chrome.runtime.sendMessage({
-                type: MESSAGE_TYPES.SIGNING_ERROR,
-                signingId: payload.signingId,
-                error: payload.error
-            });
         }
     }
 

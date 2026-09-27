@@ -696,6 +696,33 @@ export class StateManager {
                 }
                 break;
 
+            case "signingError":
+                // A signing failed or timed out in the offscreen: free the
+                // session (so "+ Sign" and deferred invites work again),
+                // reject a waiting dApp request, and show the error.
+                {
+                    const info: any = payload;
+                    console.warn(`[StateManager] Signing ${info.sessionId} failed: ${info.error}`);
+                    if (
+                        this.appState.sessionInfo?.session_type === "signing" &&
+                        this.appState.sessionInfo?.session_id === info.sessionId
+                    ) {
+                        this.appState.sessionInfo = null;
+                        this.appState.dkgState = DkgState.Idle;
+                    }
+                    (this.appState as any).signingProgress = null;
+                    if (this.rpcHandler && typeof this.rpcHandler.handleSignatureError === "function") {
+                        this.rpcHandler.handleSignatureError(info.sessionId, info.error);
+                    }
+                    this.broadcastToPopupPorts({
+                        type: "signatureError",
+                        signingId: info.signingId,
+                        error: info.error,
+                    } as any);
+                    this.broadcastCurrentState();
+                }
+                break;
+
             case "signingComplete":
                 // Ext-2d-offscreen-rounds: the FROST signing ceremony
                 // finalized. Stash the signature + metadata in appState

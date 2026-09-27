@@ -298,6 +298,16 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                     });
                 };
 
+                // A signing that failed or timed out: the background clears
+                // the session and reports the error to the popup / dApp.
+                webRTCManager.onSigningFailed = (payload) => {
+                    console.warn("Offscreen: Signing failed:", payload);
+                    sendToBackground({
+                        type: "fromOffscreen",
+                        payload: { type: "signingError", ...payload },
+                    });
+                };
+
                 // Ext-2d-progress: roster progression events
                 // (commitments/shares arriving). Fires on every
                 // per-peer milestone so the popup's roster overlays

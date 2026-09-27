@@ -22,3 +22,75 @@ jobs:
       # The offscreen document (WebRTC + FROST) must not load the popup
       # chunk: its top-level mount() throws there and kills the document.
       - run: "! grep -q 'from\"./popup-' apps/extension/.output/chrome-mv3/chunks/offscreen-*.js"
+
+  # Extension <-> CLI interop (apps/extension/tests/interop): the built
+  # extension in headed Chromium (xvfb) runs DKG, signing and reshare with
+  # real starlab-cli peers over a private signal server. The CLI comes from
+  # starlab-mpc: the branch with this PR's name when one exists (a paired
+  # protocol change), otherwise main.
+  interop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        curve: [secp256k1, ed25519]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pick the starlab-mpc ref
+        id: mpc
+        run: |
+          branch="${{ github.head_ref || github.ref_name }}"
+          if git ls-remote --exit-code --heads https://github.com/stars-labs/starlab-mpc "$branch" >/dev/null; then
+            echo "ref=$branch" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        with:
+          repository: stars-labs/starlab-mpc
+          ref: ${{ steps.mpc.outputs.ref }}
+          path: starlab-mpc
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: starlab-mpc
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config xvfb nftables
+      - run: cargo build --release --locked -p starlab-cli -p starlab-signal-server
+        working-directory: starlab-mpc
+
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun run build:types
+      - run: cd apps/extension && bun run postinstall && bun run build
+      - run: cd apps/extension && bunx playwright install --with-deps chromium
+
+      - name: Interop specs
+        working-directory: apps/extension
+        env:
+          STARLAB_MPC_DIR: ${{ github.workspace }}/starlab-mpc
+          INTEROP_SIGNAL: local
+          INTEROP_CURVE: ${{ matrix.curve }}
+        run: xvfb-run -a bun run test:interop
+
+      # WebRTC outage (all UDP dropped mid-session) needs a network namespace;
+      # Ubuntu's AppArmor blocks unprivileged user namespaces unless relaxed.
+      - name: Weak-network spec (network namespace)
+        working-directory: apps/extension
+        env:
+          STARLAB_MPC_DIR: ${{ github.workspace }}/starlab-mpc
+          INTEROP_CURVE: ${{ matrix.curve }}
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          unshare --user --map-root-user --net bash -c '
+            ip link set lo up
+            ip link add d0 type dummy && ip addr add 10.99.0.1/24 dev d0 && ip link set d0 up
+            ip route add default dev d0
+            INTEROP_NETNS=1 INTEROP_SIGNAL=local xvfb-run -a bun run test:interop -g "WebRTC outage"'
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: interop-results-${{ matrix.curve }}
+          path: apps/extension/test-results
+          retention-days: 7

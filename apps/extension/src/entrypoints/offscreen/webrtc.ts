@@ -177,6 +177,14 @@ export class WebRTCManager {
   private announcedSignerSet: string[] | null = null;
   /** True once `signingInfo.selected_signers` is the ceremony's final set. */
   private signerSetFixed = false;
+  /**
+   * A signing that hasn't completed by then fails (a picked signer went
+   * offline, or too few shareholders committed). It is not re-picked in
+   * place: a signer that already shared must never sign another package
+   * with the same nonces. The next request starts a fresh ceremony.
+   */
+  private signingTimeoutMs = 120_000;
+  private signingTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Callbacks
   public onLog: (message: string) => void = console.log;
@@ -224,6 +232,7 @@ export class WebRTCManager {
    * The payload is JSON-plain (arrays, not Maps) so it crosses the
    * runtime.sendMessage boundary without serialization gymnastics.
    */
+  public onSigningFailed: (payload: { signingId: string; sessionId: string; error: string }) => void = () => {};
   public onSigningProgress: (payload: {
     signingId: string;
     state: SigningState;
@@ -440,7 +449,11 @@ export class WebRTCManager {
     this.signingState = newState;
     // A frame from a finished ceremony must never reach the next one (CLI
     // peers buffer pre-session SIGN_COMMITs).
-    if (newState === SigningState.Complete || newState === SigningState.Failed) this.ceremonyOutbox.clear();
+    if (newState === SigningState.Complete || newState === SigningState.Failed) {
+      this.ceremonyOutbox.clear();
+      if (this.signingTimer) clearTimeout(this.signingTimer);
+      this.signingTimer = null;
+    }
     this.signingInfo = info;
     this.onSigningStateUpdate(this.signingState, this.signingInfo);
   }
@@ -2528,9 +2541,7 @@ export class WebRTCManager {
     try {
       commitmentHex = this.frostDkg.signing_commit();
     } catch (e) {
-      this._log(`signing_commit() failed: ${e}`);
-      this.signingState = SigningState.Failed;
-      this.onSigningStateUpdate(this.signingState, this.signingInfo);
+      this._failSigning(`signing_commit() failed: ${this._getErrorMessage(e)}`);
       return false;
     }
 
@@ -2550,6 +2561,10 @@ export class WebRTCManager {
 
     this.signingState = SigningState.CommitmentPhase;
     this.onSigningStateUpdate(this.signingState, this.signingInfo);
+    const ceremony = this.signingInfo;
+    this.signingTimer = setTimeout(() => {
+      if (this.signingInfo === ceremony && this._signingActive()) this._failSigning(this._timeoutReason());
+    }, this.signingTimeoutMs);
     this._emitSigningProgress();
     this._log(`Round 1: broadcast our commitment to ${cohort.length} shareholders`);
 
@@ -2719,8 +2734,7 @@ export class WebRTCManager {
       ids.find((id) => !(info.signer_identifiers[id] > 0)) ? "it names a device without a share" :
       null;
     if (invalid) {
-      this._log(`Invalid SIGN_SET from ${fromPeerId}: ${invalid}`);
-      this._updateSigningState(SigningState.Failed, info);
+      this._failSigning(`Invalid signer set from ${fromPeerId}: ${invalid}`);
       return;
     }
     this._log(`Signer set from ${fromPeerId}: [${ids!.join(", ")}]`);
@@ -2765,8 +2779,7 @@ export class WebRTCManager {
         if (id !== this.localPeerId) frost.add_signing_commitment(info.signer_identifiers[id], this.signingCommitments.get(id));
       }
     } catch (e) {
-      this._log(`Building the signing package failed: ${this._getErrorMessage(e)}`);
-      this._updateSigningState(SigningState.Failed, info);
+      this._failSigning(`Building the signing package failed: ${this._getErrorMessage(e)}`);
       return;
     }
     this.signerSetFixed = true;
@@ -2775,6 +2788,44 @@ export class WebRTCManager {
     this._updateSigningState(SigningState.SharePhase, info);
     if (signing) this._generateAndSendSignatureShare();
     this._replayEarlySigningFrames();
+  }
+
+  /** Why a signing timed out: whose commitment or share never came. */
+  private _timeoutReason(): string {
+    const info = this.signingInfo!;
+    const secs = Math.round(this.signingTimeoutMs / 1000);
+    if (!this.signerSetFixed) {
+      return `Signing timed out after ${secs}s: only ${this.signingCommitments.size} of ${info.threshold} signers responded`;
+    }
+    const missing = info.selected_signers.filter((id) => !this.signingShares.has(id));
+    return `Signing timed out after ${secs}s: no signature share from ${missing.join(", ")}`;
+  }
+
+  /**
+   * End the current signing as failed: the FROST instance and per-ceremony
+   * state are reset (so a retry starts clean) and the failure is reported
+   * so the popup and any waiting dApp request get the error.
+   */
+  private _failSigning(reason: string): void {
+    const info = this.signingInfo;
+    this._log(`Signing failed: ${reason}`);
+    try {
+      this.frostDkg?.clear_signing_state();
+    } catch (e) {
+      this._log(`clear_signing_state() failed: ${this._getErrorMessage(e)}`);
+    }
+    this.signingCommitments.clear();
+    this.signingShares.clear();
+    this.announcedSignerSet = null;
+    this.signerSetFixed = false;
+    this._updateSigningState(SigningState.Failed, info);
+    if (info) {
+      this.onSigningFailed({
+        signingId: info.signing_id,
+        sessionId: info.signing_id.replace(/^sign_/, ""),
+        error: reason,
+      });
+    }
   }
 
   /** A ceremony is running (frames for the next one are buffered until then). */
@@ -2922,8 +2973,7 @@ export class WebRTCManager {
 
     if (!this.signingInfo) return;
     if (!this.frostDkg) {
-      this._log(`Cannot generate share: no FROST instance loaded`);
-      this._updateSigningState(SigningState.Failed, this.signingInfo);
+      this._failSigning(`Cannot generate share: no FROST instance loaded`);
       return;
     }
 
@@ -2932,8 +2982,7 @@ export class WebRTCManager {
     try {
       shareHex = this.frostDkg.sign(messageHex);
     } catch (e) {
-      this._log(`sign() failed: ${this._getErrorMessage(e)}`);
-      this._updateSigningState(SigningState.Failed, this.signingInfo);
+      this._failSigning(`sign() failed: ${this._getErrorMessage(e)}`);
       return;
     }
 
@@ -2974,8 +3023,7 @@ export class WebRTCManager {
 
     if (!this.signingInfo) return;
     if (!this.frostDkg) {
-      this._log(`Cannot aggregate: no FROST instance loaded`);
-      this._updateSigningState(SigningState.Failed, this.signingInfo);
+      this._failSigning(`Cannot aggregate: no FROST instance loaded`);
       return;
     }
 
@@ -2984,10 +3032,7 @@ export class WebRTCManager {
     try {
       aggregatedHex = this.frostDkg.aggregate_signature(messageHex);
     } catch (e) {
-      this._log(
-        `aggregate_signature() failed: ${this._getErrorMessage(e)}`,
-      );
-      this._updateSigningState(SigningState.Failed, this.signingInfo);
+      this._failSigning(`aggregate_signature() failed: ${this._getErrorMessage(e)}`);
       return;
     }
 

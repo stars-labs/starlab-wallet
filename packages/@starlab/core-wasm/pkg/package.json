@@ -1,15 +1,32 @@
 {
   "name": "starlab-core-wasm",
   "type": "module",
+  "collaborators": [
+    "Stars Labs"
+  ],
+  "description": "WebAssembly bindings for the Starlab FROST MPC engine — DKG and threshold signing (ed25519 + secp256k1) in the browser.",
   "version": "0.1.0",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stars-labs/starlab-mpc"
+  },
   "files": [
     "starlab_core_wasm_bg.wasm",
     "starlab_core_wasm.js",
     "starlab_core_wasm.d.ts"
   ],
   "main": "starlab_core_wasm.js",
+  "homepage": "https://github.com/stars-labs/starlab-mpc",
   "types": "starlab_core_wasm.d.ts",
   "sideEffects": [
     "./snippets/*"
+  ],
+  "keywords": [
+    "frost",
+    "mpc",
+    "wasm",
+    "threshold",
+    "webassembly"
   ]
 }

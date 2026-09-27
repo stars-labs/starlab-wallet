@@ -426,23 +426,9 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                 // Update the WebRTCManager with the session info and trigger mesh status check
                 webRTCManager.updateSessionInfo(payload.sessionInfo);
 
-                // Initiate WebRTC connections to devices with lexicographically larger IDs
-                const currentdeviceId: string = payload.currentdeviceId;
-                const participants: string[] = payload.sessionInfo.participants || [];
-                const devicesToConnect: string[] = participants.filter((deviceId: string) =>
-                    deviceId !== currentdeviceId && deviceId > currentdeviceId
-                );
-
-                console.log(`Offscreen: devices to initiate offers to (ID > ${currentdeviceId}):`, devicesToConnect);
-
-                if (devicesToConnect.length > 0) {
-                    devicesToConnect.forEach((deviceId: string) => {
-                        console.log(`Offscreen: Initiating WebRTC connection to ${deviceId}`);
-                        webRTCManager!.initiatePeerConnection(deviceId);
-                    });
-                } else {
-                    console.log(`Offscreen: No devices to initiate offers to based on ID ordering. Waiting for incoming offers.`);
-                }
+                // Offer to larger-id peers we aren't connected to yet; a live
+                // connection from an earlier ceremony is reused, not replaced.
+                webRTCManager.initiateMeshOffers();
 
                 sendResponse({ success: true, message: `Session accepted and WebRTC setup initiated with blockchain: ${blockchain}.` });
             } else {
@@ -642,18 +628,9 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                 webRTCManager.setBlockchain(blockchain);
                 webRTCManager.updateSessionInfo(payload.sessionInfo);
 
-                // Set up the WebRTC mesh: initiate offers to peers with
-                // lexicographically larger ids (same politeness rule as
-                // sessionAccepted). Peers with smaller ids will offer
-                // to us.
-                if (localdeviceId) {
-                    const peersToOffer: string[] = (payload.sessionInfo.participants || [])
-                        .filter((d: string) => d !== localdeviceId && d > localdeviceId!);
-                    peersToOffer.forEach((deviceId: string) => {
-                        console.log(`Offscreen: [reshare] initiating WebRTC connection to ${deviceId}`);
-                        webRTCManager!.initiatePeerConnection(deviceId);
-                    });
-                }
+                // Same mesh rule as sessionAccepted; the DKG's connections are
+                // reused (re-offering would tear down a working link mid-setup).
+                webRTCManager.initiateMeshOffers();
 
                 // Fetch the wallet's decrypted key share from background
                 // and arm the reshare. Fire-and-forget — progress flows

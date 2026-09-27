@@ -55,9 +55,11 @@ INTEROP_SIGNAL=wss://panda.qzz.io bun run test:interop
 
 Env knobs: `INTEROP_SIGNAL` (`local` = spawn a fresh `starlab-signal-server`
 per test), `INTEROP_CURVE` (secp256k1|ed25519), `INTEROP_PW`,
-`STARLAB_MPC_DIR`, `PLAYWRIGHT_CHROME_PATH`, and `INTEROP_BROWSER_LOG=1` to
-mirror the offscreen document's console (WebRTC + FROST rounds) into the
-test output.
+`STARLAB_MPC_DIR`, `PLAYWRIGHT_CHROME_PATH`, `INTEROP_BROWSER_LOG=1` to
+mirror the offscreen document (WebRTC + FROST rounds) and background
+(signal-server traffic, sessions) consoles into the test output, and
+`INTEROP_CLI_LOG` / `SERVE_LOG_LEVEL` (e.g. `info`) for the one-shot CLI
+commands' and the `serve` peers' own logs.
 
 ## Environment requirements (verified)
 
@@ -97,10 +99,8 @@ Passing: extension- and CLI-initiated DKG, signing and reshare; recovery from
 a signal-server outage; with `INTEROP_NETNS=1`, recovery from a WebRTC (UDP)
 outage.
 
-Known failures, both protocol-level:
+Known failure (protocol-level):
 
 - **3 online signers.** The CLI signs with whichever threshold-many
   commitments arrive first, so which signers participate is a race. Fixing it
   needs a proposer-chosen signer list in the signing announce.
-- **CLI-initiated reshare after the initiator restarts.** A `serve` peer keeps
-  a dead connection to the restarted initiator.

@@ -22,19 +22,22 @@ export function accountWalletId(parentId: string, chain: string, account: number
 }
 
 /**
- * Invitations still worth offering: a finished DKG stays on the signal
- * server (and is replayed on reconnect), so drop DKG sessions whose wallet
- * this device already holds. Signing / reshare sessions for held wallets
- * are exactly the ones to show.
+ * Wallet invitations worth offering (DKG to create a wallet, reshare of a
+ * held one). A finished DKG stays on the signal server (and is replayed on
+ * reconnect), so drop DKG sessions whose wallet this device already holds.
+ * Signing requests are not wallet invitations — they have their own
+ * review modal.
  */
 export function openInvites<T extends { session_id: string; session_type?: string }>(
     invites: T[],
     heldWalletIds: string[],
 ): T[] {
     const held = new Set(heldWalletIds);
-    return invites.filter(
-        (inv) => (inv.session_type ?? "dkg") !== "dkg" || !held.has(walletIdFromSession(inv.session_id)),
-    );
+    return invites.filter((inv) => {
+        const type = inv.session_type ?? "dkg";
+        if (type === "signing") return false;
+        return type !== "dkg" || !held.has(walletIdFromSession(inv.session_id));
+    });
 }
 
 const CHAIN_CURVES: Record<string, "secp256k1" | "ed25519"> = {

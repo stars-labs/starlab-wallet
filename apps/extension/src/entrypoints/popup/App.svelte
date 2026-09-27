@@ -510,9 +510,9 @@
     // Ext-2e: populated when the offscreen FROST ceremony finalizes
     // (via the `signingCompleted` message from background). Renders
     // a dismissable banner with the aggregated signature hex + a
-    // copy-to-clipboard button. EIP-191 badge shown for secp256k1
-    // signatures so the user knows they can feed it straight to
-    // ecrecover.
+    // copy-to-clipboard button. secp256k1 FROST signs BIP-340 Schnorr:
+    // the EIP-191 hash is what was signed, but the signature is NOT
+    // ecrecover-compatible.
     type SignatureBanner = {
         signingId: string;
         signature: string;
@@ -2600,7 +2600,7 @@
                             <dt class="label mb-1">
                                 EIP-191 hash
                                 <span class="font-normal text-faint"
-                                    >(ecrecover-ready)</span
+                                    >(signed as BIP-340 Schnorr — not ecrecover-compatible)</span
                                 >
                             </dt>
                             <dd
@@ -2795,7 +2795,7 @@
                     <dd>
                         {#if signatureBanner.blockchain === "ethereum"}
                             <span class="badge badge-warning"
-                                >EIP-191 · ecrecover-ready</span
+                                >EIP-191 · BIP-340 Schnorr (not ecrecover)</span
                             >
                         {:else}
                             <span class="badge badge-info">ed25519 · Solana</span>

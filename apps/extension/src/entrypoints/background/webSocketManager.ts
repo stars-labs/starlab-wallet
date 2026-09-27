@@ -479,6 +479,13 @@ export class WebSocketManager {
             return;
         }
 
+        if (
+            parsed.session_type === "signing" &&
+            this.stateManager?.isFinishedSigning?.(parsed.session_id, parsed.signing_message_hex)
+        ) {
+            return; // A signing that already completed / failed here.
+        }
+
         // Merge-update into invites: replace if we already have this
         // session_id (e.g. status_update), else append. Read the
         // StateManager's invites — our constructor copy goes stale.

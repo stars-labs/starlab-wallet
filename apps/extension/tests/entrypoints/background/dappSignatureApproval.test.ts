@@ -35,6 +35,13 @@ import { describe, it, expect, beforeEach, jest, mock } from "bun:test";
 // test-file ordering.
 import * as mockImports from "../../wxt-imports-mock";
 mock.module("#imports", () => mockImports);
+// The announce is built from the wallet's stored share (process-wide mock,
+// so install our own fake).
+const KEY_SHARE = { group_public_key: "02cafe", threshold: 2, total_participants: 3 };
+let keyShare: typeof KEY_SHARE | null = KEY_SHARE;
+mock.module("../../../src/services/keystoreManager", () => ({
+    KeystoreManager: { getInstance: () => ({ getKeyShare: async () => keyShare }) },
+}));
 
 import { RpcHandler } from "../../../src/entrypoints/background/rpcHandler";
 
@@ -81,13 +88,11 @@ function makeRpcHandler(opts: {
         resolveFn = resolve;
         rejectFn = reject;
     });
+    keyShare = KEY_SHARE;
     (rpc as any).pendingDappRequests.set(requestId, {
         walletId: "w1",
         walletName: "Treasury",
-        groupPublicKey: "02cafe",
         blockchain: "ethereum" as const,
-        threshold: 2,
-        total: 3,
         messageHex: "deadbeef",
         originalMessage: "hello",
         address: "0xabc",
@@ -123,10 +128,8 @@ describe("RpcHandler.approveDappSignature", () => {
         const args = env.createCalls[0];
         expect(args.walletId).toBe("w1");
         expect(args.walletName).toBe("Treasury");
-        expect(args.groupPublicKey).toBe("02cafe");
+        expect(args.keyShare).toBe(KEY_SHARE);
         expect(args.blockchain).toBe("ethereum");
-        expect(args.threshold).toBe(2);
-        expect(args.total).toBe(3);
         expect(args.signingMessageHex).toBe("deadbeef");
     });
 
@@ -280,5 +283,16 @@ describe("RpcHandler.getPendingSignatureRequests", () => {
 
     it("is empty when nothing is queued", () => {
         expect(new RpcHandler().getPendingSignatureRequests()).toEqual([]);
+    });
+});
+
+describe("RpcHandler.approveDappSignature — locked wallet", () => {
+    it("rejects the request instead of announcing without the wallet's share", async () => {
+        const env = makeRpcHandler();
+        keyShare = null;
+        const result = await env.rpc.approveDappSignature(env.requestId, true);
+        expect(result.success).toBe(false);
+        expect(env.createSigningSession).not.toHaveBeenCalled();
+        await expect(env.pendingPromise).rejects.toThrow("Unlock");
     });
 });

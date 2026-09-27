@@ -6,6 +6,7 @@ import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from "@st
 // Import WASM modules for FROST DKG
 import wasmInit, { FrostDkgEd25519, FrostDkgSecp256k1, FrostReshareEd25519, FrostReshareSecp256k1, derive_account_addresses } from '@stars-labs/core-wasm';
 import { parseAccountWalletId } from "../../utils/wallet-id";
+import { deriveAccountGroupKey } from "../../utils/accountKey";
 
 console.log("Offscreen script loaded.");
 
@@ -781,6 +782,16 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                 sendResponse({ success: false, error: "WebRTCManager not ready or missing blockchain parameter" });
             }
             break;
+
+        case "deriveAccountGroupKey": {
+            // Signing announce: the account child's group key (what engine
+            // proposers announce). Needs this device's share, like signing.
+            const { keyShare, chain, account } = payload as { keyShare: any; chain: string; account: number };
+            deriveAccountGroupKey(keyShare, { chain, account })
+                .then((groupPublicKey) => sendResponse({ success: true, groupPublicKey }))
+                .catch((e) => sendResponse({ success: false, error: (e as Error).message ?? String(e) }));
+            return true;
+        }
 
         case "deriveAccounts": {
             // Account model: PUBLIC-only derivation (no password, no shares).

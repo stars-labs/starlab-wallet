@@ -659,6 +659,7 @@ export class StateManager {
                     console.warn(`[StateManager] Signing ${info.sessionId} failed: ${info.error}`);
                     // dkgState is the wallet's readiness — a signing never
                     // changes it (see SessionManager.joinDkgSession).
+                    this.dropSigningInvite(info.sessionId);
                     if (
                         this.appState.sessionInfo?.session_type === "signing" &&
                         this.appState.sessionInfo?.session_id === info.sessionId
@@ -698,10 +699,8 @@ export class StateManager {
                         completedAt: Date.now(),
                     };
                     // Clear the active signing session so "+ Sign" is
-                    // available again. The invite is left in
-                    // `appState.invites` for now (it'll age out via
-                    // session_removed from the server or get cleaned
-                    // up on next cold start).
+                    // available again, and drop the finished request.
+                    this.dropSigningInvite(info.sessionId);
                     if (
                         this.appState.sessionInfo?.session_type === "signing" &&
                         this.appState.sessionInfo?.session_id === info.sessionId
@@ -832,6 +831,26 @@ export class StateManager {
             sessionInfo: this.appState.sessionInfo,
             invites: this.appState.invites
         } as any);
+    }
+
+    /** Signing requests (`session_id:message`) that completed or failed. */
+    private finishedSignings = new Set<string>();
+
+    /**
+     * A finished (or failed) signing is no longer a request to act on; the
+     * signal server may keep re-announcing it, see isFinishedSigning.
+     */
+    private dropSigningInvite(sessionId: string | undefined): void {
+        if (!sessionId) return;
+        const isIt = (s: { session_type?: string; session_id: string }) =>
+            s.session_type === "signing" && s.session_id === sessionId;
+        const request = [this.appState.sessionInfo, ...(this.appState.invites ?? [])].find((s) => s && isIt(s));
+        this.finishedSignings.add(`${sessionId}:${request?.signing_message_hex ?? ""}`);
+        this.appState.invites = (this.appState.invites ?? []).filter((s) => !isIt(s));
+    }
+
+    isFinishedSigning(sessionId: string, messageHex: string | undefined): boolean {
+        return this.finishedSignings.has(`${sessionId}:${messageHex ?? ""}`);
     }
 
     /**

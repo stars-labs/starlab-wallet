@@ -71,10 +71,7 @@ export class RpcHandler {
     private pendingDappRequests: Map<string, {
         walletId: string;
         walletName: string;
-        groupPublicKey: string;
         blockchain: "ethereum" | "solana";
-        threshold: number;
-        total: number;
         messageHex: string;
         originalMessage: string;
         address: string;
@@ -689,12 +686,6 @@ export class RpcHandler {
         const blockchain: 'ethereum' | 'solana' =
             (wallet as any).blockchain === 'solana' ? 'solana' : 'ethereum';
 
-        // Pull threshold/total/groupPublicKey from the KeyShareData.
-        const keyShare = (km as any).getKeyShareData?.((wallet as any).id);
-        const groupPublicKey =
-            keyShare?.group_public_key ?? (wallet as any).group_public_key ?? '';
-        const threshold = keyShare?.threshold ?? 2;
-        const total = keyShare?.total_participants ?? 3;
 
         // EIP-191 wrap for secp256k1, raw UTF-8 bytes for ed25519.
         // Mirrors handleCreateSigningSessionRequest in messageHandlers.
@@ -722,10 +713,7 @@ export class RpcHandler {
         return this.enqueueDappSignature({
             walletId: (wallet as any).id,
             walletName: (wallet as any).name ?? (wallet as any).id,
-            groupPublicKey,
             blockchain,
-            threshold,
-            total,
             messageHex,
             originalMessage: message,
             address,
@@ -796,19 +784,11 @@ export class RpcHandler {
         }
         const { KeystoreManager } = await import('../../services/keystoreManager');
         const km = KeystoreManager.getInstance();
-        const keyShare = (km as any).getKeyShareData?.((wallet as any).id);
-        const groupPublicKey =
-            keyShare?.group_public_key ?? (wallet as any).group_public_key ?? '';
-        const threshold = keyShare?.threshold ?? 2;
-        const total = keyShare?.total_participants ?? 3;
 
         return this.enqueueDappSignature({
             walletId: (wallet as any).id,
             walletName: (wallet as any).name ?? (wallet as any).id,
-            groupPublicKey,
             blockchain: 'solana',
-            threshold,
-            total,
             messageHex: this.stripHex(hexBytes),
             originalMessage: hexBytes,
             address,
@@ -901,10 +881,7 @@ export class RpcHandler {
     private enqueueDappSignature(ctx: {
         walletId: string;
         walletName: string;
-        groupPublicKey: string;
         blockchain: 'ethereum' | 'solana';
-        threshold: number;
-        total: number;
         messageHex: string;
         originalMessage: string;
         address: string;
@@ -930,10 +907,7 @@ export class RpcHandler {
         this.pendingDappRequests.set(requestId, {
             walletId: ctx.walletId,
             walletName: ctx.walletName,
-            groupPublicKey: ctx.groupPublicKey,
             blockchain: ctx.blockchain,
-            threshold: ctx.threshold,
-            total: ctx.total,
             messageHex: ctx.messageHex,
             originalMessage: ctx.originalMessage,
             address: ctx.address,
@@ -1055,11 +1029,6 @@ export class RpcHandler {
             );
         }
 
-        const keyShare = (km as any).getKeyShareData?.((wallet as any).id);
-        const groupPublicKey =
-            keyShare?.group_public_key ?? (wallet as any).group_public_key ?? '';
-        const threshold = keyShare?.threshold ?? 2;
-        const total = keyShare?.total_participants ?? 3;
 
         // Human-readable summary + danger warnings (#33) — a Permit is an
         // approval in disguise; the popup must say so, not show raw JSON.
@@ -1073,10 +1042,7 @@ export class RpcHandler {
         return this.enqueueDappSignature({
             walletId: (wallet as any).id,
             walletName: (wallet as any).name ?? (wallet as any).id,
-            groupPublicKey,
             blockchain: 'ethereum',
-            threshold,
-            total,
             messageHex,
             originalMessage: typeof typedDataRaw === 'string'
                 ? typedDataRaw
@@ -1355,13 +1321,20 @@ export class RpcHandler {
             return { success: false, error: 'SessionManager not initialized' };
         }
 
+        // The announce's cohort / threshold / account key come from the
+        // wallet's stored share (the keystore must be unlocked to sign).
+        const { KeystoreManager } = await import('../../services/keystoreManager');
+        const keyShare = await KeystoreManager.getInstance().getKeyShare(context.walletId);
+        if (!keyShare) {
+            const error = 'Unlock the wallet to sign';
+            this.handleSignatureError(requestId, error);
+            return { success: false, error };
+        }
         const result = await this.sessionManager.createSigningSession({
             walletId: context.walletId,
             walletName: context.walletName,
-            groupPublicKey: context.groupPublicKey,
             blockchain: context.blockchain,
-            threshold: context.threshold,
-            total: context.total,
+            keyShare,
             signingMessageHex: context.messageHex,
         });
         if (!result.success || !result.sessionId) {

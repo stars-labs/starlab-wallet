@@ -177,3 +177,65 @@ describe("a finished DKG", () => {
         expect(env.stateManager.getState().invites.map((s) => s.session_id)).not.toContain(X);
     });
 });
+
+describe("a signing session re-announced with a new message", () => {
+    const reannounce = (hex: string) => {
+        const f = signingAnnounce();
+        (f.session_info as any).signing_message_hex = hex;
+        return f;
+    };
+
+    it("does not start the new request before the user joins it", async () => {
+        const env = await setup();
+        await completeDkg(env);
+        env.receive(signingAnnounce());
+        await env.sessionManager.joinDkgSession(X);
+        env.receive(signingAnnounce());
+
+        env.receive(reannounce("aa".repeat(32)));
+
+        expect(types(env.sent).filter((t) => t === "sessionReadyForSigning")).toHaveLength(1);
+    });
+
+    it("starts the new request once the user joins it", async () => {
+        const env = await setup();
+        await completeDkg(env);
+        env.receive(signingAnnounce());
+        await env.sessionManager.joinDkgSession(X);
+        env.receive(signingAnnounce());
+        env.stateManager.handleOffscreenStateUpdate({
+            type: "signingError",
+            signingId: `sign_${X}`,
+            sessionId: X,
+            error: "aggregate failed",
+        } as any);
+
+        env.receive(reannounce("aa".repeat(32)));
+        await env.sessionManager.joinDkgSession(X);
+        env.receive(reannounce("aa".repeat(32)));
+
+        const starts = env.sent.filter((m) => m.type === "sessionReadyForSigning");
+        expect(starts.map((m) => m.sessionInfo.signing_message_hex)).toEqual(["68656c6c6f", "aa".repeat(32)]);
+    });
+});
+
+describe("a failed signing ceremony", () => {
+    it("clears the active session but keeps the wallet ready", async () => {
+        const env = await setup();
+        await completeDkg(env);
+        env.receive(signingAnnounce());
+        await env.sessionManager.joinDkgSession(X);
+
+        env.stateManager.handleOffscreenStateUpdate({
+            type: "signingError",
+            signingId: `sign_${X}`,
+            sessionId: X,
+            error: "aggregate failed",
+        } as any);
+
+        const state: any = env.stateManager.getState();
+        expect(state.sessionInfo).toBeNull();
+        expect(state.signingProgress).toBeNull();
+        expect(state.dkgState).toBe(DkgState.Complete);
+    });
+});

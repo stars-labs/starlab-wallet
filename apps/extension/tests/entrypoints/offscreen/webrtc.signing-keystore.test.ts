@@ -16,6 +16,7 @@ import {
     keyShareCoreFromEngine,
     toEngineKeystoreJson,
 } from "../../../src/utils/engineKeystore";
+import { schnorrVerify, segwitV1Program } from "../../helpers/bip340";
 
 let originalLog: any, originalErr: any, originalWarn: any;
 beforeAll(async () => {
@@ -38,10 +39,10 @@ const DEVICES = ["dev-a", "dev-b", "dev-c"]; // sorted → FROST ids 1,2,3
 type Chain = "ethereum" | "solana";
 
 /** Run a real DKG and finalize each share through WebRTCManager._finalizeDkg. */
-async function dkgThroughManagers(chain: Chain): Promise<any[]> {
+async function dkgThroughManagers(chain: Chain, t = 2): Promise<any[]> {
     const wasm = await import("@stars-labs/core-wasm");
     const Dkg = chain === "ethereum" ? wasm.FrostDkgSecp256k1 : wasm.FrostDkgEd25519;
-    const n = 3, t = 2;
+    const n = 3;
     const dkgs = [1, 2, 3].map((i) => {
         const d = new Dkg();
         d.init_dkg(i, n, t);
@@ -64,7 +65,7 @@ async function dkgThroughManagers(chain: Chain): Promise<any[]> {
             session_id: "dkg-session",
             proposer_id: "dev-a",
             total: 3,
-            threshold: 2,
+            threshold: t,
             // Join order, unsorted — ids must still follow sorted order.
             participants: ["dev-c", "dev-a", "dev-b"],
             accepted_devices: DEVICES,
@@ -127,7 +128,7 @@ for (const chain of ["ethereum", "solana"] as const) {
                 };
                 mgr.onSigningComplete = (p) => signatures.set(id, p.signature);
                 const share = storedShare(payloads[DEVICES.indexOf(id)], id);
-                expect(await mgr.loadKeystoreForSigning(share, chain)).toBe(true);
+                expect(await mgr.loadKeystoreForSigning(share, { chain, account: 0 })).toBe(true);
                 expect(mgr.getDkgStatus().address).toBeTruthy();
                 managers.set(id, mgr);
             }
@@ -155,6 +156,93 @@ for (const chain of ["ethereum", "solana"] as const) {
         }, 30000);
     });
 }
+
+/**
+ * TUI-initiated BITCOIN signing: wallet_name `{root}-bitcoin-0`, the
+ * message is the raw 32-byte sighash. The co-signers must sign with the
+ * BIP-86 child (m/86'/0'/0'/0/0), so the aggregate is a BIP-340 signature
+ * for the wallet's bc1p address — not with the ethereum account.
+ */
+async function coSign(
+    payloads: any[],
+    signers: string[],
+    target: { chain: string; account: number },
+    messageHex: string,
+): Promise<Map<string, string>> {
+    const managers = new Map<string, WebRTCManager>();
+    const queue: Array<{ from: string; to: string; msg: any }> = [];
+    const signatures = new Map<string, string>();
+    for (const id of signers) {
+        const mgr = new WebRTCManager(id, () => {});
+        mgr.sendWebRTCAppMessage = (to: string, msg: any) => queue.push({ from: id, to, msg });
+        mgr.onSigningComplete = (p) => signatures.set(id, p.signature);
+        expect(await mgr.loadKeystoreForSigning(storedShare(payloads[DEVICES.indexOf(id)], id), target)).toBe(true);
+        managers.set(id, mgr);
+    }
+    const session = {
+        session_id: "tui-sign",
+        proposer_id: signers[0],
+        total: 3,
+        threshold: signers.length,
+        participants: signers,
+        session_type: "signing",
+        wallet_name: `root-${target.chain}-${target.account}`,
+        signing_message_hex: messageHex,
+    } as any;
+    for (const id of signers) {
+        expect(await managers.get(id)!.initiateSigningCeremony(session, messageHex)).toBe(true);
+    }
+    while (queue.length > 0) {
+        const { from, to, msg } = queue.shift()!;
+        managers.get(to)?.handleWebRTCAppMessage(from, msg);
+    }
+    return signatures;
+}
+
+async function bitcoinOutputKey(groupPublicKey: string): Promise<Uint8Array> {
+    const { derive_account_addresses } = await import("@stars-labs/core-wasm");
+    const btc = JSON.parse(derive_account_addresses("secp256k1", groupPublicKey, 0)).find(
+        (a: any) => a.chain === "Bitcoin",
+    );
+    expect(btc.address).toStartWith("bc1p");
+    return segwitV1Program(btc.address);
+}
+
+describe("co-signing a bitcoin account session (real WASM)", () => {
+    const sighash = "5a".repeat(32);
+
+    for (const [t, signers] of [
+        [2, ["dev-b", "dev-c"]],
+        [3, ["dev-a", "dev-b", "dev-c"]],
+    ] as const) {
+        it(`${t}-of-3 aggregate verifies as BIP-340 for the bc1p address`, async () => {
+            if (!isWasmInitialized()) return;
+            const payloads = await dkgThroughManagers("ethereum", t);
+            const sigs = await coSign(payloads, [...signers], { chain: "bitcoin", account: 0 }, sighash);
+            const sig = sigs.get(signers[1])!;
+            expect(new Set(sigs.values()).size).toBe(1);
+            const key = await bitcoinOutputKey(payloads[0].groupPublicKey);
+            expect(schnorrVerify(key, Buffer.from(sighash, "hex"), Buffer.from(sig, "hex"))).toBe(true);
+        }, 30000);
+    }
+
+    it("the ethereum account's signature does not verify for the bc1p address", async () => {
+        if (!isWasmInitialized()) return;
+        const payloads = await dkgThroughManagers("ethereum");
+        const sigs = await coSign(payloads, ["dev-b", "dev-c"], { chain: "ethereum", account: 0 }, sighash);
+        const key = await bitcoinOutputKey(payloads[0].groupPublicKey);
+        expect(schnorrVerify(key, Buffer.from(sighash, "hex"), Buffer.from(sigs.get("dev-c")!, "hex"))).toBe(false);
+    }, 30000);
+
+    it("refuses a chain on the other curve", async () => {
+        if (!isWasmInitialized()) return;
+        const payloads = await dkgThroughManagers("ethereum");
+        const mgr = new WebRTCManager("dev-a", () => {});
+        await expect(
+            mgr.loadKeystoreForSigning(storedShare(payloads[0], "dev-a"), { chain: "solana", account: 0 }),
+        ).rejects.toThrow("secp256k1");
+    }, 30000);
+});
 
 describe("engine keystore boundary", () => {
     it("rejects the old mislabeled shape (keystore JSON under group_public_key)", () => {

@@ -25,6 +25,7 @@
  */
 
 import type { SessionInfo } from "@stars-labs/types/session";
+import { parseAccountWalletId } from "../../utils/wallet-id";
 
 const NOTIFICATION_ID_PREFIX = "mpc-signing-req:";
 
@@ -58,25 +59,26 @@ export class SigningNotifier {
      * Called by WebSocketManager on every session_available update
      * (the same place invites are merged into appState). Evaluates
      * gate conditions and fires a browser notification if applicable.
-     * Idempotent per session_id — later status updates on the same
-     * session won't re-notify.
+     * Idempotent per (session_id, message) — later status updates on the
+     * same request won't re-notify.
      */
     maybeNotify(session: SessionInfo, ourDeviceId: string | undefined): boolean {
         if (!ourDeviceId) return false;
         if (session.session_type !== "signing") return false;
         if (!session.participants.includes(ourDeviceId)) return false;
         if (session.proposer_id === ourDeviceId) return false;
-        if (this.firedFor.has(session.session_id)) return false;
+        // One notification per REQUEST: a re-announce of the same session
+        // id with a new message is a new request.
+        const key = `${session.session_id}:${session.signing_message_hex ?? ""}`;
+        if (this.firedFor.has(key)) return false;
 
-        this.firedFor.add(session.session_id);
+        this.firedFor.add(key);
+        const chain = parseAccountWalletId(session.wallet_name ?? "")?.chain ?? session.blockchain;
 
         const title = session.wallet_name
             ? `Signing request: ${session.wallet_name}`
             : `Signing request (${session.threshold}/${session.total})`;
-        const preview = buildMessagePreview(
-            session.signing_message_hex,
-            session.blockchain,
-        );
+        const preview = buildMessagePreview(session.signing_message_hex, chain);
         const body =
             `From: ${session.proposer_id}\n` +
             `Threshold: ${session.threshold} of ${session.total}\n` +

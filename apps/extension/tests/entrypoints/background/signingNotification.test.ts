@@ -121,6 +121,12 @@ describe("SigningNotifier.maybeNotify", () => {
         expect(env.calls.length).toBe(1);
     });
 
+    it("fires again when the same session id is re-announced with a new message", () => {
+        env.notifier.maybeNotify(signingSession({ signing_message_hex: "aa" }), "ext-bob");
+        env.notifier.maybeNotify(signingSession({ signing_message_hex: "bb" }), "ext-bob");
+        expect(env.calls.length).toBe(2);
+    });
+
     it("fires independently for a different session id", () => {
         env.notifier.maybeNotify(signingSession({ session_id: "s1" }), "ext-bob");
         env.notifier.maybeNotify(signingSession({ session_id: "s2" }), "ext-bob");

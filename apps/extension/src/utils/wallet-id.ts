@@ -36,3 +36,33 @@ export function openInvites<T extends { session_id: string; session_type?: strin
         (inv) => (inv.session_type ?? "dkg") !== "dkg" || !held.has(walletIdFromSession(inv.session_id)),
     );
 }
+
+const CHAIN_CURVES: Record<string, "secp256k1" | "ed25519"> = {
+    ethereum: "secp256k1",
+    eth: "secp256k1",
+    bitcoin: "secp256k1",
+    btc: "secp256k1",
+    solana: "ed25519",
+    sol: "ed25519",
+    sui: "ed25519",
+};
+
+/** FROST curve that signs for `chain` (starlab-mpc `curve_for_chain`). */
+export function curveForChain(chain: string): "secp256k1" | "ed25519" | null {
+    return CHAIN_CURVES[chain.toLowerCase()] ?? null;
+}
+
+/**
+ * Inverse of `accountWalletId` — starlab-mpc `parse_child_wallet_id`:
+ * `{root}-{chain}-{account}` with a known chain and an all-digit account.
+ * Returns null for root ids and anything else.
+ */
+export function parseAccountWalletId(
+    id: string,
+): { root: string; chain: string; account: number } | null {
+    const m = /^(.+)-([^-]+)-(\d+)$/.exec(id);
+    if (!m || !curveForChain(m[2])) return null;
+    const account = Number(m[3]);
+    if (!Number.isSafeInteger(account) || account > 0xffffffff) return null;
+    return { root: m[1], chain: m[2].toLowerCase(), account };
+}

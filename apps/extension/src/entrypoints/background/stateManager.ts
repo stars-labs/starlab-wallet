@@ -657,12 +657,13 @@ export class StateManager {
                 {
                     const info: any = payload;
                     console.warn(`[StateManager] Signing ${info.sessionId} failed: ${info.error}`);
+                    // dkgState is the wallet's readiness — a signing never
+                    // changes it (see SessionManager.joinDkgSession).
                     if (
                         this.appState.sessionInfo?.session_type === "signing" &&
                         this.appState.sessionInfo?.session_id === info.sessionId
                     ) {
                         this.appState.sessionInfo = null;
-                        this.appState.dkgState = DkgState.Idle;
                     }
                     (this.appState as any).signingProgress = null;
                     if (this.rpcHandler && typeof this.rpcHandler.handleSignatureError === "function") {

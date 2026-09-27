@@ -18,7 +18,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // checkout of this repo. Override with STARLAB_MPC_DIR.
 const MPC_DIR = process.env.STARLAB_MPC_DIR ?? path.resolve(HERE, "../../../../../starlab-mpc");
 const DRIVER = path.join(MPC_DIR, "scripts/demo/serve_autojoin.py");
-const CLI_BIN = path.join(MPC_DIR, "target/release/starlab-cli");
+export const CLI_BIN = path.join(MPC_DIR, "target/release/starlab-cli");
 const SIGNAL_BIN = path.join(MPC_DIR, "target/release/starlab-signal-server");
 
 export type DkgResult = { wallet: string; address: string; groupKey: string };

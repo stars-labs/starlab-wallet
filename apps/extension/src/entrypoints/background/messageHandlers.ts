@@ -39,6 +39,7 @@ import {
     normalizeDerivedAddressChain,
     type SupportedChain,
 } from "@stars-labs/types/appstate";
+import { encryptShareBackup } from "../../utils/shareBackup";
 
 /**
  * Handles messages from popup interface
@@ -1781,48 +1782,33 @@ export class PopupMessageHandler {
     }
 
     /**
-     * Handle export keystore request from popup
+     * Export this device's key share of the active wallet as an encrypted
+     * backup file. Reads the stored keystore — no session, DKG state or
+     * loaded FROST instance needed; only an unlocked keystore with a wallet.
      */
     private async handleExportKeystoreMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
-        console.log("[PopupMessageHandler] Processing export keystore request");
-        
         try {
-            if (!message.chain) {
-                sendResponse({ success: false, error: "Missing chain parameter" });
+            const keystoreManager = KeystoreManager.getInstance();
+            if (keystoreManager.isLocked()) {
+                sendResponse({ success: false, error: "Unlock the wallet to export a backup" });
                 return;
             }
-
-            // Check if DKG is complete
-            const dkgState = this.stateManager.getDkgState();
-            if (dkgState !== DkgState.Complete) {
-                sendResponse({ success: false, error: "DKG not complete. Cannot export keystore." });
+            const wallet = keystoreManager.getActiveWallet();
+            if (!wallet) {
+                sendResponse({ success: false, error: "No wallet to export" });
                 return;
             }
-
-            // Ensure offscreen document exists
-            const createResult = await this.offscreenManager.createOffscreenDocument();
-            if (!createResult.success) {
-                sendResponse({ success: false, error: createResult.error || "Failed to create offscreen document" });
+            if (typeof message.password !== "string" || message.password.length < 8) {
+                sendResponse({ success: false, error: "Backup password must be at least 8 characters" });
                 return;
             }
-            
-            // Forward to offscreen for WASM processing
-            const response = await this.offscreenManager.sendToOffscreen({
-                type: "exportKeystore",
-                chain: message.chain
-            }, "Export keystore to CLI format");
-
-            if (response && response.success && response.keystoreData) {
-                sendResponse({ 
-                    success: true, 
-                    keystoreData: response.keystoreData 
-                });
-            } else {
-                sendResponse({ 
-                    success: false, 
-                    error: response?.error || "Failed to export keystore" 
-                });
+            const keyShare = await keystoreManager.getKeyShare(wallet.id);
+            if (!keyShare) {
+                sendResponse({ success: false, error: `No key share stored for wallet ${wallet.id}` });
+                return;
             }
+            const keystoreData = await encryptShareBackup(keyShare, wallet, message.password);
+            sendResponse({ success: true, keystoreData });
         } catch (error) {
             console.error("[PopupMessageHandler] Error exporting keystore:", error);
             sendResponse({ success: false, error: (error as Error).message });

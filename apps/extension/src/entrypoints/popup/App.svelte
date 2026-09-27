@@ -3458,66 +3458,6 @@
                         <Icon name="upload" size={15} /> Import keystore from CLI
                     </button>
 
-                    {#if appState.dkgState === DkgState.Complete}
-                        <button
-                            class="btn btn-secondary btn-block btn-sm"
-                            on:click={() => {
-                                chrome.runtime.sendMessage(
-                                    {
-                                        type: "exportKeystore",
-                                        chain: protocolChainFor(appState.chain),
-                                    },
-                                    (response) => {
-                                        if (chrome.runtime.lastError) {
-                                            console.error(
-                                                "[UI] Error exporting keystore:",
-                                                chrome.runtime.lastError.message,
-                                            );
-                                            alert(
-                                                "Failed to export keystore: " +
-                                                    chrome.runtime.lastError
-                                                        .message,
-                                            );
-                                            return;
-                                        }
-                                        if (
-                                            response.success &&
-                                            response.keystoreData
-                                        ) {
-                                            const blob = new Blob(
-                                                [response.keystoreData],
-                                                { type: "application/json" },
-                                            );
-                                            const url =
-                                                URL.createObjectURL(blob);
-                                            const a =
-                                                document.createElement("a");
-                                            a.href = url;
-                                            a.download = `starlab-mpc-keystore-${appState.chain}-${Date.now()}.json`;
-                                            document.body.appendChild(a);
-                                            a.click();
-                                            document.body.removeChild(a);
-                                            URL.revokeObjectURL(url);
-                                            console.log(
-                                                "[UI] Keystore exported successfully",
-                                            );
-                                        } else {
-                                            console.error(
-                                                "[UI] Failed to export keystore:",
-                                                response.error,
-                                            );
-                                            alert(
-                                                "Failed to export keystore: " +
-                                                    response.error,
-                                            );
-                                        }
-                                    },
-                                );
-                            }}
-                        >
-                            <Icon name="download" size={15} /> Export keystore backup
-                        </button>
-                    {/if}
                 </div>
 
                 <div class="space-y-2">

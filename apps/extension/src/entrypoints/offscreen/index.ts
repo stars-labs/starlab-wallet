@@ -5,6 +5,7 @@ import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from "@st
 
 // Import WASM modules for FROST DKG
 import wasmInit, { FrostDkgEd25519, FrostDkgSecp256k1, FrostReshareEd25519, FrostReshareSecp256k1, derive_account_addresses } from '@stars-labs/core-wasm';
+import { decryptShareBackupData, SHARE_BACKUP_ALGORITHM } from "../../utils/shareBackup";
 
 console.log("Offscreen script loaded.");
 
@@ -70,49 +71,6 @@ let localdeviceId: string | null = null;
 let webrtcConnections: Record<string, boolean> = {};
 
 // Removed wsRelayCallback as WebRTCManager will use a direct callback for sending payloads
-
-// Helper function to decrypt CLI keystore
-async function decryptCLIKeystore(base64Data: string, password: string): Promise<string> {
-    // CLI uses base64 encoding for the entire encrypted blob
-    const encryptedData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
-    
-    // Extract salt (first 16 bytes), IV (next 12 bytes), and ciphertext + tag
-    const salt = encryptedData.slice(0, 16);
-    const iv = encryptedData.slice(16, 28);
-    const ciphertextWithTag = encryptedData.slice(28);
-    
-    // Derive key using PBKDF2 (CLI uses 100,000 iterations)
-    const encoder = new TextEncoder();
-    const passwordKey = await crypto.subtle.importKey(
-        'raw',
-        encoder.encode(password),
-        'PBKDF2',
-        false,
-        ['deriveKey']
-    );
-    
-    const key = await crypto.subtle.deriveKey(
-        {
-            name: 'PBKDF2',
-            salt: salt,
-            iterations: 100000,
-            hash: 'SHA-256'
-        },
-        passwordKey,
-        { name: 'AES-GCM', length: 256 },
-        false,
-        ['decrypt']
-    );
-    
-    // Decrypt using AES-GCM
-    const decrypted = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: iv },
-        key,
-        ciphertextWithTag
-    );
-    
-    return new TextDecoder().decode(decrypted);
-}
 
 // Function to send messages to the background script
 function sendToBackground(message: { type: string; payload: unknown }) {
@@ -866,13 +824,13 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                     let keystoreToImport: any;
                     
                     // Check if keystore is encrypted
-                    if (parsedKeystore.encrypted === true && parsedKeystore.algorithm === "AES-256-GCM-PBKDF2") {
+                    if (parsedKeystore.encrypted === true && parsedKeystore.algorithm === SHARE_BACKUP_ALGORITHM) {
                         if (!password) {
                             throw new Error("Password required for encrypted keystore");
                         }
                         
                         console.log("Offscreen: Decrypting CLI keystore...");
-                        const decryptedData = await decryptCLIKeystore(parsedKeystore.data, password);
+                        const decryptedData = await decryptShareBackupData(parsedKeystore.data, password);
                         console.log("Offscreen: Successfully decrypted keystore");
                         
                         // Create a new keystore object with decrypted data

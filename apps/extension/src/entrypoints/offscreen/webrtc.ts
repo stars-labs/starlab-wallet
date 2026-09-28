@@ -942,9 +942,13 @@ export class WebRTCManager {
         participants :
         this.sessionInfo?.participants || []).slice().sort();
 
+      // Every peer must run part1 with the session's announced threshold —
+      // a different min_signers changes the commitment count and all peers
+      // fail part2 with IncorrectNumberOfCommitments (a 3-of-3 joiner used to
+      // fall through to ceil(3/2) = 2 here).
       const threshold_count = threshold > 0 ?
         threshold :
-        Math.ceil(participants_list.length / 2); // Default to n/2 + 1
+        (this.sessionInfo?.threshold || Math.ceil(participants_list.length / 2));
 
       this.participantIndex = participantIndex > 0 ?
         participantIndex :

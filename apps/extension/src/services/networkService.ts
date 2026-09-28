@@ -85,6 +85,21 @@ class NetworkService {
 
     private constructor() {
         this.initializeAsync();
+        // The popup and the background each hold their own NetworkService; a
+        // network switch in the popup only reaches storage. Follow it, or the
+        // background keeps answering eth_chainId / signing for the old chain.
+        if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
+            chrome.storage.onChanged.addListener((changes, area) => {
+                if (
+                    area === "local" &&
+                    (this.CURRENT_NETWORK_KEY in changes ||
+                        this.CURRENT_CHAIN_KEY in changes ||
+                        this.CURRENT_BLOCKCHAIN_KEY in changes)
+                ) {
+                    void this.loadNetworks();
+                }
+            });
+        }
     }
 
     public static getInstance(): NetworkService {

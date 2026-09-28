@@ -1134,3 +1134,36 @@ describe('#29 canonical participant ordering (ext↔CLI interop)', () => {
         expect(input.participants).toEqual(['z', 'a']); // original untouched
     });
 });
+
+describe('WebRTCManager DKG threshold', () => {
+    it('joins with the session threshold, not ceil(n/2)', async () => {
+        // A 3-of-3 invite: ceil(3/2) = 2 would give this peer a different
+        // commitment count and every participant's part2 fails.
+        const calls: number[][] = [];
+        const g = globalThis as any;
+        const saved = { ed: g.FrostDkgEd25519, secp: g.FrostDkgSecp256k1, window: g.window };
+        g.window ??= g; // initializeDkg's diagnostics read `window.*`
+        class FakeDkg {
+            init_dkg(...args: number[]) { calls.push(args); }
+        }
+        g.FrostDkgEd25519 = FakeDkg;
+        g.FrostDkgSecp256k1 = FakeDkg;
+        try {
+            const manager = new WebRTCManager('b', dummySend);
+            manager.sessionInfo = {
+                session_id: 'three-of-three',
+                participants: ['a', 'b', 'c'],
+                accepted_devices: ['a', 'b', 'c'],
+                total: 3,
+                threshold: 3,
+            } as any;
+            (manager as any)._generateAndBroadcastRound1 = async () => {};
+            await manager.initializeDkg('ethereum');
+            expect(calls).toEqual([[2, 3, 3]]);
+        } finally {
+            g.FrostDkgEd25519 = saved.ed;
+            g.FrostDkgSecp256k1 = saved.secp;
+            g.window = saved.window;
+        }
+    });
+});

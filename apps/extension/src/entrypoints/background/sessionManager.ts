@@ -600,9 +600,15 @@ export class SessionManager {
             isSupportedChain(local.blockchain)
                 ? local.blockchain
                 : getDefaultChainForCurve(curve);
+        // dkgState tracks key generation / the wallet's readiness. A
+        // signing join (TUI warm signing even reuses the finished DKG's
+        // session id) must leave the wallet Complete.
+        const dkgStateBefore = this.appState.dkgState;
         this.stateManager.updateState({
             sessionInfo: local,
-            dkgState: DkgState.Initializing,
+            ...(local.session_type === "signing"
+                ? {}
+                : { dkgState: DkgState.Initializing }),
             blockchain: getProtocolBlockchainForChain(chain),
             chain,
         });
@@ -625,7 +631,7 @@ export class SessionManager {
             // show a false "joined" state.
             this.stateManager.updateState({
                 sessionInfo: null,
-                dkgState: DkgState.Idle,
+                dkgState: dkgStateBefore,
             });
             return { success: false, error: (err as Error).message };
         }
@@ -695,11 +701,9 @@ export class SessionManager {
             accepted_devices: [currentDeviceId],
         };
 
-        // Stash as active session so the popup's ceremony banner
-        // shows the signing in progress. Same dkgState enum is
-        // reused because offscreen's WebRTC+SigningManager keys off
-        // it (dkgState is a misnomer — it tracks ANY in-progress
-        // ceremony).
+        // Stash as active session so the popup shows the signing in
+        // progress. dkgState is left alone: it tracks the wallet's key
+        // generation, which signing doesn't change.
         const invites = [
             ...(this.appState.invites ?? []).filter(
                 (s) => s.session_id !== sessionId,
@@ -709,7 +713,6 @@ export class SessionManager {
         this.stateManager.updateState({
             sessionInfo,
             invites,
-            dkgState: DkgState.Initializing,
             blockchain: config.blockchain,
         });
 
@@ -736,10 +739,7 @@ export class SessionManager {
                 "[SessionManager] createSigningSession failed:",
                 error,
             );
-            this.stateManager.updateState({
-                sessionInfo: null,
-                dkgState: DkgState.Idle,
-            });
+            this.stateManager.updateState({ sessionInfo: null });
             return { success: false, error: (error as Error).message };
         }
     }

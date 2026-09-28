@@ -571,6 +571,11 @@ export class StateManager {
                     (this.appState as any).pendingKeystoreReady =
                         typeof info.keystoreJson === "string" &&
                         info.keystoreJson.length > 0;
+                    // The DKG is done; it is no longer something to join
+                    // (see WebSocketManager: re-announces are ignored too).
+                    this.appState.invites = (this.appState.invites ?? []).filter(
+                        (s) => s.session_id !== info.sessionId,
+                    );
                     console.log(
                         "[StateManager] DKG complete received:",
                         (this.appState as any).dkgLastResult,
@@ -701,7 +706,6 @@ export class StateManager {
                         this.appState.sessionInfo?.session_id === info.sessionId
                     ) {
                         this.appState.sessionInfo = null;
-                        this.appState.dkgState = DkgState.Idle;
                     }
                     // Clear the live progress roster now that the
                     // ceremony has finished — the success banner

@@ -1380,6 +1380,12 @@
                 incomingSigningInvite = inv;
             } else {
                 console.log("[UI] Joined signing session", sessionId);
+                // The server re-broadcasts the session after our join;
+                // don't pop the modal again for it.
+                dismissedSigningInvites = new Set([
+                    ...dismissedSigningInvites,
+                    sessionId,
+                ]);
             }
         } catch (e) {
             console.error("[UI] Join signing exception:", e);

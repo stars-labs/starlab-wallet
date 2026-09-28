@@ -58,12 +58,11 @@ export class WebSocketManager {
     /**
      * session_id of the last session we fired `sessionAllAccepted` for.
      * Guards against re-dispatching on server re-broadcasts (which
-     * can arrive multiple times if peers reconnect). Reset is implicit:
-     * a new session gets a fresh id, so the check naturally passes.
-     * Cleared to undefined on session clear / NavigateHome-equivalent
-     * flows via `clearDkgTriggerFor`.
+     * can arrive multiple times if peers reconnect). Keyed on
+     * `${session_type}:${session_id}`: TUI warm signing reuses the
+     * finished DKG's session id.
      */
-    private dkgTriggerFiredFor: string | undefined;
+    private ceremonyTriggerFiredFor: string | undefined;
     /**
      * Ext-3a: emits chrome.notifications on signing invites we're a
      * participant in. Injected (not constructed inline) so tests can
@@ -469,9 +468,21 @@ export class WebSocketManager {
             `[WebSocketManager] session_available: ${parsed.session_id} (${parsed.session_type ?? "dkg"}, ${parsed.threshold}/${parsed.total}, proposer=${parsed.proposer_id}, joined=${parsed.participants.join(",")})`,
         );
 
+        // Finished DKGs linger on the signal server; a DKG we already
+        // completed is not an invitation any more.
+        const current: AppState = this.stateManager?.getState() ?? this.appState;
+        if (
+            (parsed.session_type ?? "dkg") === "dkg" &&
+            current.dkgLastResult?.sessionId === parsed.session_id
+        ) {
+            console.log(`[WebSocketManager] Ignoring finished DKG ${parsed.session_id}`);
+            return;
+        }
+
         // Merge-update into invites: replace if we already have this
-        // session_id (e.g. status_update), else append.
-        const invites = this.appState.invites ?? [];
+        // session_id (e.g. status_update), else append. Read the
+        // StateManager's invites — our constructor copy goes stale.
+        const invites = [...(current.invites ?? [])];
         const idx = invites.findIndex((s) => s.session_id === parsed.session_id);
         if (idx >= 0) {
             invites[idx] = parsed;
@@ -514,7 +525,7 @@ export class WebSocketManager {
         //      for sessions we haven't committed to.
         //   2. We're listed as a participant (belt-and-suspenders
         //      given #1).
-        //   3. Dedup by session_id in `dkgTriggerFiredFor` (same
+        //   3. Dedup by type:session_id in `ceremonyTriggerFiredFor` (same
         //      field reused for signing; one trigger per session).
         this.maybeTriggerCeremony(parsed);
     }
@@ -522,9 +533,8 @@ export class WebSocketManager {
     /**
      * Fire the appropriate "ready to start" event to offscreen when
      * a session reaches its ceremony-kickoff threshold. Idempotent
-     * per-session-id via `dkgTriggerFiredFor` (the name dates from
-     * when only DKG was supported — still accurate as a "we've
-     * fired the ceremony trigger for this session" marker).
+     * per ceremony (type + session id) via `ceremonyTriggerFiredFor`
+     * — TUI warm signing reuses the finished DKG's session id.
      *
      *   - DKG (session_type "dkg" or absent): wait for all N.
      *     Fires `sessionAllAccepted` — offscreen then does
@@ -549,11 +559,18 @@ export class WebSocketManager {
         if (!deviceId || !session.participants.includes(deviceId)) {
             return; // We're not a listed participant.
         }
-        if (this.dkgTriggerFiredFor === session.session_id) {
-            return; // Already fired for this exact session.
-        }
-
         const sessionType = session.session_type ?? "dkg";
+        // TUI warm signing reuses the finished DKG's session id: an
+        // announce only matches our session if it is the same ceremony.
+        // Before the user joins the signing, our session is still that
+        // DKG, so nothing starts without consent.
+        if ((current.sessionInfo?.session_type ?? "dkg") !== sessionType) {
+            return;
+        }
+        const triggerKey = `${sessionType}:${session.session_id}`;
+        if (this.ceremonyTriggerFiredFor === triggerKey) {
+            return; // Already fired for this ceremony.
+        }
         const joined = session.participants.length;
 
         // Gate by session type — signing needs threshold; DKG and
@@ -573,7 +590,7 @@ export class WebSocketManager {
             }
         }
 
-        this.dkgTriggerFiredFor = session.session_id;
+        this.ceremonyTriggerFiredFor = triggerKey;
 
         // The offscreen handlers expect `accepted_devices` to be
         // populated (used for "all accepted" checks). TUI's wire
@@ -650,8 +667,10 @@ export class WebSocketManager {
     ): void {
         const sessionId = (msg as any).session_id as string | undefined;
         if (!sessionId) return;
-        const before = this.appState.invites?.length ?? 0;
-        this.appState.invites = (this.appState.invites ?? []).filter(
+        const current: AppState = this.stateManager?.getState() ?? this.appState;
+        const currentInvites = current.invites ?? [];
+        const before = currentInvites.length;
+        this.appState.invites = currentInvites.filter(
             (s) => s.session_id !== sessionId,
         );
         if ((this.appState.invites?.length ?? 0) !== before) {

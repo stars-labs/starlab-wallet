@@ -139,11 +139,16 @@ describe("SessionManager.createSigningSession", () => {
         expect(env.announces[0].blockchain).toBe("solana");
     });
 
-    it("stashes as active sessionInfo + flips dkgState to Initializing", async () => {
+    it("stashes as active sessionInfo", async () => {
         await env.mgr.createSigningSession(validConfig());
         expect(env.appState.sessionInfo).not.toBeNull();
         expect(env.appState.sessionInfo!.session_type).toBe("signing");
-        expect(env.appState.dkgState).toBe(DkgState.Initializing);
+    });
+
+    it("leaves the wallet's dkgState alone", async () => {
+        env.appState.dkgState = DkgState.Complete;
+        await env.mgr.createSigningSession(validConfig());
+        expect(env.appState.dkgState).toBe(DkgState.Complete);
     });
 
     it("notifies popup with signingSessionCreated event", async () => {

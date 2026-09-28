@@ -1,0 +1,16 @@
+{
+  "account0": [
+    [
+      "Ethereum",
+      "m/44'/60'/0'/0/0",
+      "0xdc7d69f51777ef1c4f8ded9897417f3b0db0a43d"
+    ],
+    [
+      "Bitcoin",
+      "m/86'/0'/0'/0/0",
+      "bc1p0dj7f5vu3jzf45mfe7trljzha6z4yl03ux2jf3tgfnsys4drm8kqk307tt"
+    ]
+  ],
+  "group_public_key": "03708962858817777b8677d443be72934f69da2100e4233bfaf77ff6284e65aee7",
+  "password": "correct-horse-battery"
+}

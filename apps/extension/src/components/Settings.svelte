@@ -283,10 +283,20 @@
     // Keystore backup (#22): export this device's key share as a file.
     let backupAcknowledged = false;
     let backupStatus = "";
+    let backupPassword = "";
+    let backupPasswordConfirm = "";
     function exportKeystoreBackup() {
         backupStatus = "";
+        if (backupPassword.length < 8) {
+            backupStatus = "Backup password must be at least 8 characters.";
+            return;
+        }
+        if (backupPassword !== backupPasswordConfirm) {
+            backupStatus = "Passwords don't match.";
+            return;
+        }
         chrome.runtime.sendMessage(
-            { type: "exportKeystore", chain },
+            { type: "exportKeystore", password: backupPassword },
             (response) => {
                 if (chrome.runtime.lastError) {
                     backupStatus = `Export failed: ${chrome.runtime.lastError.message}`;
@@ -304,7 +314,9 @@
                     a.click();
                     document.body.removeChild(a);
                     URL.revokeObjectURL(url);
-                    backupStatus = "Backup saved. Store it offline, away from this device.";
+                    backupPassword = "";
+                    backupPasswordConfirm = "";
+                    backupStatus = "Encrypted backup saved. Store it offline, away from this device.";
                 } else {
                     backupStatus = `Export failed: ${response?.error ?? "unknown error"}`;
                 }
@@ -740,7 +752,8 @@
     <div class="card card-pad space-y-2">
         <h3 class="section-title">Backup</h3>
         <p class="text-xs text-muted">
-            Exports <strong>this device's key share</strong> as a file (CLI-compatible).
+            Exports <strong>this device's key share</strong> as a password-encrypted
+            file (CLI-compatible).
             One share alone can never sign — the threshold protects you — but treat
             the file like a secret: store it offline, never paste it anywhere.
             Restore via "Import keystore" or the CLI.
@@ -749,6 +762,20 @@
             <input type="checkbox" bind:checked={backupAcknowledged} />
             I understand this file contains key material
         </label>
+        <input
+            type="password"
+            class="input w-full text-xs"
+            placeholder="Backup password (8+ characters)"
+            autocomplete="new-password"
+            bind:value={backupPassword}
+        />
+        <input
+            type="password"
+            class="input w-full text-xs"
+            placeholder="Confirm backup password"
+            autocomplete="new-password"
+            bind:value={backupPasswordConfirm}
+        />
         <div class="flex items-center gap-2">
             <Button size="sm" on:click={exportKeystoreBackup} disabled={!backupAcknowledged}>
                 Export share backup

@@ -1,6 +1,6 @@
 <script lang="ts">
     import { openInvites } from "../../utils/wallet-id";
-    import { signingInviteDecision } from "./signingInvite";
+    import { signingInviteChain, signingInviteDecision, signingInviteKey } from "./signingInvite";
     // Removed single-party WASM functions - this is now an MPC-only wallet
     import { onMount, onDestroy } from "svelte";
     import {
@@ -510,9 +510,9 @@
     // Ext-2e: populated when the offscreen FROST ceremony finalizes
     // (via the `signingCompleted` message from background). Renders
     // a dismissable banner with the aggregated signature hex + a
-    // copy-to-clipboard button. EIP-191 badge shown for secp256k1
-    // signatures so the user knows they can feed it straight to
-    // ecrecover.
+    // copy-to-clipboard button. secp256k1 FROST signs BIP-340 Schnorr:
+    // the EIP-191 hash is what was signed, but the signature is NOT
+    // ecrecover-compatible.
     type SignatureBanner = {
         signingId: string;
         signature: string;
@@ -537,7 +537,7 @@
     // that ceremony's session clears (see signingInviteDecision).
     let deferredSigningInvite: import("@stars-labs/types/session").SessionInfo | null = null;
     $: if (deferredSigningInvite && !appState.sessionInfo && !incomingSigningInvite) {
-        if (!dismissedSigningInvites.has(deferredSigningInvite.session_id)) {
+        if (!dismissedSigningInvites.has(signingInviteKey(deferredSigningInvite))) {
             incomingSigningInvite = deferredSigningInvite;
         }
         deferredSigningInvite = null;
@@ -845,6 +845,9 @@
                     dkgState: message.dkgState || DkgState.Idle,
                     // Gates the post-DKG "Save this wallet" form.
                     pendingKeystoreReady: message.pendingKeystoreReady === true,
+                    // Saved wallet's threshold/total (restored from its key
+                    // share); shown when no ceremony session is active.
+                    dkgLastResult: message.dkgLastResult ?? appState.dkgLastResult,
                     webrtcConnections: message.webrtcConnections || {},
                     blockchain: protocolChainFor(incomingChain),
                     curve: incomingCurve,
@@ -1207,6 +1210,9 @@
                 break;
                 
             case "signatureError":
+                // A failed / timed-out threshold signing: leave "Signing in
+                // progress" (the toast below says why).
+                signingProgress = null;
                 if (message.signingId) {
                     // Remove the failed request from the list
                     signatureRequests = signatureRequests.filter(req => req.signingId !== message.signingId);
@@ -1381,6 +1387,12 @@
                 incomingSigningInvite = inv;
             } else {
                 console.log("[UI] Joined signing session", sessionId);
+                // The server re-broadcasts the session after our join;
+                // don't pop the modal again for it.
+                dismissedSigningInvites = new Set([
+                    ...dismissedSigningInvites,
+                    signingInviteKey(inv),
+                ]);
             }
         } catch (e) {
             console.error("[UI] Join signing exception:", e);
@@ -1395,7 +1407,7 @@
         // broadcasts for the same session (status updates).
         dismissedSigningInvites = new Set([
             ...dismissedSigningInvites,
-            incomingSigningInvite.session_id,
+            signingInviteKey(incomingSigningInvite),
         ]);
         incomingSigningInvite = null;
     }
@@ -1408,7 +1420,7 @@
         // before the relay completes.
         dismissedSigningInvites = new Set([
             ...dismissedSigningInvites,
-            sessionId,
+            signingInviteKey(incomingSigningInvite),
         ]);
         incomingSigningInvite = null;
         try {
@@ -1449,7 +1461,7 @@
 
         // Detect mirrored hardware/simulation accounts so the account list
         // can render for non-MPC users (the AccountManager gate below also
-        // opens on FROST DkgState.Complete / KeystoreImported).
+        // opens on FROST DkgState.Complete).
         try {
             const accountService = AccountService.getInstance();
             await accountService.ensureInitialized();
@@ -2229,6 +2241,13 @@
                             {appState.sessionInfo.threshold}-of-{appState
                                 .sessionInfo.total}
                         </span>
+                    {:else if appState.dkgLastResult}
+                        <span
+                            class="rounded-full bg-white/20 px-2 py-0.5 text-xs font-semibold"
+                        >
+                            {appState.dkgLastResult.threshold}-of-{appState
+                                .dkgLastResult.total}
+                        </span>
                     {/if}
                 </div>
                 <!-- Portfolio fiat total (native + tokens, USD). null = loading/unavailable. -->
@@ -2294,8 +2313,7 @@
         <!-- Primary actions -->
         {@const canCreate =
             !appState.sessionInfo ||
-            appState.dkgState === DkgState.Complete ||
-            appState.dkgState === DkgState.KeystoreImported}
+            appState.dkgState === DkgState.Complete}
         {@const canSign =
             keystoreStatus.initialized &&
             !keystoreStatus.locked &&
@@ -2592,7 +2610,7 @@
                             <dt class="label mb-1">
                                 EIP-191 hash
                                 <span class="font-normal text-faint"
-                                    >(ecrecover-ready)</span
+                                    >(signed as BIP-340 Schnorr — not ecrecover-compatible)</span
                                 >
                             </dt>
                             <dd
@@ -2645,7 +2663,7 @@
                             {incomingSigningInvite.wallet_name ?? "(unnamed)"}
                             <span class="text-muted"
                                 >· {chainLabel(
-                                    incomingSigningInvite.blockchain,
+                                    signingInviteChain(incomingSigningInvite),
                                 )}</span
                             >
                         </dd>
@@ -2664,7 +2682,7 @@
                         >
                             {signingMessagePreview(
                                 incomingSigningInvite.signing_message_hex,
-                                incomingSigningInvite.blockchain,
+                                signingInviteChain(incomingSigningInvite),
                             )}
                         </dd>
                     </div>
@@ -2787,7 +2805,7 @@
                     <dd>
                         {#if signatureBanner.blockchain === "ethereum"}
                             <span class="badge badge-warning"
-                                >EIP-191 · ecrecover-ready</span
+                                >EIP-191 · BIP-340 Schnorr (not ecrecover)</span
                             >
                         {:else}
                             <span class="badge badge-info">ed25519 · Solana</span>
@@ -2907,11 +2925,6 @@
                     </Button>
                 </form>
             {/if}
-        {:else if appState.sessionInfo && appState.dkgState === DkgState.KeystoreImported}
-            <div class="alert alert-warning">
-                Keystore imported — waiting for co-signers to come online before
-                signing.
-            </div>
         {:else if appState.sessionInfo && appState.dkgState === DkgState.Initializing}
             <!-- Creator-side: waiting for joiners to discover the session -->
             {@const needed =
@@ -2992,7 +3005,7 @@
 
         <!-- Multi-account support. Also rendered for hardware/simulation users
              even before any FROST DKG completes. -->
-        {#if appState.dkgState === DkgState.Complete || appState.dkgState === DkgState.KeystoreImported || hasExternalAccounts}
+        {#if appState.dkgState === DkgState.Complete || hasExternalAccounts}
             <AccountManager blockchain={isSupportedChain(appState.chain) ? appState.chain : "ethereum"} />
         {/if}
 
@@ -3023,8 +3036,6 @@
                 </h3>
                 {#if appState.dkgState === DkgState.Complete}
                     <span class="badge badge-success">Ready to sign</span>
-                {:else if appState.dkgState === DkgState.KeystoreImported}
-                    <span class="badge badge-warning">Connect co-signers</span>
                 {:else if appState.dkgState === DkgState.Initializing || appState.dkgState === DkgState.Round1InProgress || appState.dkgState === DkgState.Round1Complete || appState.dkgState === DkgState.Round2InProgress || appState.dkgState === DkgState.Round2Complete || appState.dkgState === DkgState.Finalizing}
                     <span class="badge badge-info">Generating keys…</span>
                 {:else if appState.dkgState === DkgState.Failed}
@@ -3165,20 +3176,6 @@
                     >
                         Run test signing
                     </Button>
-                </div>
-            {:else if appState.dkgState === DkgState.KeystoreImported}
-                <div class="mt-3 border-t border-line pt-3">
-                    <div class="alert alert-warning">
-                        Keystore imported. Get at least {appState.sessionInfo
-                            .threshold - 1} other participant{appState.sessionInfo
-                            .threshold -
-                            1 >
-                        1
-                            ? "s"
-                            : ""} from the original {appState.sessionInfo
-                            .threshold}-of-{appState.sessionInfo.total} setup to
-                        join, then the wallet is ready.
-                    </div>
                 </div>
             {:else if appState.dkgState === DkgState.Initializing || appState.dkgState === DkgState.Round1InProgress || appState.dkgState === DkgState.Round1Complete || appState.dkgState === DkgState.Round2InProgress || appState.dkgState === DkgState.Round2Complete || appState.dkgState === DkgState.Finalizing}
                 <div class="mt-3 border-t border-line pt-3">
@@ -3458,66 +3455,6 @@
                         <Icon name="upload" size={15} /> Import keystore from CLI
                     </button>
 
-                    {#if appState.dkgState === DkgState.Complete}
-                        <button
-                            class="btn btn-secondary btn-block btn-sm"
-                            on:click={() => {
-                                chrome.runtime.sendMessage(
-                                    {
-                                        type: "exportKeystore",
-                                        chain: protocolChainFor(appState.chain),
-                                    },
-                                    (response) => {
-                                        if (chrome.runtime.lastError) {
-                                            console.error(
-                                                "[UI] Error exporting keystore:",
-                                                chrome.runtime.lastError.message,
-                                            );
-                                            alert(
-                                                "Failed to export keystore: " +
-                                                    chrome.runtime.lastError
-                                                        .message,
-                                            );
-                                            return;
-                                        }
-                                        if (
-                                            response.success &&
-                                            response.keystoreData
-                                        ) {
-                                            const blob = new Blob(
-                                                [response.keystoreData],
-                                                { type: "application/json" },
-                                            );
-                                            const url =
-                                                URL.createObjectURL(blob);
-                                            const a =
-                                                document.createElement("a");
-                                            a.href = url;
-                                            a.download = `starlab-mpc-keystore-${appState.chain}-${Date.now()}.json`;
-                                            document.body.appendChild(a);
-                                            a.click();
-                                            document.body.removeChild(a);
-                                            URL.revokeObjectURL(url);
-                                            console.log(
-                                                "[UI] Keystore exported successfully",
-                                            );
-                                        } else {
-                                            console.error(
-                                                "[UI] Failed to export keystore:",
-                                                response.error,
-                                            );
-                                            alert(
-                                                "Failed to export keystore: " +
-                                                    response.error,
-                                            );
-                                        }
-                                    },
-                                );
-                            }}
-                        >
-                            <Icon name="download" size={15} /> Export keystore backup
-                        </button>
-                    {/if}
                 </div>
 
                 <div class="space-y-2">

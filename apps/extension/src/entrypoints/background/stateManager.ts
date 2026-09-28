@@ -478,30 +478,6 @@ export class StateManager {
                     this.appState.webrtcConnections[payload.deviceId] = payload.connected;
                     console.log("[StateManager] Updated appState.webrtcConnections:", this.appState.webrtcConnections);
 
-                    // Check if we should transition from KeystoreImported to Complete
-                    if (this.appState.dkgState === DkgState.KeystoreImported && this.appState.sessionInfo) {
-                        // For imported keystores, we need at least threshold participants connected
-                        const connectedParticipants = Object.keys(this.appState.webrtcConnections)
-                            .filter(peer => this.appState.webrtcConnections[peer] === true).length + 1; // +1 for self
-                        
-                        console.log(`[StateManager] WebRTC update - checking keystore imported transition: connected=${connectedParticipants}, threshold=${this.appState.sessionInfo.threshold}`);
-                        
-                        if (connectedParticipants >= this.appState.sessionInfo.threshold) {
-                            console.log("[StateManager] Transitioning from KeystoreImported to Complete - enough participants connected via WebRTC");
-                            this.appState.dkgState = DkgState.Complete;
-                            this.notifyDkgStateListenersIfChanged();
-                            
-                            // Broadcast DKG state update
-                            this.broadcastToPopupPorts({
-                                type: "dkgStateUpdate",
-                                state: DkgState.Complete
-                            } as any);
-                            
-                            // Auto-fetch DKG address when transitioning to Complete
-                            this.fetchAndUpdateDkgAddress();
-                        }
-                    }
-
                     // Send WebRTC connection update directly to popup
                     const webrtcMessage = {
                         type: "webrtcConnectionUpdate",
@@ -519,33 +495,6 @@ export class StateManager {
             case "meshStatusUpdate":
 //                 console.log("[StateManager] Received mesh status update from offscreen:", payload);
                 this.appState.meshStatus = payload.status || { type: MeshStatusType.Incomplete };
-
-                // Check if we should transition from KeystoreImported to Complete
-                if (this.appState.dkgState === DkgState.KeystoreImported && 
-                    this.appState.meshStatus.type === MeshStatusType.Ready &&
-                    this.appState.sessionInfo) {
-                    
-                    // For imported keystores, we need at least threshold participants connected
-                    const connectedParticipants = Object.keys(this.appState.webrtcConnections)
-                        .filter(peer => this.appState.webrtcConnections[peer] === true).length + 1; // +1 for self
-                    
-                    console.log(`[StateManager] Checking keystore imported transition: connected=${connectedParticipants}, threshold=${this.appState.sessionInfo.threshold}`);
-                    
-                    if (connectedParticipants >= this.appState.sessionInfo.threshold) {
-                        console.log("[StateManager] Transitioning from KeystoreImported to Complete - enough participants connected");
-                        this.appState.dkgState = DkgState.Complete;
-                        this.notifyDkgStateListenersIfChanged();
-
-                        // Broadcast DKG state update
-                        this.broadcastToPopupPorts({
-                            type: "dkgStateUpdate",
-                            state: DkgState.Complete
-                        } as any);
-
-                        // Auto-fetch DKG address when transitioning to Complete
-                        this.fetchAndUpdateDkgAddress();
-                    }
-                }
 
                 // No persistence - sessions are ephemeral
 
@@ -622,6 +571,11 @@ export class StateManager {
                     (this.appState as any).pendingKeystoreReady =
                         typeof info.keystoreJson === "string" &&
                         info.keystoreJson.length > 0;
+                    // The DKG is done; it is no longer something to join
+                    // (see WebSocketManager: re-announces are ignored too).
+                    this.appState.invites = (this.appState.invites ?? []).filter(
+                        (s) => s.session_id !== info.sessionId,
+                    );
                     console.log(
                         "[StateManager] DKG complete received:",
                         (this.appState as any).dkgLastResult,
@@ -696,6 +650,35 @@ export class StateManager {
                 }
                 break;
 
+            case "signingError":
+                // A signing failed or timed out in the offscreen: free the
+                // session (so "+ Sign" and deferred invites work again),
+                // reject a waiting dApp request, and show the error.
+                {
+                    const info: any = payload;
+                    console.warn(`[StateManager] Signing ${info.sessionId} failed: ${info.error}`);
+                    // dkgState is the wallet's readiness — a signing never
+                    // changes it (see SessionManager.joinDkgSession).
+                    this.dropSigningInvite(info.sessionId);
+                    if (
+                        this.appState.sessionInfo?.session_type === "signing" &&
+                        this.appState.sessionInfo?.session_id === info.sessionId
+                    ) {
+                        this.appState.sessionInfo = null;
+                    }
+                    (this.appState as any).signingProgress = null;
+                    if (this.rpcHandler && typeof this.rpcHandler.handleSignatureError === "function") {
+                        this.rpcHandler.handleSignatureError(info.sessionId, info.error);
+                    }
+                    this.broadcastToPopupPorts({
+                        type: "signatureError",
+                        signingId: info.signingId,
+                        error: info.error,
+                    } as any);
+                    this.broadcastCurrentState();
+                }
+                break;
+
             case "signingComplete":
                 // Ext-2d-offscreen-rounds: the FROST signing ceremony
                 // finalized. Stash the signature + metadata in appState
@@ -716,16 +699,13 @@ export class StateManager {
                         completedAt: Date.now(),
                     };
                     // Clear the active signing session so "+ Sign" is
-                    // available again. The invite is left in
-                    // `appState.invites` for now (it'll age out via
-                    // session_removed from the server or get cleaned
-                    // up on next cold start).
+                    // available again, and drop the finished request.
+                    this.dropSigningInvite(info.sessionId);
                     if (
                         this.appState.sessionInfo?.session_type === "signing" &&
                         this.appState.sessionInfo?.session_id === info.sessionId
                     ) {
                         this.appState.sessionInfo = null;
-                        this.appState.dkgState = DkgState.Idle;
                     }
                     // Clear the live progress roster now that the
                     // ceremony has finished — the success banner
@@ -851,6 +831,26 @@ export class StateManager {
             sessionInfo: this.appState.sessionInfo,
             invites: this.appState.invites
         } as any);
+    }
+
+    /** Signing requests (`session_id:message`) that completed or failed. */
+    private finishedSignings = new Set<string>();
+
+    /**
+     * A finished (or failed) signing is no longer a request to act on; the
+     * signal server may keep re-announcing it, see isFinishedSigning.
+     */
+    private dropSigningInvite(sessionId: string | undefined): void {
+        if (!sessionId) return;
+        const isIt = (s: { session_type?: string; session_id: string }) =>
+            s.session_type === "signing" && s.session_id === sessionId;
+        const request = [this.appState.sessionInfo, ...(this.appState.invites ?? [])].find((s) => s && isIt(s));
+        this.finishedSignings.add(`${sessionId}:${request?.signing_message_hex ?? ""}`);
+        this.appState.invites = (this.appState.invites ?? []).filter((s) => !isIt(s));
+    }
+
+    isFinishedSigning(sessionId: string, messageHex: string | undefined): boolean {
+        return this.finishedSignings.has(`${sessionId}:${messageHex ?? ""}`);
     }
 
     /**

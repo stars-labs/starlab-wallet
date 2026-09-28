@@ -1,0 +1,23 @@
+{
+  "version": "2.0",
+  "encrypted": true,
+  "algorithm": "AES-256-GCM-PBKDF2",
+  "data": "WzkiZ27KCoqyqggCzQ806kBIIyXs7zIznKS5T5+UsU8uj89F2+T+woRRvIehioZBTiBu7lmtIgLAGmpPOU8Bfvq8MKI2qNyYQb8vlMalEBBdpqKVOnvNhk0aRsBLKW7dUsp9rY1wWvCSBG+tHW18e4fxdctvnno+JXrCcyAP6ECpiNrDVsU4Ugbl6F2AdXdQiGvQeq4Vw5qxoQElE9Dvb0G/CfeMmOR14Hi2KcbSppszcrES1jOtesOPj9zO+8dAD3nH58K0GgJaFKTPWFfH6dVuUO6hL37QVM8iCRBOJECm+h7yUEEmVQ1v3XU/OuxZj8ivTpK73HsnopwokZ4w0FBbb5IBfP/m4Jgi984fELg9Bh+NArW75AKwVa6ZuxVNLFshkgeED3GPkTeuc3Dzt5ymkNwg6/VmJwMBuA0iIEJIakueIR5cPpW9Qxv0NztfoZ9jA087yHPKn0hJC2MNDKRV56DjHxcFKtyHJp4Elpu4lHJwDIsceIttzUzdm/QIyLia6E88IWwpTbomSDGq7DS76E7JcFuO3WxVRlHxcMgqWipiy1jd1w==",
+  "metadata": {
+    "session_id": "w-transfer",
+    "device_id": "device-a",
+    "curve_type": "secp256k1",
+    "threshold": 2,
+    "total_participants": 3,
+    "participant_index": 1,
+    "group_public_key": "03708962858817777b8677d443be72934f69da2100e4233bfaf77ff6284e65aee7",
+    "participants": [
+      "device-a",
+      "device-b",
+      "device-c"
+    ],
+    "created_at": "2026-09-27T14:23:17.429888730+00:00",
+    "last_modified": "2026-09-27T14:23:17.429888730+00:00",
+    "label": "Savings"
+  }
+}

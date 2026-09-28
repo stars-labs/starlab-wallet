@@ -36,7 +36,9 @@ function setup() {
     (mgr as any).sendWebRTCAppMessage = (to: string, m: any) => sent.push({ to, text: m.text });
     const completed: any[] = [];
     mgr.onSigningComplete = (p: any) => completed.push(p);
-    return { mgr, dkg, sent, completed };
+    const failed: any[] = [];
+    mgr.onSigningFailed = (p: any) => failed.push(p);
+    return { mgr, dkg, sent, completed, failed };
 }
 
 // Only the proposer is listed: CLI peers don't join signing sessions.
@@ -177,5 +179,94 @@ describe("WebRTCManager signing — consecutive ceremonies", () => {
         const calls = dkg.add_signing_commitment.mock.calls;
         expect(calls[calls.length - 1]).toEqual([3, "cc"]);
         expect(dkg.sign).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe("WebRTCManager signing — timeout", () => {
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    it("fails a signing that never gets enough signers, and a retry starts clean", async () => {
+        const { mgr, dkg, failed } = setup();
+        (mgr as any).signingTimeoutMs = 20;
+        await mgr.initiateSigningCeremony(session, "aa");
+        await sleep(40);
+        expect((mgr as any).signingState).toBe(SigningState.Failed);
+        expect(failed.map((f) => f.error)).toEqual(["Signing timed out after 0s: only 1 of 2 signers responded"]);
+        expect(failed[0].sessionId).toBe("s1");
+        expect(dkg.clear_signing_state).toHaveBeenCalled();
+        expect(await mgr.initiateSigningCeremony({ ...session, session_id: "s2" }, "bb")).toBe(true);
+    });
+
+    it("names the picked signer whose share never came", async () => {
+        const { mgr, failed } = setup();
+        (mgr as any).signingTimeoutMs = 20;
+        await mgr.initiateSigningCeremony(session, "aa");
+        mgr.handleWebRTCAppMessage("cli-b", frame("SIGN_COMMIT", "bb"));
+        await sleep(40);
+        expect(failed.map((f) => f.error)).toEqual(["Signing timed out after 0s: no signature share from cli-b"]);
+    });
+
+    it("a completed signing's timer does nothing", async () => {
+        const { mgr, failed } = setup();
+        (mgr as any).signingTimeoutMs = 20;
+        await mgr.initiateSigningCeremony(session, "aa");
+        mgr.handleWebRTCAppMessage("cli-b", frame("SIGN_COMMIT", "bb"));
+        mgr.handleWebRTCAppMessage("cli-b", frame("SIGN_SHARE", "5b"));
+        await sleep(40);
+        expect(failed).toEqual([]);
+        expect((mgr as any).signingState).toBe(SigningState.Complete);
+    });
+
+    it("an invalid signer set is reported as a failure", async () => {
+        const { mgr, failed } = setup();
+        await mgr.initiateSigningCeremony(proposedBy("cli-b"), "aa");
+        mgr.handleWebRTCAppMessage("cli-b", setFrame(["cli-b", "ext-a", "cli-c"]));
+        expect(failed.map((f) => f.error)).toEqual(["Invalid signer set from cli-b: 3 signers, threshold is 2"]);
+    });
+});
+
+describe("WebRTCManager signing — late resends from the previous ceremony", () => {
+    async function finishedCeremony() {
+        const env = setup();
+        await env.mgr.initiateSigningCeremony(proposedBy("cli-b"), "aa");
+        env.mgr.handleWebRTCAppMessage("cli-b", frame("SIGN_COMMIT", "b1"));
+        env.mgr.handleWebRTCAppMessage("cli-b", setFrame(["cli-b", "ext-a"]));
+        env.mgr.handleWebRTCAppMessage("cli-b", frame("SIGN_SHARE", "51"));
+        expect(env.completed).toHaveLength(1);
+        env.dkg.add_signing_commitment.mockClear();
+        return env;
+    }
+
+    it("as a co-signer, never takes a resent commitment for the next ceremony's", async () => {
+        const { mgr, dkg } = await finishedCeremony();
+        mgr.handleWebRTCAppMessage("cli-b", frame("SIGN_COMMIT", "b1")); // late resend
+        mgr.handleWebRTCAppMessage("cli-b", frame("SIGN_COMMIT", "b2")); // next ceremony
+        await mgr.initiateSigningCeremony({ ...proposedBy("cli-b"), session_id: "s2" }, "bb");
+        mgr.handleWebRTCAppMessage("cli-b", setFrame(["cli-b", "ext-a"]));
+        expect(dkg.add_signing_commitment.mock.calls).toEqual([[2, "b2"]]);
+    });
+
+    it("as the proposer, never fixes the set with a resent commitment", async () => {
+        const { mgr, dkg } = await finishedCeremony();
+        mgr.handleWebRTCAppMessage("cli-b", frame("SIGN_COMMIT", "b1")); // late resend
+        await mgr.initiateSigningCeremony({ ...session, session_id: "s2" }, "bb");
+        mgr.handleWebRTCAppMessage("cli-c", frame("SIGN_COMMIT", "cc"));
+        expect(dkg.add_signing_commitment.mock.calls).toEqual([[3, "cc"]]);
+    });
+});
+
+describe("WebRTCManager signing — aggregate failure", () => {
+    it("is reported so the UI leaves 'in progress'", async () => {
+        const { mgr, dkg, failed } = setup();
+        dkg.aggregate_signature.mockImplementation(() => {
+            throw new Error("InvalidSignatureShare");
+        });
+        await mgr.initiateSigningCeremony(proposedBy("cli-b"), "aa");
+        mgr.handleWebRTCAppMessage("cli-b", frame("SIGN_COMMIT", "bb"));
+        mgr.handleWebRTCAppMessage("cli-b", setFrame(["cli-b", "ext-a"]));
+        mgr.handleWebRTCAppMessage("cli-b", frame("SIGN_SHARE", "5b"));
+        expect((mgr as any).signingState).toBe(SigningState.Failed);
+        expect(failed.map((f) => f.sessionId)).toEqual(["s1"]);
+        expect(failed[0].error).toContain("InvalidSignatureShare");
     });
 });

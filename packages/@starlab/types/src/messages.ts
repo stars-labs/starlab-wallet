@@ -173,7 +173,7 @@ export type OffscreenToBackgroundMessage = BaseMessage & (
         blockchain?: 'ethereum' | 'solana';
         sessionId?: string;
       }
-    | { type: 'signingError'; signingId: string; error: string }
+    | { type: 'signingError'; signingId: string; sessionId: string; error: string }
     // M3 reshare: per-round progress. `state` is the ReshareState
     // string name; received counts let the popup render "round N
     // (k/n packages)".

@@ -24,6 +24,8 @@ import { validateSessionProposal, validateSessionAcceptance } from "@stars-labs/
 import type { BackgroundToPopupMessage, OffscreenMessage } from "@stars-labs/types/messages";
 import { buildWireSessionInfo } from "../../utils/session-parse";
 import { accountWalletId } from "../../utils/wallet-id";
+import type { StateManager } from "./stateManager";
+import type { KeyShareData } from "@stars-labs/types/keystore";
 
 // Session persistence removed - sessions are ephemeral for security
 
@@ -31,24 +33,30 @@ import { accountWalletId } from "../../utils/wallet-id";
  * Handles MPC session lifecycle and coordination
  */
 export class SessionManager {
-    private appState: AppState;
     private wsClient: WebSocketClient | null;
     private broadcastToPopup: (message: BackgroundToPopupMessage) => void;
     private sendToOffscreen: (message: OffscreenMessage, description: string) => Promise<{ success: boolean; error?: string }>;
-    private stateManager: any; // StateManager reference
+    private stateManager: Pick<StateManager, "getState" | "updateState" | "updateStateProperty">;
 
     constructor(
-        appState: AppState,
+        stateManager: Pick<StateManager, "getState" | "updateState" | "updateStateProperty">,
         wsClient: WebSocketClient | null,
         broadcastToPopup: (message: BackgroundToPopupMessage) => void,
         sendToOffscreen: (message: OffscreenMessage, description: string) => Promise<{ success: boolean; error?: string }>,
-        stateManager?: any
     ) {
-        this.appState = appState;
+        this.stateManager = stateManager;
         this.wsClient = wsClient;
         this.broadcastToPopup = broadcastToPopup;
         this.sendToOffscreen = sendToOffscreen;
-        this.stateManager = stateManager;
+    }
+
+    /**
+     * The StateManager's current state. Never cache the result: the
+     * StateManager replaces its state object on every update, so a kept
+     * reference goes stale (e.g. misses invites after a reset).
+     */
+    private get appState(): Readonly<AppState> {
+        return this.stateManager.getState();
     }
 
     /**
@@ -106,7 +114,7 @@ export class SessionManager {
         console.log("[SessionManager] Session proposal validated:", sessionInfo);
 
         // Get current device ID from StateManager if available
-        const currentDeviceId = this.stateManager ? this.stateManager.getState().deviceId : this.appState.deviceId;
+        const currentDeviceId = this.appState.deviceId;
         
         console.log("[SessionManager] Checking inclusion - currentDeviceId:", currentDeviceId, "participants:", sessionInfo.participants);
         
@@ -115,7 +123,7 @@ export class SessionManager {
             console.log("[SessionManager] This peer is included in session proposal");
 
             // Get current invites from StateManager
-            const currentState = this.stateManager ? this.stateManager.getState() : this.appState;
+            const currentState = this.appState;
             const invites = [...currentState.invites];
             
             // Check for existing invite
@@ -131,15 +139,7 @@ export class SessionManager {
                 invites.push(sessionInfo);
             }
             
-            // Update local state
-            this.appState.invites = invites;
-            
-            // Update StateManager with new invites
-            if (this.stateManager) {
-                this.stateManager.updateStateProperty('invites', invites);
-                // Also update the local appState to sync
-                this.appState = this.stateManager.getState();
-            }
+            this.stateManager.updateStateProperty('invites', invites);
 
             // If this peer is the proposer, automatically accept and set up WebRTC
             if (fromPeerId === currentDeviceId) {
@@ -148,29 +148,17 @@ export class SessionManager {
                 const acceptedSessionInfo = { ...sessionInfo, status: "accepted" as const };
                 const updatedInvites = invites.filter(inv => inv.session_id !== sessionInfo.session_id);
                 
-                // Update local state
-                this.appState.sessionInfo = acceptedSessionInfo;
-                this.appState.invites = updatedInvites;
-                
-                // Update StateManager with session changes
-                if (this.stateManager) {
-                    this.stateManager.updateState({
-                        sessionInfo: acceptedSessionInfo,
-                        invites: updatedInvites
-                    });
-                    // Sync local state
-                    this.appState = this.stateManager.getState();
-                }
+                this.stateManager.updateState({
+                    sessionInfo: acceptedSessionInfo,
+                    invites: updatedInvites
+                });
 
                 // No persistence - sessions are ephemeral
 
-                // Forward to offscreen for WebRTC setup. We only
-                // reach here when a session was successfully set on
-                // appState (createSession → updateState); non-null
-                // assertion is sound in this branch.
+                // Forward to offscreen for WebRTC setup.
                 this.sendToOffscreen({
                     type: "sessionAccepted",
-                    sessionInfo: this.appState.sessionInfo!,
+                    sessionInfo: acceptedSessionInfo,
                     currentdeviceId: this.appState.deviceId,
                     blockchain: this.appState.blockchain || "solana"
                 }, "proposerWebRTCSetup");
@@ -228,11 +216,8 @@ export class SessionManager {
                 );
 
                 // Update the sessionInfo in appState if this is the active session
-                if (this.appState.sessionInfo && this.appState.sessionInfo.session_id === session_id) {
-                    this.appState.sessionInfo = { ...session };
-                    if (this.stateManager) {
-                        this.stateManager.updateStateProperty('sessionInfo', this.appState.sessionInfo);
-                    }
+                if (this.appState.sessionInfo?.session_id === session_id) {
+                    this.stateManager.updateStateProperty('sessionInfo', { ...session });
                 }
                 
                 if (allAccepted) {
@@ -243,7 +228,7 @@ export class SessionManager {
                     const sessionAllAcceptedMessage: OffscreenMessage = {
                         type: "sessionAllAccepted",
                         sessionInfo: session,
-                        currentdeviceId: this.stateManager ? this.stateManager.getState().deviceId : this.appState.deviceId,
+                        currentdeviceId: this.appState.deviceId,
                         blockchain: this.appState.blockchain || "solana" // Use stored blockchain or default to solana
                     };
 
@@ -255,7 +240,7 @@ export class SessionManager {
                     const sessionResponseUpdateMessage: OffscreenMessage = {
                         type: "sessionResponseUpdate",
                         sessionInfo: session,
-                        currentdeviceId: this.stateManager ? this.stateManager.getState().deviceId : this.appState.deviceId
+                        currentdeviceId: this.appState.deviceId
                     };
 
                     this.sendToOffscreen(sessionResponseUpdateMessage, "sessionResponseUpdate");
@@ -282,7 +267,7 @@ export class SessionManager {
         console.log(`[SessionManager] Accepting session: ${sessionId} with blockchain: ${blockchain}`);
 
         // Get current state from StateManager
-        const currentState = this.stateManager ? this.stateManager.getState() : this.appState;
+        const currentState = this.appState;
         const invites = [...currentState.invites];
         
         const sessionIndex = invites.findIndex(inv => inv.session_id === sessionId);
@@ -303,12 +288,8 @@ export class SessionManager {
                 : getDefaultChainForCurve(sessionCurve);
         blockchain = getProtocolBlockchainForChain(chain);
 
-        // Store chain selection for the invite being accepted.
-        this.appState.chain = chain;
-        this.appState.blockchain = blockchain;
-
         // Get current device ID
-        const currentDeviceId = this.stateManager ? this.stateManager.getState().deviceId : this.appState.deviceId;
+        const currentDeviceId = this.appState.deviceId;
         
         // Move session to active and update status, adding current device to accepted_devices
         const newSessionInfo = { 
@@ -318,21 +299,12 @@ export class SessionManager {
         };
         invites.splice(sessionIndex, 1);
         
-        // Update local state
-        this.appState.sessionInfo = newSessionInfo;
-        this.appState.invites = invites;
-        
-        // Update StateManager with session changes
-        if (this.stateManager) {
-            this.stateManager.updateState({
-                sessionInfo: newSessionInfo,
-                invites: invites,
-                blockchain,
-                chain,
-            });
-            // Sync local state with StateManager
-            this.appState = this.stateManager.getState();
-        }
+        this.stateManager.updateState({
+            sessionInfo: newSessionInfo,
+            invites: invites,
+            blockchain,
+            chain,
+        });
 
         // No persistence - sessions are ephemeral
 
@@ -345,7 +317,7 @@ export class SessionManager {
 
         if (this.wsClient?.getReadyState() === WebSocket.OPEN) {
             // Send to all other participants
-            const currentDeviceId = this.stateManager ? this.stateManager.getState().deviceId : this.appState.deviceId;
+            const currentDeviceId = this.appState.deviceId;
             const otherParticipants = newSessionInfo.participants.filter((p: string) => p !== currentDeviceId);
 
             try {
@@ -366,7 +338,7 @@ export class SessionManager {
                 await this.sendToOffscreen({
                     type: "sessionAccepted",
                     sessionInfo: newSessionInfo,
-                    currentdeviceId: this.stateManager ? this.stateManager.getState().deviceId : this.appState.deviceId,
+                    currentdeviceId: this.appState.deviceId,
                     blockchain: blockchain
                 }, "sessionAccepted");
                 
@@ -402,13 +374,10 @@ export class SessionManager {
             return { success: false, error: "WebSocket not connected" };
         }
 
-        const currentDeviceId = this.stateManager ? this.stateManager.getState().deviceId : this.appState.deviceId;
+        const currentDeviceId = this.appState.deviceId;
         
         // Store blockchain selection
-        this.appState.blockchain = blockchain;
-        if (this.stateManager) {
-            this.stateManager.updateState({ blockchain });
-        }
+        this.stateManager.updateState({ blockchain });
         
         // Sort participants to ensure consistent indexing across all peers
         const sortedParticipants = [...participants].sort();
@@ -483,9 +452,7 @@ export class SessionManager {
             return { success: false, error: "threshold must be 1..total" };
         }
 
-        const currentDeviceId = this.stateManager
-            ? this.stateManager.getState().deviceId
-            : this.appState.deviceId;
+        const currentDeviceId = this.appState.deviceId;
 
         // Session id mirrors TUI's convention — loosely: `dkg_<12-hex>`
         // (TUI uses a 4-hex suffix, which collides too easily; widen
@@ -514,23 +481,19 @@ export class SessionManager {
         // Mirror TUI's `creating_wallet` state: the popup needs to
         // know we're the creator so it shows "Waiting for joiners"
         // rather than "Session received".
-        this.appState.sessionInfo = sessionInfo;
-        this.appState.invites = [
+        const invites = [
             ...(this.appState.invites ?? []).filter(
                 (s) => s.session_id !== sessionId,
             ),
             sessionInfo,
         ];
-        this.appState.dkgState = DkgState.Initializing;
-        if (this.stateManager) {
-            this.stateManager.updateState({
-                sessionInfo,
-                invites: this.appState.invites,
-                dkgState: DkgState.Initializing,
-                blockchain,
-                chain,
-            });
-        }
+        this.stateManager.updateState({
+            sessionInfo,
+            invites,
+            dkgState: DkgState.Initializing,
+            blockchain,
+            chain,
+        });
 
         try {
             const wire = buildWireSessionInfo(sessionInfo);
@@ -547,14 +510,10 @@ export class SessionManager {
         } catch (error) {
             console.error("[SessionManager] createDkgWallet failed:", error);
             // Roll back state on failure so the user can retry cleanly.
-            this.appState.sessionInfo = null;
-            this.appState.dkgState = DkgState.Idle;
-            if (this.stateManager) {
-                this.stateManager.updateState({
-                    sessionInfo: null,
-                    dkgState: DkgState.Idle,
-                });
-            }
+            this.stateManager.updateState({
+                sessionInfo: null,
+                dkgState: DkgState.Idle,
+            });
             return { success: false, error: (error as Error).message };
         }
     }
@@ -598,9 +557,7 @@ export class SessionManager {
                 error: `No known invite for session ${sessionId}`,
             };
         }
-        const currentDeviceId = this.stateManager
-            ? this.stateManager.getState().deviceId
-            : this.appState.deviceId;
+        const currentDeviceId = this.appState.deviceId;
         if (!currentDeviceId) {
             return { success: false, error: "Device id not set yet" };
         }
@@ -638,22 +595,24 @@ export class SessionManager {
                 new Set([...(invite.accepted_devices ?? []), currentDeviceId]),
             ),
         };
-        this.appState.sessionInfo = local;
-        this.appState.dkgState = DkgState.Initializing;
-        if (this.stateManager) {
-            const curve =
-                local.curve_type === "ed25519" ? "ed25519" : "secp256k1";
-            const chain =
-                isSupportedChain(local.blockchain)
-                    ? local.blockchain
-                    : getDefaultChainForCurve(curve);
-            this.stateManager.updateState({
-                sessionInfo: local,
-                dkgState: DkgState.Initializing,
-                blockchain: getProtocolBlockchainForChain(chain),
-                chain,
-            });
-        }
+        const curve =
+            local.curve_type === "ed25519" ? "ed25519" : "secp256k1";
+        const chain =
+            isSupportedChain(local.blockchain)
+                ? local.blockchain
+                : getDefaultChainForCurve(curve);
+        // dkgState tracks key generation / the wallet's readiness. A
+        // signing join (TUI warm signing even reuses the finished DKG's
+        // session id) must leave the wallet Complete.
+        const dkgStateBefore = this.appState.dkgState;
+        this.stateManager.updateState({
+            sessionInfo: local,
+            ...(local.session_type === "signing"
+                ? {}
+                : { dkgState: DkgState.Initializing }),
+            blockchain: getProtocolBlockchainForChain(chain),
+            chain,
+        });
 
         try {
             // Sent even when pre-listed: the server dedupes membership but
@@ -671,14 +630,10 @@ export class SessionManager {
         } catch (err) {
             // Roll back local state on wire failure so the UI doesn't
             // show a false "joined" state.
-            this.appState.sessionInfo = null;
-            this.appState.dkgState = DkgState.Idle;
-            if (this.stateManager) {
-                this.stateManager.updateState({
-                    sessionInfo: null,
-                    dkgState: DkgState.Idle,
-                });
-            }
+            this.stateManager.updateState({
+                sessionInfo: null,
+                dkgState: dkgStateBefore,
+            });
             return { success: false, error: (err as Error).message };
         }
     }
@@ -693,11 +648,9 @@ export class SessionManager {
      *     signing_message_hex filled in top-level per TUI's parser
      *     (command.rs:286 line, signing-sibling fields).
      *
-     * For secp256k1 wallets, the `message` parameter is hashed with
-     * EIP-191 before going on the wire — the signature must be
-     * ecrecover-compatible so dApps can verify it as a standard
-     * personal_sign. For ed25519, raw bytes are signed (Ed25519
-     * signs variable-length input natively).
+     * For secp256k1 wallets the caller passes the EIP-191 digest; FROST
+     * signs it as BIP-340 Schnorr (NOT ecrecover-compatible). For
+     * ed25519, raw bytes are signed.
      *
      * Does NOT actually run FROST rounds — that's the signing
      * auto-trigger (Ext-2d). This commit just announces.
@@ -705,10 +658,10 @@ export class SessionManager {
     async createSigningSession(config: {
         walletId: string;
         walletName: string;
-        groupPublicKey: string;
         blockchain: "ethereum" | "solana";
-        threshold: number;
-        total: number;
+        /** The wallet's stored share: cohort, threshold, and (in the
+         *  offscreen) the account key the announce names. */
+        keyShare: KeyShareData;
         /** Hex-encoded bytes that FROST will sign. Caller is
          *  responsible for EIP-191 wrapping if appropriate. */
         signingMessageHex: string;
@@ -716,16 +669,46 @@ export class SessionManager {
         if (!this.wsClient || this.wsClient.getReadyState() !== WebSocket.OPEN) {
             return { success: false, error: "WebSocket not connected" };
         }
-        if (!config.walletId || !config.groupPublicKey) {
-            return { success: false, error: "walletId and groupPublicKey required" };
+        if (!config.walletId || !config.keyShare) {
+            return { success: false, error: "walletId and keyShare required" };
         }
         if (!/^[0-9a-fA-F]*$/.test(config.signingMessageHex)) {
             return { success: false, error: "signingMessageHex must be hex" };
         }
 
-        const currentDeviceId = this.stateManager
-            ? this.stateManager.getState().deviceId
-            : this.appState.deviceId;
+        const currentDeviceId = this.appState.deviceId;
+        // Like the engine proposers: the wallet's whole cohort is listed —
+        // TUI / desktop only offer a signing whose participants include them.
+        const { keyShare } = config;
+        const participants = [
+            ...new Set(
+                keyShare.participants?.length
+                    ? keyShare.participants
+                    : Object.keys(keyShare.participant_identifiers ?? {}),
+            ),
+        ].sort();
+        if (!participants.includes(currentDeviceId)) {
+            return { success: false, error: "This device is not in the wallet's cohort" };
+        }
+        if (participants.length !== keyShare.total_participants) {
+            // A share that doesn't name every co-signer can't be announced:
+            // co-signers not listed would never be asked (and never sign).
+            return {
+                success: false,
+                error: `The wallet's share lists ${participants.length} of its ${keyShare.total_participants} devices (${participants.join(", ")}) — re-import it from a backup that carries the full cohort`,
+            };
+        }
+        // Everyone signs with the account child, so the announce names its
+        // key (as the engine does), not the root key.
+        const account = { chain: config.blockchain, account: 0 };
+        const derived = (await this.sendToOffscreen(
+            { type: "deriveAccountGroupKey", keyShare, ...account } as any,
+            "deriveAccountGroupKey",
+        )) as { success: boolean; groupPublicKey?: string; error?: string };
+        if (!derived?.success || !derived.groupPublicKey) {
+            return { success: false, error: `Deriving the account key failed: ${derived?.error ?? "unknown"}` };
+        }
+
         const sessionId = `sign_${cryptoHex(12)}`;
         const curveType =
             config.blockchain === "ethereum" ? "secp256k1" : "ed25519";
@@ -733,49 +716,42 @@ export class SessionManager {
         const sessionInfo: SessionInfo = {
             session_id: sessionId,
             proposer_id: currentDeviceId,
-            total: config.total,
-            threshold: config.threshold,
-            participants: [currentDeviceId],
+            total: keyShare.total_participants,
+            threshold: keyShare.threshold,
+            participants,
             session_type: "signing",
             curve_type: curveType,
             coordination_type: "Network",
             // Signing-specific top-level siblings — TUI parser reads
             // these at the top level (not nested). `wallet_name` is the
             // account-0 child wallet id — the key everyone signs with.
-            wallet_name: accountWalletId(config.walletId, config.blockchain, 0),
-            group_public_key: config.groupPublicKey,
+            wallet_name: accountWalletId(config.walletId, account.chain, account.account),
+            group_public_key: derived.groupPublicKey,
             blockchain: config.blockchain,
             signing_message_hex: config.signingMessageHex,
             accepted_devices: [currentDeviceId],
         };
 
-        // Stash as active session so the popup's ceremony banner
-        // shows the signing in progress. Same dkgState enum is
-        // reused because offscreen's WebRTC+SigningManager keys off
-        // it (dkgState is a misnomer — it tracks ANY in-progress
-        // ceremony).
-        this.appState.sessionInfo = sessionInfo;
-        this.appState.invites = [
+        // Stash as active session so the popup shows the signing in
+        // progress. dkgState is left alone: it tracks the wallet's key
+        // generation, which signing doesn't change.
+        const invites = [
             ...(this.appState.invites ?? []).filter(
                 (s) => s.session_id !== sessionId,
             ),
             sessionInfo,
         ];
-        this.appState.dkgState = DkgState.Initializing;
-        if (this.stateManager) {
-            this.stateManager.updateState({
-                sessionInfo,
-                invites: this.appState.invites,
-                dkgState: DkgState.Initializing,
-                blockchain: config.blockchain,
-            });
-        }
+        this.stateManager.updateState({
+            sessionInfo,
+            invites,
+            blockchain: config.blockchain,
+        });
 
         try {
             const wire = buildWireSessionInfo(sessionInfo);
             this.wsClient.announceSession(wire);
             console.log(
-                `[SessionManager] Created signing session ${sessionId} for wallet ${config.walletId} (${config.threshold}/${config.total} ${curveType})`,
+                `[SessionManager] Created signing session ${sessionId} for wallet ${config.walletId} (${sessionInfo.threshold}/${sessionInfo.total} ${curveType}, participants ${participants.join(",")})`,
             );
             this.broadcastToPopup({
                 type: "signingSessionCreated",
@@ -794,14 +770,7 @@ export class SessionManager {
                 "[SessionManager] createSigningSession failed:",
                 error,
             );
-            this.appState.sessionInfo = null;
-            this.appState.dkgState = DkgState.Idle;
-            if (this.stateManager) {
-                this.stateManager.updateState({
-                    sessionInfo: null,
-                    dkgState: DkgState.Idle,
-                });
-            }
+            this.stateManager.updateState({ sessionInfo: null });
             return { success: false, error: (error as Error).message };
         }
     }
@@ -855,9 +824,7 @@ export class SessionManager {
                 error: `New cohort members must already hold a share: ${outsiders.join(", ")}`,
             };
         }
-        const currentDeviceId = this.stateManager
-            ? this.stateManager.getState().deviceId
-            : this.appState.deviceId;
+        const currentDeviceId = this.appState.deviceId;
         if (!newParticipants.includes(currentDeviceId)) {
             return {
                 success: false,
@@ -898,22 +865,18 @@ export class SessionManager {
             accepted_devices: [currentDeviceId],
         };
 
-        this.appState.sessionInfo = sessionInfo;
-        this.appState.invites = [
+        const invites = [
             ...(this.appState.invites ?? []).filter(
                 (s) => s.session_id !== sessionId,
             ),
             sessionInfo,
         ];
-        this.appState.dkgState = DkgState.Initializing;
-        if (this.stateManager) {
-            this.stateManager.updateState({
-                sessionInfo,
-                invites: this.appState.invites,
-                dkgState: DkgState.Initializing,
-                blockchain: config.blockchain,
-            });
-        }
+        this.stateManager.updateState({
+            sessionInfo,
+            invites,
+            dkgState: DkgState.Initializing,
+            blockchain: config.blockchain,
+        });
 
         try {
             const wire = buildWireSessionInfo(sessionInfo);
@@ -928,14 +891,10 @@ export class SessionManager {
             return { success: true, sessionId };
         } catch (error) {
             console.error("[SessionManager] createReshareSession failed:", error);
-            this.appState.sessionInfo = null;
-            this.appState.dkgState = DkgState.Idle;
-            if (this.stateManager) {
-                this.stateManager.updateState({
-                    sessionInfo: null,
-                    dkgState: DkgState.Idle,
-                });
-            }
+            this.stateManager.updateState({
+                sessionInfo: null,
+                dkgState: DkgState.Idle,
+            });
             return { success: false, error: (error as Error).message };
         }
     }

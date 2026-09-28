@@ -5,6 +5,8 @@ import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from "@st
 
 // Import WASM modules for FROST DKG
 import wasmInit, { FrostDkgEd25519, FrostDkgSecp256k1, FrostReshareEd25519, FrostReshareSecp256k1, derive_account_addresses } from '@stars-labs/core-wasm';
+import { parseAccountWalletId } from "../../utils/wallet-id";
+import { deriveAccountGroupKey } from "../../utils/accountKey";
 
 console.log("Offscreen script loaded.");
 
@@ -70,49 +72,6 @@ let localdeviceId: string | null = null;
 let webrtcConnections: Record<string, boolean> = {};
 
 // Removed wsRelayCallback as WebRTCManager will use a direct callback for sending payloads
-
-// Helper function to decrypt CLI keystore
-async function decryptCLIKeystore(base64Data: string, password: string): Promise<string> {
-    // CLI uses base64 encoding for the entire encrypted blob
-    const encryptedData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
-    
-    // Extract salt (first 16 bytes), IV (next 12 bytes), and ciphertext + tag
-    const salt = encryptedData.slice(0, 16);
-    const iv = encryptedData.slice(16, 28);
-    const ciphertextWithTag = encryptedData.slice(28);
-    
-    // Derive key using PBKDF2 (CLI uses 100,000 iterations)
-    const encoder = new TextEncoder();
-    const passwordKey = await crypto.subtle.importKey(
-        'raw',
-        encoder.encode(password),
-        'PBKDF2',
-        false,
-        ['deriveKey']
-    );
-    
-    const key = await crypto.subtle.deriveKey(
-        {
-            name: 'PBKDF2',
-            salt: salt,
-            iterations: 100000,
-            hash: 'SHA-256'
-        },
-        passwordKey,
-        { name: 'AES-GCM', length: 256 },
-        false,
-        ['decrypt']
-    );
-    
-    // Decrypt using AES-GCM
-    const decrypted = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: iv },
-        key,
-        ciphertextWithTag
-    );
-    
-    return new TextDecoder().decode(decrypted);
-}
 
 // Function to send messages to the background script
 function sendToBackground(message: { type: string; payload: unknown }) {
@@ -295,6 +254,16 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                     sendToBackground({
                         type: "fromOffscreen",
                         payload: { type: "signingComplete", ...payload },
+                    });
+                };
+
+                // A signing that failed or timed out: the background clears
+                // the session and reports the error to the popup / dApp.
+                webRTCManager.onSigningFailed = (payload) => {
+                    console.warn("Offscreen: Signing failed:", payload);
+                    sendToBackground({
+                        type: "fromOffscreen",
+                        payload: { type: "signingError", ...payload },
                     });
                 };
 
@@ -546,48 +515,34 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                 (async () => {
                     // Runs in an IIFE so the sendResponse below returns
                     // eagerly — the keystore load takes hundreds of ms.
-                    // Always load the saved wallet: an instance left over
-                    // from a DKG in this document holds the ROOT key (which
-                    // never signs — signing uses the derived account-0
-                    // child) and none of the wallet's FROST identifiers.
-                    {
-                        console.log(
-                            "[sessionReadyForSigning] loading the active keystore for signing",
-                        );
-                        const loaded = await new Promise<boolean>((resolve) => {
-                            chrome.runtime.sendMessage(
-                                { type: "getActiveKeystore" },
-                                async (resp: any) => {
-                                    if (
-                                        !resp ||
-                                        !resp.success ||
-                                        !resp.keyShare
-                                    ) {
-                                        console.warn(
-                                            "[sessionReadyForSigning] getActiveKeystore failed or empty",
-                                            chrome.runtime.lastError?.message,
-                                            resp?.error,
-                                        );
-                                        resolve(false);
-                                        return;
-                                    }
-                                    try {
-                                        await webRTCManager!.loadKeystoreForSigning(
-                                            resp.keyShare,
-                                            blockchain,
-                                        );
-                                        resolve(true);
-                                    } catch (e) {
-                                        console.error(
-                                            "[sessionReadyForSigning] loadKeystoreForSigning failed:",
-                                            e,
-                                        );
-                                        resolve(false);
-                                    }
-                                },
-                            );
+                    // Sign with the account the session names
+                    // (wallet_name `{root}-{chain}-{account}`), never the
+                    // UI's current chain or the announce's `blockchain`.
+                    const sessionId: string = payload.sessionInfo.session_id;
+                    const fail = (error: string) => {
+                        console.warn(`[sessionReadyForSigning] ${error}`);
+                        sendToBackground({
+                            type: "fromOffscreen",
+                            payload: { type: "signingError", signingId: `sign_${sessionId}`, sessionId, error },
                         });
-                        if (!loaded) return;
+                    };
+                    const target = parseAccountWalletId(payload.sessionInfo.wallet_name ?? "");
+                    if (!target) {
+                        fail(`Session wallet_name "${payload.sessionInfo.wallet_name ?? ""}" doesn't name an account ({wallet}-{chain}-{n})`);
+                        return;
+                    }
+                    const resp: any = await new Promise((resolve) =>
+                        chrome.runtime.sendMessage({ type: "getWalletKeystore", walletId: target.root }, resolve),
+                    );
+                    if (!resp?.success || !resp.keyShare) {
+                        fail(`No key share for wallet ${target.root}: ${resp?.error ?? chrome.runtime.lastError?.message ?? "unknown"}`);
+                        return;
+                    }
+                    try {
+                        await webRTCManager!.loadKeystoreForSigning(resp.keyShare, target);
+                    } catch (e) {
+                        fail(`Loading ${target.chain} account ${target.account} failed: ${(e as Error).message ?? e}`);
+                        return;
                     }
                     const ok = await webRTCManager!.initiateSigningCeremony(
                         payload.sessionInfo,
@@ -828,152 +783,15 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
             }
             break;
 
-        case "importKeystore":
-            const importMessageId = `offscreen-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-            console.log(`Offscreen: Received 'importKeystore' command (ID: ${importMessageId})`, payload);
-            console.log(`Offscreen: Message structure - keys: ${Object.keys(payload).join(', ')}`);
-            
-            // Wait for WASM to be initialized
-            if (!wasmInitialized) {
-                console.error(`Offscreen: WASM not initialized yet (ID: ${importMessageId})`);
-                sendResponse({ success: false, error: "WASM not initialized" });
-                break;
-            }
-            
-            (async () => {
-                try {
-                    console.log(`Offscreen: Processing importKeystore (ID: ${importMessageId})`);
-                    const { keystoreData, password, chain } = payload;
-                    
-                    if (!keystoreData) {
-                        throw new Error("No keystore data provided");
-                    }
-                    
-                    // Parse the keystore
-                    const parsedKeystore = JSON.parse(keystoreData);
-                    console.log("Offscreen: Parsed keystore metadata:", parsedKeystore.metadata);
-                    
-                    let keystoreToImport: any;
-                    
-                    // Check if keystore is encrypted
-                    if (parsedKeystore.encrypted === true && parsedKeystore.algorithm === "AES-256-GCM-PBKDF2") {
-                        if (!password) {
-                            throw new Error("Password required for encrypted keystore");
-                        }
-                        
-                        console.log("Offscreen: Decrypting CLI keystore...");
-                        const decryptedData = await decryptCLIKeystore(parsedKeystore.data, password);
-                        console.log("Offscreen: Successfully decrypted keystore");
-                        
-                        // Create a new keystore object with decrypted data
-                        keystoreToImport = {
-                            ...parsedKeystore,
-                            encrypted: false,
-                            algorithm: "none",
-                            data: decryptedData
-                        };
-                    } else {
-                        // Use the keystore as-is if not encrypted
-                        keystoreToImport = parsedKeystore;
-                    }
-                    
-                    // Import using WASM based on curve type
-                    const metadata = keystoreToImport.metadata;
-                    const curveType = metadata.curve_type;
-                    
-                    console.log("Offscreen: Importing keystore with WASM for curve:", curveType);
-                    
-                    let dkgInstance;
-                    if (curveType === 'secp256k1') {
-                        dkgInstance = new FrostDkgSecp256k1();
-                    } else if (curveType === 'ed25519') {
-                        dkgInstance = new FrostDkgEd25519();
-                    } else {
-                        throw new Error(`Unsupported curve type: ${curveType}`);
-                    }
-                    
-                    // Import the keystore with decrypted data
-                    try {
-                        let keyDataToImport: any;
-                        
-                        // Parse the decrypted data if it's a string
-                        if (typeof keystoreToImport.data === 'string' && keystoreToImport.data) {
-                            try {
-                                keyDataToImport = JSON.parse(keystoreToImport.data);
-                                console.log("Offscreen: Parsed decrypted key data:", Object.keys(keyDataToImport));
-                            } catch (e) {
-                                console.error("Offscreen: Failed to parse decrypted data as JSON");
-                                // If parsing fails, assume the data contains the key fields directly
-                                keyDataToImport = keystoreToImport;
-                            }
-                        } else {
-                            // Use the keystore directly if data is not a string
-                            keyDataToImport = keystoreToImport;
-                        }
-                        
-                        // Add metadata fields to the key data for WASM
-                        if (keyDataToImport && !keyDataToImport.participant_index && keystoreToImport.metadata) {
-                            keyDataToImport = {
-                                ...keyDataToImport,
-                                participant_index: keystoreToImport.metadata.participant_index,
-                                total_participants: keystoreToImport.metadata.total_participants,
-                                threshold: keystoreToImport.metadata.threshold,
-                                group_public_key: keystoreToImport.metadata.group_public_key
-                            };
-                        }
-                        
-                        const dataToImportStr = JSON.stringify(keyDataToImport);
-                        console.log("Offscreen: Importing keystore into WASM with structure:", Object.keys(keyDataToImport));
-                        dkgInstance.import_keystore(dataToImportStr);
-                        console.log("Offscreen: Successfully imported keystore");
-                    } catch (wasmError: any) {
-                        console.error("Offscreen: WASM import error:", wasmError);
-                        console.error("Offscreen: WASM error message:", wasmError.message || 'Unknown error');
-                        throw new Error(`Failed to import keystore: ${wasmError.message || wasmError}`);
-                    }
-                    
-                    // Extract addresses based on blockchain selection
-                    const addresses: Record<string, string> = {};
-                    
-                    if (metadata.blockchains) {
-                        metadata.blockchains.forEach((blockchain: any) => {
-                            addresses[blockchain.blockchain] = blockchain.address;
-                        });
-                    }
-                    
-                    // Get the primary address based on the requested chain
-                    const primaryAddress = addresses[payload.chain] || 
-                        (metadata.blockchains && metadata.blockchains[0]?.address) || 
-                        '';
-                    
-                    sendResponse({
-                        success: true,
-                        sessionInfo: {
-                            session_id: metadata.wallet_id || metadata.session_id,
-                            device_id: metadata.device_id,
-                            threshold: metadata.threshold,
-                            total_participants: metadata.total_participants,
-                            participant_index: metadata.participant_index,
-                            curve_type: metadata.curve_type,
-                            blockchains: metadata.blockchains,
-                            group_public_key: metadata.group_public_key
-                        },
-                        group_public_key: metadata.group_public_key,
-                        addresses,
-                        address: primaryAddress // Include for backward compatibility
-                    });
-                    
-                } catch (error) {
-                    console.error("Offscreen: Error importing keystore:", error);
-                    sendResponse({ 
-                        success: false, 
-                        error: error instanceof Error ? error.message : "Unknown error importing keystore"
-                    });
-                }
-            })();
-            
-            // Return true to indicate async response
+        case "deriveAccountGroupKey": {
+            // Signing announce: the account child's group key (what engine
+            // proposers announce). Needs this device's share, like signing.
+            const { keyShare, chain, account } = payload as { keyShare: any; chain: string; account: number };
+            deriveAccountGroupKey(keyShare, { chain, account })
+                .then((groupPublicKey) => sendResponse({ success: true, groupPublicKey }))
+                .catch((e) => sendResponse({ success: false, error: (e as Error).message ?? String(e) }));
             return true;
+        }
 
         case "deriveAccounts": {
             // Account model: PUBLIC-only derivation (no password, no shares).

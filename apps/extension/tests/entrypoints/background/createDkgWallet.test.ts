@@ -54,11 +54,10 @@ function makeManager(opts?: { wsReady?: number }) {
         }),
     };
     const mgr = new SessionManager(
-        appState,
+        stateManager as any,
         client as any,
         broadcastToPopup as any,
         sendToOffscreen as any,
-        stateManager as any,
     );
     return { mgr, appState, client, announcedPayloads, broadcastToPopup };
 }

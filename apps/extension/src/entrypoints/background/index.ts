@@ -32,13 +32,13 @@ import { StateManager } from './stateManager';
 import { PopupMessageHandler, OffscreenMessageHandler } from './messageHandlers';
 import { KeepaliveController } from './keepaliveController';
 import { YubiKeyManager } from './yubikeyManager';
+import { restoreActiveWallet } from './walletRestore';
 
 // Import types
 import { INITIAL_APP_STATE } from "@stars-labs/types/appstate";
 import { getRoom, getSignalServerUrl } from "../../config/signal-server";
 import { getDeviceId } from "../../config/device";
 import { redactForLog } from "../../utils/redact";
-import { DkgState } from "@stars-labs/types/dkg";
 import {
     type PopupToBackgroundMessage,
     type OffscreenToBackgroundMessage,
@@ -99,11 +99,10 @@ function initializeComponents(): void {
 
     // Initialize session manager
     sessionManager = new SessionManager(
-        stateManager.getState(),
+        stateManager,
         wsClient,
         (message) => stateManager.broadcastToPopupPorts(message),
         (message, description) => offscreenManager.sendToOffscreen(message, description),
-        stateManager
     );
 
     // Ext-4: inject SessionManager into RpcHandler so
@@ -402,64 +401,8 @@ function setupMessageHandlers(): void {
  */
 export async function checkAndRestoreKeystores(): Promise<void> {
     console.log("🔑 [Background] Checking for existing keystores...");
-    
     try {
-        const keystoreManager = KeystoreManager.getInstance();
-        
-        // Initialize with device ID
-        await keystoreManager.initialize(stateManager.getState().deviceId);
-        
-        // Check if keystore is initialized
-        if (!await keystoreManager.isInitialized()) {
-            console.log("🔑 [Background] No keystore found");
-            return;
-        }
-        
-        // Check if keystore is locked
-        if (keystoreManager.isLocked()) {
-            console.log("🔑 [Background] Keystore is locked - password required");
-            // The popup will handle password prompt
-            return;
-        }
-        
-        // Get active wallet
-        const activeWallet = keystoreManager.getActiveWallet();
-        if (!activeWallet) {
-            console.log("🔑 [Background] No active wallet found");
-            return;
-        }
-        
-        console.log(`🔑 [Background] Restoring wallet: ${activeWallet.id}`);
-        
-        // Update DKG state to complete
-        stateManager.updateStateProperty('dkgState', DkgState.Complete);
-        
-        // Update session info
-        stateManager.updateStateProperty('sessionInfo', {
-            session_id: activeWallet.session_id,
-            proposer_id: activeWallet.id,
-            participants: [activeWallet.id],
-            accepted_devices: [activeWallet.id],
-            threshold: 1, // Default for imported keystores
-            total: 1,
-        } as any);
-        
-        // Store addresses based on active wallet's blockchain
-        if (activeWallet.blockchain === 'ethereum' && activeWallet.address) {
-            stateManager.updateStateProperty('ethereumAddress', activeWallet.address);
-            chrome.storage.local.set({ 
-                'mpc_ethereum_address': activeWallet.address 
-            });
-        } else if (activeWallet.blockchain === 'solana' && activeWallet.address) {
-            stateManager.updateStateProperty('solanaAddress', activeWallet.address);
-            chrome.storage.local.set({ 
-                'mpc_solana_address': activeWallet.address 
-            });
-        }
-        
-        stateManager.updateStateProperty('dkgAddress', activeWallet.address);
-        
-        console.log(`🔑 [Background] Wallet restored successfully: ${activeWallet.address}`);
+        await restoreActiveWallet(stateManager, KeystoreManager.getInstance());
     } catch (error) {
         console.error("❌ [Background] Error checking keystores:", error);
     }

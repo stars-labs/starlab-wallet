@@ -853,8 +853,8 @@ export class PopupMessageHandler {
      *      group_public_key — UI can't be trusted to send these.
      *   2. For secp256k1, wrap `message` with EIP-191
      *      (`\x19Ethereum Signed Message:\n<len><msg>` → keccak256)
-     *      so the resulting signature is ecrecover-compatible, same
-     *      as TUI's personal_sign path (eth_helper.rs). For ed25519,
+     *      (the digest the TUI's personal_sign path signs too). FROST
+     *      secp256k1 is BIP-340 Schnorr: NOT ecrecover-compatible. For ed25519,
      *      sign the raw UTF-8 bytes.
      *   3. Delegate to sessionManager.createSigningSession which
      *      announces on the wire.
@@ -903,11 +903,8 @@ export class PopupMessageHandler {
                 });
                 return;
             }
-            const groupPublicKey = keyShare.group_public_key;
-            const threshold = keyShare.threshold;
-            const total = keyShare.total_participants;
 
-            // EIP-191 wrap for secp256k1 ⇒ ecrecover-compatible.
+            // EIP-191 digest for secp256k1 (signed as BIP-340 Schnorr).
             // ed25519: raw UTF-8 bytes.
             let messageHex: string;
             if (blockchain === "ethereum") {
@@ -925,10 +922,8 @@ export class PopupMessageHandler {
             const result = await this.sessionManager.createSigningSession({
                 walletId,
                 walletName: (wallet as any).name ?? walletId,
-                groupPublicKey,
                 blockchain,
-                threshold,
-                total,
+                keyShare,
                 signingMessageHex: messageHex,
             });
             sendResponse(result);

@@ -18,7 +18,7 @@ mock.module("../../../src/services/keystoreManager", () => ({
 import { PopupMessageHandler } from "../../../src/entrypoints/background/messageHandlers";
 
 describe("PopupMessageHandler createSigningSession", () => {
-    it("announces with the key share's group key and threshold", async () => {
+    it("announces from the wallet's stored key share", async () => {
         const createSigningSession = jest.fn(async () => ({ success: true, sessionId: "sign_1" }));
         const handler = new PopupMessageHandler(
             { getState: () => ({}) } as any,
@@ -35,7 +35,9 @@ describe("PopupMessageHandler createSigningSession", () => {
 
         expect(response).toEqual({ success: true, sessionId: "sign_1" });
         expect(createSigningSession).toHaveBeenCalledWith(
-            expect.objectContaining({ groupPublicKey: "02ab", threshold: 3, total: 5 }),
+            expect.objectContaining({
+                keyShare: expect.objectContaining({ group_public_key: "02ab", threshold: 3, total_participants: 5 }),
+            }),
         );
     });
 });

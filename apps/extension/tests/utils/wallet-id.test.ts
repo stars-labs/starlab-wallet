@@ -41,8 +41,12 @@ describe("openInvites", () => {
         ]);
     });
 
-    it("keeps signing and reshare sessions for held wallets", () => {
-        const invites = [invite("dkg_b97fd906905aa11", "reshare"), invite("dkg_b97fd906905aa11", "signing")];
-        expect(openInvites(invites, ["db97fd906905"])).toHaveLength(2);
+    it("keeps reshare sessions for held wallets", () => {
+        const invites = [invite("dkg_b97fd906905aa11", "reshare")];
+        expect(openInvites(invites, ["db97fd906905"])).toHaveLength(1);
+    });
+
+    it("never offers a signing session as a wallet invitation", () => {
+        expect(openInvites([invite("sign_83777", "signing")], [])).toEqual([]);
     });
 });

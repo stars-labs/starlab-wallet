@@ -560,7 +560,7 @@ describe("WebRTCManager reshare (real WASM, loopback mesh)", () => {
             };
             mgr.onSigningComplete = (p) => signatures.set(id, p.signature);
             managers.set(id, mgr);
-            expect(await mgr.loadKeystoreForSigning(shares.get(id)!, "ethereum")).toBe(true);
+            expect(await mgr.loadKeystoreForSigning(shares.get(id)!, { chain: "ethereum", account: 0 })).toBe(true);
         }
 
         const messageHex = "11".repeat(32);

@@ -25,6 +25,7 @@ import type { BackgroundToPopupMessage, OffscreenMessage } from "@stars-labs/typ
 import { buildWireSessionInfo } from "../../utils/session-parse";
 import { accountWalletId } from "../../utils/wallet-id";
 import type { StateManager } from "./stateManager";
+import type { KeyShareData } from "@stars-labs/types/keystore";
 
 // Session persistence removed - sessions are ephemeral for security
 
@@ -647,11 +648,9 @@ export class SessionManager {
      *     signing_message_hex filled in top-level per TUI's parser
      *     (command.rs:286 line, signing-sibling fields).
      *
-     * For secp256k1 wallets, the `message` parameter is hashed with
-     * EIP-191 before going on the wire — the signature must be
-     * ecrecover-compatible so dApps can verify it as a standard
-     * personal_sign. For ed25519, raw bytes are signed (Ed25519
-     * signs variable-length input natively).
+     * For secp256k1 wallets the caller passes the EIP-191 digest; FROST
+     * signs it as BIP-340 Schnorr (NOT ecrecover-compatible). For
+     * ed25519, raw bytes are signed.
      *
      * Does NOT actually run FROST rounds — that's the signing
      * auto-trigger (Ext-2d). This commit just announces.
@@ -659,10 +658,10 @@ export class SessionManager {
     async createSigningSession(config: {
         walletId: string;
         walletName: string;
-        groupPublicKey: string;
         blockchain: "ethereum" | "solana";
-        threshold: number;
-        total: number;
+        /** The wallet's stored share: cohort, threshold, and (in the
+         *  offscreen) the account key the announce names. */
+        keyShare: KeyShareData;
         /** Hex-encoded bytes that FROST will sign. Caller is
          *  responsible for EIP-191 wrapping if appropriate. */
         signingMessageHex: string;
@@ -670,14 +669,46 @@ export class SessionManager {
         if (!this.wsClient || this.wsClient.getReadyState() !== WebSocket.OPEN) {
             return { success: false, error: "WebSocket not connected" };
         }
-        if (!config.walletId || !config.groupPublicKey) {
-            return { success: false, error: "walletId and groupPublicKey required" };
+        if (!config.walletId || !config.keyShare) {
+            return { success: false, error: "walletId and keyShare required" };
         }
         if (!/^[0-9a-fA-F]*$/.test(config.signingMessageHex)) {
             return { success: false, error: "signingMessageHex must be hex" };
         }
 
         const currentDeviceId = this.appState.deviceId;
+        // Like the engine proposers: the wallet's whole cohort is listed —
+        // TUI / desktop only offer a signing whose participants include them.
+        const { keyShare } = config;
+        const participants = [
+            ...new Set(
+                keyShare.participants?.length
+                    ? keyShare.participants
+                    : Object.keys(keyShare.participant_identifiers ?? {}),
+            ),
+        ].sort();
+        if (!participants.includes(currentDeviceId)) {
+            return { success: false, error: "This device is not in the wallet's cohort" };
+        }
+        if (participants.length !== keyShare.total_participants) {
+            // A share that doesn't name every co-signer can't be announced:
+            // co-signers not listed would never be asked (and never sign).
+            return {
+                success: false,
+                error: `The wallet's share lists ${participants.length} of its ${keyShare.total_participants} devices (${participants.join(", ")}) — re-import it from a backup that carries the full cohort`,
+            };
+        }
+        // Everyone signs with the account child, so the announce names its
+        // key (as the engine does), not the root key.
+        const account = { chain: config.blockchain, account: 0 };
+        const derived = (await this.sendToOffscreen(
+            { type: "deriveAccountGroupKey", keyShare, ...account } as any,
+            "deriveAccountGroupKey",
+        )) as { success: boolean; groupPublicKey?: string; error?: string };
+        if (!derived?.success || !derived.groupPublicKey) {
+            return { success: false, error: `Deriving the account key failed: ${derived?.error ?? "unknown"}` };
+        }
+
         const sessionId = `sign_${cryptoHex(12)}`;
         const curveType =
             config.blockchain === "ethereum" ? "secp256k1" : "ed25519";
@@ -685,17 +716,17 @@ export class SessionManager {
         const sessionInfo: SessionInfo = {
             session_id: sessionId,
             proposer_id: currentDeviceId,
-            total: config.total,
-            threshold: config.threshold,
-            participants: [currentDeviceId],
+            total: keyShare.total_participants,
+            threshold: keyShare.threshold,
+            participants,
             session_type: "signing",
             curve_type: curveType,
             coordination_type: "Network",
             // Signing-specific top-level siblings — TUI parser reads
             // these at the top level (not nested). `wallet_name` is the
             // account-0 child wallet id — the key everyone signs with.
-            wallet_name: accountWalletId(config.walletId, config.blockchain, 0),
-            group_public_key: config.groupPublicKey,
+            wallet_name: accountWalletId(config.walletId, account.chain, account.account),
+            group_public_key: derived.groupPublicKey,
             blockchain: config.blockchain,
             signing_message_hex: config.signingMessageHex,
             accepted_devices: [currentDeviceId],
@@ -720,7 +751,7 @@ export class SessionManager {
             const wire = buildWireSessionInfo(sessionInfo);
             this.wsClient.announceSession(wire);
             console.log(
-                `[SessionManager] Created signing session ${sessionId} for wallet ${config.walletId} (${config.threshold}/${config.total} ${curveType})`,
+                `[SessionManager] Created signing session ${sessionId} for wallet ${config.walletId} (${sessionInfo.threshold}/${sessionInfo.total} ${curveType}, participants ${participants.join(",")})`,
             );
             this.broadcastToPopup({
                 type: "signingSessionCreated",

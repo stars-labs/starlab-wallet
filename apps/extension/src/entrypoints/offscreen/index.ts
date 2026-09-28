@@ -5,6 +5,8 @@ import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from "@st
 
 // Import WASM modules for FROST DKG
 import wasmInit, { FrostDkgEd25519, FrostDkgSecp256k1, FrostReshareEd25519, FrostReshareSecp256k1, derive_account_addresses } from '@stars-labs/core-wasm';
+import { parseAccountWalletId } from "../../utils/wallet-id";
+import { deriveAccountGroupKey } from "../../utils/accountKey";
 
 console.log("Offscreen script loaded.");
 
@@ -513,48 +515,34 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                 (async () => {
                     // Runs in an IIFE so the sendResponse below returns
                     // eagerly — the keystore load takes hundreds of ms.
-                    // Always load the saved wallet: an instance left over
-                    // from a DKG in this document holds the ROOT key (which
-                    // never signs — signing uses the derived account-0
-                    // child) and none of the wallet's FROST identifiers.
-                    {
-                        console.log(
-                            "[sessionReadyForSigning] loading the active keystore for signing",
-                        );
-                        const loaded = await new Promise<boolean>((resolve) => {
-                            chrome.runtime.sendMessage(
-                                { type: "getActiveKeystore" },
-                                async (resp: any) => {
-                                    if (
-                                        !resp ||
-                                        !resp.success ||
-                                        !resp.keyShare
-                                    ) {
-                                        console.warn(
-                                            "[sessionReadyForSigning] getActiveKeystore failed or empty",
-                                            chrome.runtime.lastError?.message,
-                                            resp?.error,
-                                        );
-                                        resolve(false);
-                                        return;
-                                    }
-                                    try {
-                                        await webRTCManager!.loadKeystoreForSigning(
-                                            resp.keyShare,
-                                            blockchain,
-                                        );
-                                        resolve(true);
-                                    } catch (e) {
-                                        console.error(
-                                            "[sessionReadyForSigning] loadKeystoreForSigning failed:",
-                                            e,
-                                        );
-                                        resolve(false);
-                                    }
-                                },
-                            );
+                    // Sign with the account the session names
+                    // (wallet_name `{root}-{chain}-{account}`), never the
+                    // UI's current chain or the announce's `blockchain`.
+                    const sessionId: string = payload.sessionInfo.session_id;
+                    const fail = (error: string) => {
+                        console.warn(`[sessionReadyForSigning] ${error}`);
+                        sendToBackground({
+                            type: "fromOffscreen",
+                            payload: { type: "signingError", signingId: `sign_${sessionId}`, sessionId, error },
                         });
-                        if (!loaded) return;
+                    };
+                    const target = parseAccountWalletId(payload.sessionInfo.wallet_name ?? "");
+                    if (!target) {
+                        fail(`Session wallet_name "${payload.sessionInfo.wallet_name ?? ""}" doesn't name an account ({wallet}-{chain}-{n})`);
+                        return;
+                    }
+                    const resp: any = await new Promise((resolve) =>
+                        chrome.runtime.sendMessage({ type: "getWalletKeystore", walletId: target.root }, resolve),
+                    );
+                    if (!resp?.success || !resp.keyShare) {
+                        fail(`No key share for wallet ${target.root}: ${resp?.error ?? chrome.runtime.lastError?.message ?? "unknown"}`);
+                        return;
+                    }
+                    try {
+                        await webRTCManager!.loadKeystoreForSigning(resp.keyShare, target);
+                    } catch (e) {
+                        fail(`Loading ${target.chain} account ${target.account} failed: ${(e as Error).message ?? e}`);
+                        return;
                     }
                     const ok = await webRTCManager!.initiateSigningCeremony(
                         payload.sessionInfo,
@@ -794,6 +782,16 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                 sendResponse({ success: false, error: "WebRTCManager not ready or missing blockchain parameter" });
             }
             break;
+
+        case "deriveAccountGroupKey": {
+            // Signing announce: the account child's group key (what engine
+            // proposers announce). Needs this device's share, like signing.
+            const { keyShare, chain, account } = payload as { keyShare: any; chain: string; account: number };
+            deriveAccountGroupKey(keyShare, { chain, account })
+                .then((groupPublicKey) => sendResponse({ success: true, groupPublicKey }))
+                .catch((e) => sendResponse({ success: false, error: (e as Error).message ?? String(e) }));
+            return true;
+        }
 
         case "deriveAccounts": {
             // Account model: PUBLIC-only derivation (no password, no shares).

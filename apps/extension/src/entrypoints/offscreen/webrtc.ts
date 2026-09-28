@@ -35,6 +35,7 @@ import {
   dkgParticipantIdentifiers,
   toEngineKeystoreJson,
 } from "../../utils/engineKeystore";
+import { curveForChain } from "../../utils/wallet-id";
 
 export { DkgState, MeshStatusType }; // Export DkgState and MeshStatusType
 
@@ -172,6 +173,9 @@ export class WebRTCManager {
   private signingShares: Map<string, any> = new Map(); // Map peer to signature share data
   /** Signing frames that arrived before our ceremony / signer set existed. */
   private earlySigningFrames: Array<{ fromPeerId: string; kind: "commitment" | "share" | "set"; hex: string }> = [];
+  /** Commitments / shares of the most recently finished ceremony — peers
+   *  keep resending unacked frames (#117) after it ended. */
+  private finishedCeremonyFrames = new Set<string>();
   /** Signer set announced by the proposer (SIGN_SET), applied once every
    *  member's commitment is here. Non-proposers never pick a set. */
   private announcedSignerSet: string[] | null = null;
@@ -449,6 +453,7 @@ export class WebRTCManager {
     this.signingState = newState;
     // A frame from a finished ceremony must never reach the next one (CLI
     // peers buffer pre-session SIGN_COMMITs).
+    if (newState === SigningState.Complete) this._rememberFinishedFrames();
     if (newState === SigningState.Complete || newState === SigningState.Failed) {
       this.ceremonyOutbox.clear();
       if (this.signingTimer) clearTimeout(this.signingTimer);
@@ -1152,12 +1157,17 @@ export class WebRTCManager {
                 // Signing frames carry no ceremony id — one ceremony runs
                 // at a time, so they belong to the active one.
                 const signing_id = this.signingInfo?.signing_id;
-                if (text.startsWith('SIGN_COMMIT:')) {
-                  const commitment = this._base64ToHex(text.slice('SIGN_COMMIT:'.length));
-                  this._handleSigningCommitment(fromPeerId, { signing_id, commitment });
+                const isCommit = text.startsWith('SIGN_COMMIT:');
+                const hex = this._base64ToHex(text.slice(isCommit ? 'SIGN_COMMIT:'.length : 'SIGN_SHARE:'.length));
+                if (this.finishedCeremonyFrames.has(hex)) {
+                  // A peer resending (#117) a frame of the ceremony that just
+                  // ended. Nonce commitments / shares never repeat, so it
+                  // must not be taken for the next ceremony's.
+                  this._log(`Ignoring a late ${isCommit ? "SIGN_COMMIT" : "SIGN_SHARE"} resend from ${fromPeerId} (previous ceremony)`);
+                } else if (isCommit) {
+                  this._handleSigningCommitment(fromPeerId, { signing_id, commitment: hex });
                 } else {
-                  const share = this._base64ToHex(text.slice('SIGN_SHARE:'.length));
-                  this._handleSignatureShare(fromPeerId, { signing_id, share });
+                  this._handleSignatureShare(fromPeerId, { signing_id, share: hex });
                 }
               }
             }
@@ -2394,11 +2404,16 @@ export class WebRTCManager {
    */
   public async loadKeystoreForSigning(
     keyShareData: KeyShareData,
-    blockchain: "ethereum" | "solana",
+    target: { chain: string; account: number },
   ): Promise<boolean> {
-    this.currentBlockchain = blockchain;
+    const curve = curveForChain(target.chain);
+    if (!curve) throw new Error(`Unsupported signing chain: ${target.chain}`);
+    if (curve !== keyShareData.curve) {
+      throw new Error(`Wallet is ${keyShareData.curve}; ${target.chain} signs with ${curve}`);
+    }
+    this.currentBlockchain = curve === "secp256k1" ? "ethereum" : "solana";
     this._log(
-      `Loading keystore for signing: ${blockchain} / participant ${keyShareData.participant_index} / session ${keyShareData.session_id}`,
+      `Loading keystore for signing: ${target.chain} account ${target.account} / participant ${keyShareData.participant_index} / session ${keyShareData.session_id}`,
     );
     const parentJson = toEngineKeystoreJson(keyShareData);
 
@@ -2410,38 +2425,35 @@ export class WebRTCManager {
       standard_account_path,
     } = await import("@stars-labs/core-wasm");
     const instance =
-      blockchain === "ethereum"
+      curve === "secp256k1"
         ? new FrostDkgSecp256k1()
         : new FrostDkgEd25519();
-    // BIP-44 all the way: the ROOT key never signs. Derive ACCOUNT 0's child
-    // keystore (pinned standard path) and sign with that — deterministic, so
-    // every co-signer derives the same child from its own share and the
-    // ceremony aggregates under the account-0 group key, matching the
-    // account-0 address the popup displays. Per-session account selection
-    // (account N) needs the path carried in the session announce — follow-up.
-    const accountPath = standard_account_path(
-      blockchain === "ethereum" ? "ethereum" : "solana",
-      0,
-    )!;
+    // BIP-44/86 all the way: the ROOT key never signs. Derive the child
+    // keystore the session names (wallet_name `{root}-{chain}-{account}`)
+    // at the chain's pinned path — deterministic, so every co-signer
+    // derives the same child and the ceremony aggregates under that
+    // account's key (bitcoin: the BIP-86-tweaked P2TR output key).
+    const accountPath = standard_account_path(target.chain, target.account);
+    if (!accountPath) throw new Error(`No standard path for ${target.chain}`);
     const childJson =
-      blockchain === "ethereum"
+      curve === "secp256k1"
         ? derive_child_keystore_secp256k1(parentJson, accountPath)
         : derive_child_keystore_ed25519(parentJson, accountPath);
-    this._log(`Signing with account 0 (${accountPath}) — root key never signs`);
+    this._log(`Signing with ${target.chain} account ${target.account} (${accountPath}) — root key never signs`);
     instance.import_keystore(childJson);
 
     this.frostDkg = instance;
     this.participantIndex = keyShareData.participant_index;
     this.walletIdentifiers = { ...keyShareData.participant_identifiers };
     this.groupPublicKey = keyShareData.group_public_key;
-    if (blockchain === "ethereum") {
+    if (target.chain === "ethereum") {
       try {
         this.ethereumAddress = (instance as any).get_eth_address?.() ?? null;
         this.walletAddress = this.ethereumAddress;
       } catch (e) {
         this._log(`Failed to derive ethereum address: ${e}`);
       }
-    } else {
+    } else if (target.chain === "solana") {
       try {
         this.solanaAddress = (instance as any).get_address?.() ?? null;
         this.walletAddress = this.solanaAddress;
@@ -2664,7 +2676,7 @@ export class WebRTCManager {
       // A CLI proposer commits the moment it announces — often before we
       // approved. Keep it for when our ceremony starts.
       this._log(`Buffering early signing commitment from ${fromPeerId}`);
-      this.earlySigningFrames.push({ fromPeerId, kind: "commitment", hex: message.commitment });
+      this._bufferSigningFrame({ fromPeerId, kind: "commitment", hex: message.commitment });
       return;
     }
     if (this.signingInfo.signing_id !== message.signing_id) {
@@ -2718,7 +2730,7 @@ export class WebRTCManager {
     const info = this.signingInfo;
     if (!info || !this._signingActive()) {
       this._log(`Buffering early signer set from ${fromPeerId}`);
-      this.earlySigningFrames.push({ fromPeerId, kind: "set", hex: text });
+      this._bufferSigningFrame({ fromPeerId, kind: "set", hex: text });
       return;
     }
     if (fromPeerId !== info.initiator) {
@@ -2790,6 +2802,23 @@ export class WebRTCManager {
     this._replayEarlySigningFrames();
   }
 
+  /**
+   * Keep a frame for the next ceremony. CLI frames carry no ceremony id and
+   * peers resend unacked frames (#117), so a late resend from a finished
+   * ceremony can land here before the peer's frame for the next one: keep
+   * only each peer's LATEST frame of each kind.
+   */
+  private _rememberFinishedFrames(): void {
+    this.finishedCeremonyFrames = new Set([...this.signingCommitments.values(), ...this.signingShares.values()]);
+  }
+
+  private _bufferSigningFrame(frame: { fromPeerId: string; kind: "commitment" | "share" | "set"; hex: string }): void {
+    this.earlySigningFrames = this.earlySigningFrames.filter(
+      (f) => !(f.fromPeerId === frame.fromPeerId && f.kind === frame.kind),
+    );
+    this.earlySigningFrames.push(frame);
+  }
+
   /** Why a signing timed out: whose commitment or share never came. */
   private _timeoutReason(): string {
     const info = this.signingInfo!;
@@ -2809,6 +2838,7 @@ export class WebRTCManager {
   private _failSigning(reason: string): void {
     const info = this.signingInfo;
     this._log(`Signing failed: ${reason}`);
+    this._rememberFinishedFrames();
     try {
       this.frostDkg?.clear_signing_state();
     } catch (e) {
@@ -2866,7 +2896,7 @@ export class WebRTCManager {
     if (!info || !this._signingActive() || (!this.signerSetFixed && message.signing_id === info.signing_id)) {
       // Before our ceremony / signer set exists — replayed once it does.
       this._log(`Buffering early signature share from ${fromPeerId}`);
-      this.earlySigningFrames.push({ fromPeerId, kind: "share", hex: message.share });
+      this._bufferSigningFrame({ fromPeerId, kind: "share", hex: message.share });
       return;
     }
     if (info.signing_id !== message.signing_id) {

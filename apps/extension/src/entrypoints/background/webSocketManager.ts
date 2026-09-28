@@ -479,6 +479,13 @@ export class WebSocketManager {
             return;
         }
 
+        if (
+            parsed.session_type === "signing" &&
+            this.stateManager?.isFinishedSigning?.(parsed.session_id, parsed.signing_message_hex)
+        ) {
+            return; // A signing that already completed / failed here.
+        }
+
         // Merge-update into invites: replace if we already have this
         // session_id (e.g. status_update), else append. Read the
         // StateManager's invites — our constructor copy goes stale.
@@ -567,7 +574,13 @@ export class WebSocketManager {
         if ((current.sessionInfo?.session_type ?? "dkg") !== sessionType) {
             return;
         }
-        const triggerKey = `${sessionType}:${session.session_id}`;
+        // A signing session id can be re-announced with a new message: that
+        // is a new request, which starts only once the user joined IT.
+        const message = session.signing_message_hex ?? "";
+        if (sessionType === "signing" && (current.sessionInfo?.signing_message_hex ?? "") !== message) {
+            return;
+        }
+        const triggerKey = `${sessionType}:${session.session_id}:${message}`;
         if (this.ceremonyTriggerFiredFor === triggerKey) {
             return; // Already fired for this ceremony.
         }

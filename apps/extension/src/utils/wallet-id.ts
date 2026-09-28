@@ -22,17 +22,50 @@ export function accountWalletId(parentId: string, chain: string, account: number
 }
 
 /**
- * Invitations still worth offering: a finished DKG stays on the signal
- * server (and is replayed on reconnect), so drop DKG sessions whose wallet
- * this device already holds. Signing / reshare sessions for held wallets
- * are exactly the ones to show.
+ * Wallet invitations worth offering (DKG to create a wallet, reshare of a
+ * held one). A finished DKG stays on the signal server (and is replayed on
+ * reconnect), so drop DKG sessions whose wallet this device already holds.
+ * Signing requests are not wallet invitations — they have their own
+ * review modal.
  */
 export function openInvites<T extends { session_id: string; session_type?: string }>(
     invites: T[],
     heldWalletIds: string[],
 ): T[] {
     const held = new Set(heldWalletIds);
-    return invites.filter(
-        (inv) => (inv.session_type ?? "dkg") !== "dkg" || !held.has(walletIdFromSession(inv.session_id)),
-    );
+    return invites.filter((inv) => {
+        const type = inv.session_type ?? "dkg";
+        if (type === "signing") return false;
+        return type !== "dkg" || !held.has(walletIdFromSession(inv.session_id));
+    });
+}
+
+const CHAIN_CURVES: Record<string, "secp256k1" | "ed25519"> = {
+    ethereum: "secp256k1",
+    eth: "secp256k1",
+    bitcoin: "secp256k1",
+    btc: "secp256k1",
+    solana: "ed25519",
+    sol: "ed25519",
+    sui: "ed25519",
+};
+
+/** FROST curve that signs for `chain` (starlab-mpc `curve_for_chain`). */
+export function curveForChain(chain: string): "secp256k1" | "ed25519" | null {
+    return CHAIN_CURVES[chain.toLowerCase()] ?? null;
+}
+
+/**
+ * Inverse of `accountWalletId` — starlab-mpc `parse_child_wallet_id`:
+ * `{root}-{chain}-{account}` with a known chain and an all-digit account.
+ * Returns null for root ids and anything else.
+ */
+export function parseAccountWalletId(
+    id: string,
+): { root: string; chain: string; account: number } | null {
+    const m = /^(.+)-([^-]+)-(\d+)$/.exec(id);
+    if (!m || !curveForChain(m[2])) return null;
+    const account = Number(m[3]);
+    if (!Number.isSafeInteger(account) || account > 0xffffffff) return null;
+    return { root: m[1], chain: m[2].toLowerCase(), account };
 }

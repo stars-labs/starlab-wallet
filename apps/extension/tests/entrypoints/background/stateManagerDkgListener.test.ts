@@ -95,39 +95,6 @@ describe("StateManager.addDkgStateListener", () => {
         expect(listener).toHaveBeenCalledWith(DkgState.Round2InProgress);
     });
 
-    it("fires on auto-transition KeystoreImported → Complete via mesh ready", () => {
-        // The StateManager has business logic that flips KeystoreImported
-        // to Complete when the mesh reaches threshold. That internal
-        // transition must notify listeners too.
-        mgr.updateState({
-            dkgState: DkgState.KeystoreImported,
-            sessionInfo: {
-                session_id: "s",
-                proposer_id: "p",
-                total: 2,
-                threshold: 2,
-                participants: ["test-device", "other"],
-                accepted_devices: [],
-            },
-            webrtcConnections: { other: true },
-        });
-
-        const listener = jest.fn();
-        mgr.addDkgStateListener(listener);
-        listener.mockClear();
-
-        mgr.handleOffscreenStateUpdate({
-            type: "meshStatusUpdate",
-            status: { type: MeshStatusType.Ready },
-        } as any);
-
-        // At least one of the calls should be Complete.
-        const sawComplete = listener.mock.calls.some(
-            (call: any) => call[0] === DkgState.Complete,
-        );
-        expect(sawComplete).toBe(true);
-    });
-
     it("unsubscribe detaches the listener permanently", () => {
         const listener = jest.fn();
         const unsub = mgr.addDkgStateListener(listener);

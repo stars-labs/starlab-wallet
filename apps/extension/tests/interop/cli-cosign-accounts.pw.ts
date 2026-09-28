@@ -1,8 +1,7 @@
 // L3c interop: a CLI PROPOSES signings for an HD account; the extension
 // co-signs. 2-of-3 runs two consecutive signings (the second exercises the
 // CLI's frame resends from the first; the auto-joining `serve` peer used for
-// 3-of-3 handles one signing per session), and 3-of-3 (INTEROP_THRESHOLDS=2,3)
-// one, for the
+// 3-of-3 handles one signing per session), and 3-of-3 one, for the
 // ethereum-0 and bitcoin-0 accounts. The CLI (Rust engine) aggregates and
 // rejects an invalid extension share; bitcoin signatures are also checked as
 // BIP-340 against the wallet's bc1p address.
@@ -17,9 +16,7 @@ import type { Page } from "@playwright/test";
 test.describe.configure({ timeout: 300_000 });
 // secp256k1 accounts only (ethereum / bitcoin): runs in the secp256k1 job.
 test.skip(CURVE !== "secp256k1", "secp256k1 accounts");
-// 3-of-3 needs the joiner to use the session's threshold (#72); until that
-// lands a 3-of-3 CLI-created DKG with the extension fails before signing.
-const THRESHOLDS = (process.env.INTEROP_THRESHOLDS ?? "2").split(",").map(Number);
+const THRESHOLDS = [2, 3];
 
 const walletIdOf = (out: string) => /Wallet ID:\s+(\S+)/.exec(out)?.[1];
 

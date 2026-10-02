@@ -297,6 +297,14 @@
     }
 
     // Productized labels for the active blockchain/curve.
+    /** Safe-prime pre-generation for the next wallet's Ethereum key: real
+     *  progress (primes finished of the set), never a guess. */
+    function ecdsaPrimesLabel(p: AppState["ecdsaPrimes"]): string {
+        if (!p || p.state === "idle") return "Preparing secure signing";
+        if (p.state === "ready") return "Secure signing ready";
+        return `Preparing secure signing (${Math.round((100 * p.done) / p.total)}%)`;
+    }
+
     function chainLabel(chain: string | undefined): string {
         return getChainLabel(chain);
     }
@@ -2124,6 +2132,12 @@
              flip back to the main view; the session_available
              broadcast will populate appState.sessionInfo and the
              existing wallet-status banner will reflect the new state. -->
+        {#if appState.ecdsaPrimes && appState.ecdsaPrimes.state !== "ready"}
+            <p class="mb-2 text-xs text-faint" data-testid="ecdsa-primes-status">
+                {ecdsaPrimesLabel(appState.ecdsaPrimes)} — runs in the background; an Ethereum
+                wallet waits for it.
+            </p>
+        {/if}
         <CreateWalletForm
             deviceId={appState.deviceId}
             wsConnected={appState.wsConnected}
@@ -2227,6 +2241,7 @@
                         </span>
                         <AccountPicker
                             groupPublicKey={appState.dkgGroupPublicKey || ""}
+                            ecdsaGroupPublicKey={appState.ecdsaGroupPublicKey || ""}
                             curve={appState.curve ??
                                 getRequiredCurve(isSupportedChain(appState.chain) ? appState.chain : "ethereum")}
                             chain={isSupportedChain(appState.chain) ? appState.chain : "ethereum"}
@@ -3179,9 +3194,17 @@
                 </div>
             {:else if appState.dkgState === DkgState.Initializing || appState.dkgState === DkgState.Round1InProgress || appState.dkgState === DkgState.Round1Complete || appState.dkgState === DkgState.Round2InProgress || appState.dkgState === DkgState.Round2Complete || appState.dkgState === DkgState.Finalizing}
                 <div class="mt-3 border-t border-line pt-3">
-                    <div class="alert alert-info">
-                        Generating keys — please keep the popup open until it
-                        completes.
+                    <div class="alert alert-info" data-testid="dkg-progress">
+                        {#if appState.dkgState === DkgState.Finalizing && appState.ecdsaDkgStatus === "waiting-primes"}
+                            {ecdsaPrimesLabel(appState.ecdsaPrimes)} — the Ethereum key is created as soon as it is done.
+                        {:else if appState.dkgState === DkgState.Finalizing && appState.ecdsaDkgStatus === "aux-info"}
+                            Creating the Ethereum key (step 1 of 2, takes a few minutes)…
+                        {:else if appState.dkgState === DkgState.Finalizing && appState.ecdsaDkgStatus === "keygen"}
+                            Creating the Ethereum key (step 2 of 2)…
+                        {:else}
+                            Generating keys — please keep the popup open until it
+                            completes.
+                        {/if}
                     </div>
                 </div>
             {/if}

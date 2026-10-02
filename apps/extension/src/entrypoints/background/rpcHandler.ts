@@ -14,6 +14,7 @@ import WalletClientService from '../../services/walletClient';
 import WalletController from "../../services/walletController";
 import { getPermissionService } from '../../services/permissionService';
 import { toHex } from 'viem';
+import { completeEvmTransaction } from '../../services/txBroadcast';
 import type { JsonRpcRequest } from "@stars-labs/types/messages";
 import { checkOrigin } from '../../services/phishingService';
 import type { SessionManager } from './sessionManager';
@@ -528,64 +529,77 @@ export class RpcHandler {
             return await this.broadcastAndRecord(signed as `0x${string}`, transaction, fromAddr!);
         }
 
-        // Generate a unique transaction signing ID
-        const signingId = `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        // Serialize transaction for MPC signing
-        const transactionData = JSON.stringify({
-            to: transaction.to,
-            value: transaction.value || '0x0',
-            data: transaction.data || '0x',
-            nonce: transaction.nonce,
-            gasLimit: transaction.gas || transaction.gasLimit,
-            gasPrice: transaction.gasPrice,
-            maxFeePerGas: transaction.maxFeePerGas,
-            maxPriorityFeePerGas: transaction.maxPriorityFeePerGas,
-            chainId: await this.handleChainIdRequest()
+        // MPC wallet: the threshold-ECDSA key signs the EIP-1559 / legacy
+        // sighash (the same READY/SET/DONE ceremony as personal_sign), then
+        // the signed tx is assembled and broadcast here.
+        if (!fromAddr) throw new Error('No account selected');
+        const wallet = await this.findEvmWallet(fromAddr);
+        if (!wallet) {
+            throw new Error(`No wallet found for address ${fromAddr}. Unlock the wallet that owns it.`);
+        }
+        const network = this.networkService.getCurrentNetwork();
+        const tx = await completeEvmTransaction(transaction, {
+            chainId: network?.id ?? 1,
+            from: fromAddr as `0x${string}`,
+            client: this.networkService.getPublicClient(network) as any,
         });
+        const { serializeTransaction, keccak256 } = await import('viem');
+        const sighash = keccak256(serializeTransaction(tx));
+        const { decodeEvmTransaction } = await import('../../services/txDecoder');
+        const decoded = decodeEvmTransaction(transaction) as { summary?: string } | undefined;
+        const ctx = {
+            walletId: (wallet as any).id,
+            walletName: (wallet as any).name ?? (wallet as any).id,
+            blockchain: 'ethereum' as const,
+            messageHex: this.stripHex(sighash),
+            originalMessage: sighash,
+            address: fromAddr,
+            displayMessage: `Transaction: ${decoded?.summary ?? `send to ${transaction.to}`}`,
+        };
+        // A dApp's request waits for the user's approval in the popup; the
+        // popup's own Send already was that approval.
+        const sigHex = this.origin
+            ? await this.enqueueDappSignature(ctx)
+            : await this.signNow(ctx);
+        const { assembleSignedEvmTx } = await import('../../services/txBroadcast');
+        const { signatureParts } = await import('../../ecdsa/signature');
+        const signed = assembleSignedEvmTx(tx, signatureParts(sigHex));
+        return await this.broadcastAndRecord(signed, transaction, fromAddr);
+    }
 
-        // Create a promise that will resolve when we get the signed transaction
-        const signaturePromise = new Promise<string>((resolve, reject) => {
-            if (!this.pendingSignatures) {
-                this.pendingSignatures = new Map();
-            }
-            this.pendingSignatures.set(signingId, { resolve, reject });
+    /** The keystore EVM wallet whose (ECDSA) address is `address`. */
+    private async findEvmWallet(address: string): Promise<unknown | undefined> {
+        const { KeystoreManager } = await import('../../services/keystoreManager');
+        const norm = address.toLowerCase();
+        return KeystoreManager.getInstance()
+            .getWallets()
+            .find((w: any) => w.blockchain !== 'solana' && typeof w.address === 'string' && w.address.toLowerCase() === norm);
+    }
 
-            // Set a timeout
+    /** Start the threshold signing right away (an internal, already-approved
+     * request) and wait for its signature. */
+    private async signNow(ctx: {
+        walletId: string;
+        walletName: string;
+        blockchain: 'ethereum' | 'solana';
+        messageHex: string;
+    }): Promise<string> {
+        if (!this.sessionManager) throw new Error('SessionManager not initialized');
+        const { KeystoreManager } = await import('../../services/keystoreManager');
+        const keyShare = await KeystoreManager.getInstance().getKeyShare(ctx.walletId);
+        if (!keyShare) throw new Error('Unlock the wallet to sign');
+        const result = await this.sessionManager.createSigningSession({ ...ctx, keyShare, signingMessageHex: ctx.messageHex });
+        if (!result.success || !result.sessionId) throw new Error(result.error ?? 'Failed to create signing session');
+        const sessionId = result.sessionId;
+        return new Promise<string>((resolve, reject) => {
+            this.pendingSignatures.set(sessionId, { resolve, reject });
             setTimeout(() => {
-                if (this.pendingSignatures?.has(signingId)) {
-                    this.pendingSignatures.delete(signingId);
+                if (this.pendingSignatures.has(sessionId)) {
+                    this.pendingSignatures.delete(sessionId);
                     reject(new Error('Transaction signing timed out'));
                 }
-            }, 300000); // 5 minute timeout
+            }, 300_000);
         });
-
-        // Send transaction signing request to offscreen document
-        chrome.runtime.sendMessage({
-            type: 'fromBackground',
-            payload: {
-                type: 'requestTransactionSignature',
-                signingId,
-                transactionData,
-                fromAddress: transaction.from || (this.accountService.getCurrentAccount()?.address)
-            }
-        });
-
-        // Also notify popup if open for user approval. Attach the decoded
-        // plain-language summary + warnings (#33) so the popup never has to
-        // ask for a blind signature on raw calldata.
-        const { decodeEvmTransaction } = await import('../../services/txDecoder');
-        const decodedTx = decodeEvmTransaction(transaction);
-        chrome.runtime.sendMessage({
-            type: 'transactionRequest',
-            signingId,
-            transaction,
-            decoded: decodedTx,
-            origin: this.origin || 'Unknown',
-            fromAddress: transaction.from || (this.accountService.getCurrentAccount()?.address)
-        });
-
-        return signaturePromise;
     }
 
     /**

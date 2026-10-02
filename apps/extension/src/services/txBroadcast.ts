@@ -43,6 +43,61 @@ export function assembleSignedEvmTx(
   return serializeTransaction(tx, { r, s, yParity: sig.recovery });
 }
 
+/** The RPC reads `completeEvmTransaction` needs (a viem public client fits). */
+export interface EvmTxClient {
+  getTransactionCount(args: { address: `0x${string}`; blockTag: "pending" }): Promise<number>;
+  estimateGas(args: { account: `0x${string}`; to: `0x${string}`; value: bigint; data: `0x${string}` }): Promise<bigint>;
+  estimateFeesPerGas(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }>;
+}
+
+const big = (v: unknown): bigint | undefined =>
+  v === undefined || v === null || v === "" ? undefined : BigInt(v as string | number | bigint);
+
+/**
+ * Turn an `eth_sendTransaction` parameter object into the exact transaction
+ * the wallet signs: EIP-1559 unless the caller pinned a legacy `gasPrice`,
+ * with the nonce (pending), gas (estimate + 20%) and fees filled from the
+ * network where the caller left them out.
+ */
+export async function completeEvmTransaction(
+  tx: {
+    to: string;
+    value?: unknown;
+    data?: string;
+    nonce?: unknown;
+    gas?: unknown;
+    gasLimit?: unknown;
+    gasPrice?: unknown;
+    maxFeePerGas?: unknown;
+    maxPriorityFeePerGas?: unknown;
+  },
+  ctx: { chainId: number; from: `0x${string}`; client: EvmTxClient },
+): Promise<TransactionSerializable> {
+  const to = tx.to as `0x${string}`;
+  const value = big(tx.value) ?? 0n;
+  const data = (tx.data && tx.data !== "" ? tx.data : "0x") as `0x${string}`;
+  const nonce =
+    tx.nonce !== undefined && tx.nonce !== null
+      ? Number(tx.nonce)
+      : await ctx.client.getTransactionCount({ address: ctx.from, blockTag: "pending" });
+  const gas =
+    big(tx.gas) ??
+    big(tx.gasLimit) ??
+    ((await ctx.client.estimateGas({ account: ctx.from, to, value, data })) * 12n) / 10n;
+  const gasPrice = big(tx.gasPrice);
+  if (gasPrice !== undefined && tx.maxFeePerGas === undefined) {
+    return { type: "legacy", chainId: ctx.chainId, nonce, to, value, data, gas, gasPrice };
+  }
+  let maxFeePerGas = big(tx.maxFeePerGas);
+  let maxPriorityFeePerGas = big(tx.maxPriorityFeePerGas);
+  if (maxFeePerGas === undefined || maxPriorityFeePerGas === undefined) {
+    const fees = await ctx.client.estimateFeesPerGas();
+    maxFeePerGas ??= fees.maxFeePerGas;
+    maxPriorityFeePerGas ??= fees.maxPriorityFeePerGas;
+  }
+  return { type: "eip1559", chainId: ctx.chainId, nonce, to, value, data, gas, maxFeePerGas, maxPriorityFeePerGas };
+}
+
 /**
  * Broadcast a raw signed tx via JSON-RPC. Returns the tx hash. Throws the
  * node's error (e.g. nonce too low, insufficient funds) so the caller can show it.

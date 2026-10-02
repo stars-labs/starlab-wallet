@@ -16,6 +16,8 @@
     } from "@stars-labs/types/appstate";
 
     export let groupPublicKey: string;
+    /** secp256k1 wallets: root key of the threshold-ECDSA (Ethereum) key. */
+    export let ecdsaGroupPublicKey: string = "";
     export let curve: string; // "secp256k1" | "ed25519" | "unified"
     export let chain: SupportedChain = "ethereum";
     /** Currently selected account index (account 0 = default identity). */
@@ -68,10 +70,26 @@
                 groupPublicKey,
                 count,
             });
+            // A secp256k1 wallet's Ethereum accounts come from its
+            // threshold-ECDSA key (the FROST key covers Bitcoin).
+            const ecdsa =
+                curveKey === "secp256k1" && ecdsaGroupPublicKey
+                    ? await chrome.runtime.sendMessage({
+                          type: "deriveAccounts",
+                          curve: "secp256k1-ecdsa",
+                          groupPublicKey: ecdsaGroupPublicKey,
+                          count,
+                      })
+                    : null;
             if (res?.success) {
                 accounts = res.accounts.map((account: Account) => ({
                     ...account,
-                    addresses: normalizeAddresses(account.addresses ?? []),
+                    addresses: normalizeAddresses([
+                        ...(ecdsa?.success
+                            ? (ecdsa.accounts.find((a: Account) => a.account === account.account)?.addresses ?? [])
+                            : []),
+                        ...(account.addresses ?? []),
+                    ]),
                 }));
                 // First load: push account 0's addresses up so the hero shows
                 // the BIP-44 identity immediately (root is never displayed).
@@ -99,7 +117,7 @@
     }
 
     onMount(load);
-    $: if (groupPublicKey) load();
+    $: if (groupPublicKey || ecdsaGroupPublicKey) load();
 </script>
 
 <div class="acct-picker">

@@ -4,8 +4,11 @@ import type { WebRTCAppMessage } from "@stars-labs/types/webrtc";
 import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from "@stars-labs/types/websocket";
 
 // Import WASM modules for FROST DKG
-import wasmInit, { FrostDkgEd25519, FrostDkgSecp256k1, FrostReshareEd25519, FrostReshareSecp256k1, derive_account_addresses } from '@stars-labs/core-wasm';
-import { parseAccountWalletId } from "../../utils/wallet-id";
+import wasmInit, { FrostDkgEd25519, FrostDkgSecp256k1, FrostReshareEd25519, FrostReshareSecp256k1, derive_account_addresses, ecdsa_primes_from_parts } from "@stars-labs/core-wasm";
+import { PrimePool } from "../../ecdsa/primePool";
+import { spawnEcdsaWorker } from "../../ecdsa/spawn";
+import { redactForLog } from "../../utils/redact";
+import { parseAccountWalletId, isEcdsaChain, ECDSA_CURVE } from "../../utils/wallet-id";
 import { deriveAccountGroupKey } from "../../utils/accountKey";
 
 console.log("Offscreen script loaded.");
@@ -75,14 +78,37 @@ let webrtcConnections: Record<string, boolean> = {};
 
 // Function to send messages to the background script
 function sendToBackground(message: { type: string; payload: unknown }) {
-    console.log("Offscreen: Sending message to background:", message);
+    // Key material rides some of these (DKG results, ECDSA shares, primes):
+    // log a redacted copy only.
+    const loggable = redactForLog(message);
+    console.log("Offscreen: Sending message to background:", loggable);
     chrome.runtime.sendMessage(message, (response) => {
         if (chrome.runtime.lastError) {
-            console.error("Offscreen: Error sending message to background or receiving ack:", chrome.runtime.lastError.message, "Original message:", message);
+            console.error("Offscreen: Error sending message to background or receiving ack:", chrome.runtime.lastError.message, "Original message:", loggable);
         } else {
-            console.log("Offscreen: Message to background acknowledged:", response, "Original message:", message);
+            console.log("Offscreen: Message to background acknowledged:", response, "Original message:", loggable);
         }
     });
+}
+
+// Paillier safe primes for the next wallet's ECDSA key, generated in
+// parallel Web Workers; the background keeps a finished set encrypted
+// with the keystore password (background/ecdsaPrimes.ts) and loads it back.
+const primePool = new PrimePool({
+    spawnWorker: spawnEcdsaWorker,
+    join: (parts) => ecdsa_primes_from_parts(`[${parts.join(",")}]`),
+    onProgress: (progress) =>
+        sendToBackground({ type: "fromOffscreen", payload: { type: "ecdsaPrimesProgress", progress } }),
+    onReady: (primesJson) =>
+        sendToBackground({ type: "fromOffscreen", payload: { type: "ecdsaPrimesReady", primesJson } }),
+    log: (m) => console.log(`[Offscreen ECDSA] ${m}`),
+});
+
+/** Primes for a DKG; the background forgets the set (never reused). */
+async function takeEcdsaPrimes(): Promise<string> {
+    const primes = await primePool.take();
+    sendToBackground({ type: "fromOffscreen", payload: { type: "ecdsaPrimesConsumed" } });
+    return primes;
 }
 
 // Listen for messages from the background script
@@ -120,6 +146,26 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
             console.log("Offscreen: Received 'createOffscreen' command. Document is already active.", payload);
             sendResponse({ success: true, message: "Offscreen document is already active." });
             break;
+        // ECDSA safe primes (driven by background/ecdsaPrimes.ts).
+        case "ecdsaPrimesEnsure":
+            primePool.ensure();
+            sendResponse({ success: true, progress: primePool.progress() });
+            break;
+        case "ecdsaPrimesLoad":
+            primePool.load(payload.primesJson);
+            sendResponse({ success: true });
+            break;
+        case "ecdsaPrimesInsecureTest":
+            // INSECURE test builds only (WXT_INSECURE_TEST_PRIMES=1): a
+            // production build compiles this branch to a refusal.
+            if (import.meta.env.WXT_INSECURE_TEST_PRIMES === "1") {
+                primePool.setInsecureTestPrimes(payload.primesJson);
+                sendResponse({ success: true });
+            } else {
+                sendResponse({ success: false, error: "not a test build" });
+            }
+            break;
+
         case "keepalive":
             // Architectural reminder #2: background sends these every
             // 25s while a ceremony is in progress to stop Chrome from
@@ -234,9 +280,13 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                 // appState to find out without needing to replay the
                 // state-transition timeline. Propagated through
                 // StateManager → popup via `dkgCompleted` broadcast.
+                // Threshold ECDSA (Ethereum key) after a secp256k1 FROST DKG.
+                webRTCManager.getEcdsaPrimes = takeEcdsaPrimes;
+                webRTCManager.onEcdsaDkgStatus = (status) => {
+                    sendToBackground({ type: "fromOffscreen", payload: { type: "ecdsaDkgStatus", status } });
+                };
                 webRTCManager.onDkgComplete = (payload) => {
-                    const { keystoreJson: _secret, ...loggable } = payload as any;
-                    console.log("Offscreen: DKG complete:", loggable);
+                    console.log("Offscreen: DKG complete:", redactForLog(payload));
                     sendToBackground({
                         type: "fromOffscreen",
                         payload: { type: "dkgComplete", ...payload },
@@ -531,11 +581,26 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                         fail(`Session wallet_name "${payload.sessionInfo.wallet_name ?? ""}" doesn't name an account ({wallet}-{chain}-{n})`);
                         return;
                     }
+                    const ecdsa = isEcdsaChain(target.chain);
                     const resp: any = await new Promise((resolve) =>
-                        chrome.runtime.sendMessage({ type: "getWalletKeystore", walletId: target.root }, resolve),
+                        chrome.runtime.sendMessage(
+                            { type: "getWalletKeystore", walletId: target.root, ...(ecdsa ? { curve: ECDSA_CURVE } : {}) },
+                            resolve,
+                        ),
                     );
-                    if (!resp?.success || !resp.keyShare) {
+                    if (!resp?.success || !resp.keyShare || (ecdsa && !resp.ecdsaShare)) {
                         fail(`No key share for wallet ${target.root}: ${resp?.error ?? chrome.runtime.lastError?.message ?? "unknown"}`);
+                        return;
+                    }
+                    if (ecdsa) {
+                        // Ethereum: the threshold-ECDSA protocol (READY/SET/DONE).
+                        const ok = webRTCManager!.initiateEcdsaSigning(
+                            payload.sessionInfo,
+                            signingMessageHex,
+                            resp.ecdsaShare,
+                            target.account,
+                        );
+                        console.log(`[sessionReadyForSigning] initiateEcdsaSigning → ${ok}`);
                         return;
                     }
                     try {

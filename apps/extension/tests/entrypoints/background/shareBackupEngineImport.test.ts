@@ -86,12 +86,12 @@ describe("engine share file → extension (openShareBackup)", () => {
         it(`${curve}: the share loads into the engine and derives the engine's account 0`, async () => {
             const { file, expected } = fixture(curve);
             const { keyShare } = await openShareBackup(file, expected.password);
-            const chain = curve === "secp256k1" ? "ethereum" : "solana";
+            const chain = curve === "secp256k1" ? "bitcoin" : "solana";
             const derive = curve === "secp256k1" ? derive_child_keystore_secp256k1 : derive_child_keystore_ed25519;
             const inst = curve === "secp256k1" ? new FrostDkgSecp256k1() : new FrostDkgEd25519();
             try {
                 inst.import_keystore(derive(toEngineKeystoreJson(keyShare), standard_account_path(chain, 0)!));
-                const address = curve === "secp256k1" ? (inst as FrostDkgSecp256k1).get_eth_address() : inst.get_address();
+                const address = inst.get_address();
                 const engineAccount0 = expected.account0.find((a: string[]) => a[1] === standard_account_path(chain, 0));
                 expect(address.toLowerCase()).toBe(engineAccount0[2].toLowerCase());
             } finally {

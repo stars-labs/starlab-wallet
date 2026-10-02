@@ -44,7 +44,9 @@ jobs:
           if git ls-remote --exit-code --heads https://github.com/stars-labs/starlab-mpc "$branch" >/dev/null; then
             echo "ref=$branch" >> "$GITHUB_OUTPUT"
           else
-            echo "ref=main" >> "$GITHUB_OUTPUT"
+            # Threshold ECDSA (Stage 4): the engine side lives on
+            # feat/ecdsa-cggmp24 until both land together; back to main then.
+            echo "ref=feat/ecdsa-cggmp24" >> "$GITHUB_OUTPUT"
           fi
       - uses: actions/checkout@v4
         with:

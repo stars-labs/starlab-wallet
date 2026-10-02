@@ -1009,11 +1009,11 @@ describe('WebRTCManager DKG Process', () => {
             (managerC as any).groupPublicKey = groupPublicKeyC;
 
             // Get Ethereum addresses from group public keys (secp256k1 uses Ethereum)
-            const ethAddressA = frostDkgA!.get_eth_address(); // Corrected: was get_address
+            const ethAddressA = frostDkgA!.get_address(); // BIP-86 Taproot address (FROST secp256k1 is BIP-340)
             (managerA as any).ethAddress = ethAddressA; // Store on manager for consistency
-            const ethAddressB = frostDkgB!.get_eth_address(); // Corrected: was get_address
+            const ethAddressB = frostDkgB!.get_address(); // BIP-86 Taproot address (FROST secp256k1 is BIP-340)
             (managerB as any).ethAddress = ethAddressB;
-            const ethAddressC = frostDkgC!.get_eth_address(); // Corrected: was get_address
+            const ethAddressC = frostDkgC!.get_address(); // BIP-86 Taproot address (FROST secp256k1 is BIP-340)
             (managerC as any).ethAddress = ethAddressC;
 
             (managerA as any)._updateDkgState(DkgState.Complete);
@@ -1033,9 +1033,8 @@ describe('WebRTCManager DKG Process', () => {
             expect(ethAddressA).toBe(ethAddressB);
             expect(ethAddressB).toBe(ethAddressC);
 
-            // Verify Ethereum address format (hex encoded with 0x prefix)
-            expect(ethAddressA).toMatch(/^0x[a-fA-F0-9]{40}$/);
-            expect(ethAddressA.length).toBe(42);
+            // The Ethereum address comes from the wallet's threshold-ECDSA
+            // key (tests/ecdsa), not from this FROST (BIP-340) key.
 
             console.log('\\\\n=== CRYPTOGRAPHIC PROPERTIES VERIFIED ===');
             console.log('✅ All participants generated identical group public keys');

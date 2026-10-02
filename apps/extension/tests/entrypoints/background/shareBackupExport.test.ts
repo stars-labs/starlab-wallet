@@ -56,7 +56,7 @@ function runDkg() {
         parts.forEach((p) => p.finalize_dkg());
         const bob = parts[1];
         groupKey = bob.get_group_public_key();
-        ethAddress = bob.get_eth_address();
+        ethAddress = bob.get_address();
         return {
             ...keyShareCoreFromEngine(bob.export_keystore(), groupKey, COHORT),
             session_id: "dkg_abc",
@@ -165,7 +165,7 @@ describe("exportKeystore after a restore", () => {
         try {
             fresh.import_keystore(toEngineKeystoreJson(keyShare));
             expect(fresh.get_group_public_key()).toBe(groupKey);
-            expect(fresh.get_eth_address()).toBe(ethAddress);
+            expect(fresh.get_address()).toBe(ethAddress);
         } finally {
             fresh.free();
         }

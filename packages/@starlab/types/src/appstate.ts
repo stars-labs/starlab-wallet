@@ -308,6 +308,16 @@ export interface AppState {
   dkgError?: string;
   /** FROST group public key hex. */
   dkgGroupPublicKey?: string;
+  /** Root group key (SEC1 hex) of the wallet's threshold-ECDSA key — the
+   *  Ethereum accounts derive from it (secp256k1 wallets only). */
+  ecdsaGroupPublicKey?: string;
+  /** Background generation of this device's Paillier safe primes (needed
+   *  by the next wallet's ECDSA key): `done` of `total` primes finished. */
+  ecdsaPrimes?: { state: "idle" | "generating" | "ready"; done: number; total: number };
+  /** ECDSA part of a running secp256k1 DKG. */
+  ecdsaDkgStatus?: "waiting-primes" | "aux-info" | "keygen" | null;
+  /** The DKG's ECDSA key share JSON (SECRET), held until the wallet is saved. */
+  pendingEcdsaShareJson?: string | null;
   /** Full DKG result snapshot for the save-wallet form. */
   dkgLastResult?: {
     groupPublicKey: string;

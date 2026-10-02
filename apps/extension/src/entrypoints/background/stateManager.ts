@@ -41,7 +41,7 @@ export type DkgStateListener = (state: DkgState) => void;
  * background until the wallet is saved; the popup never needs it, and the
  * popup logs every message it receives. Apply at every popup egress.
  */
-const SECRET_KEYS = ["pendingKeystoreJson", "keystoreJson"] as const;
+const SECRET_KEYS = ["pendingKeystoreJson", "keystoreJson", "pendingEcdsaShareJson", "ecdsa"] as const;
 
 export function withoutSecrets<T extends object>(message: T): T {
     if (!SECRET_KEYS.some((k) => k in message)) return message;
@@ -126,6 +126,7 @@ export class StateManager {
                 // pendingKeystoreReady" flag doesn't lie to the UI.
                 (this.appState as any).pendingKeystoreJson = null;
                 (this.appState as any).pendingKeystoreReady = false;
+                this.appState.pendingEcdsaShareJson = null;
                 console.log("[StateManager] State restored from persistence");
             } else {
                 console.log("[StateManager] No persisted state found, using initial state");
@@ -571,6 +572,11 @@ export class StateManager {
                     (this.appState as any).pendingKeystoreReady =
                         typeof info.keystoreJson === "string" &&
                         info.keystoreJson.length > 0;
+                    // secp256k1: the wallet's threshold-ECDSA key (Ethereum).
+                    // Its share is as secret as the FROST one: memory only.
+                    this.appState.pendingEcdsaShareJson = info.ecdsa?.shareJson ?? null;
+                    this.appState.ecdsaGroupPublicKey = info.ecdsa?.groupPublicKey ?? "";
+                    this.appState.ecdsaDkgStatus = null;
                     // The DKG is done; it is no longer something to join
                     // (see WebSocketManager: re-announces are ignored too).
                     this.appState.invites = (this.appState.invites ?? []).filter(

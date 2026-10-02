@@ -33,6 +33,7 @@ import { PopupMessageHandler, OffscreenMessageHandler } from './messageHandlers'
 import { KeepaliveController } from './keepaliveController';
 import { YubiKeyManager } from './yubikeyManager';
 import { restoreActiveWallet } from './walletRestore';
+import { EcdsaPrimeCache, installInsecureTestPrimesHook, syncEcdsaPrimes } from './ecdsaPrimes';
 
 // Import types
 import { INITIAL_APP_STATE } from "@stars-labs/types/appstate";
@@ -96,6 +97,23 @@ function initializeComponents(): void {
 
     // Initialize offscreen manager (needs app state)
     offscreenManager = new OffscreenManager(stateManager.getState());
+
+    // Threshold-ECDSA safe primes: generated in offscreen workers, cached
+    // encrypted with the keystore password (see ecdsaPrimes.ts).
+    EcdsaPrimeCache.instance = new EcdsaPrimeCache({
+        keystore: KeystoreManager.getInstance(),
+        storage: {
+            get: (key) => chrome.storage.local.get(key),
+            set: (items) => chrome.storage.local.set(items),
+            remove: (key) => chrome.storage.local.remove(key),
+        },
+        sendToOffscreen: async (message) => {
+            await offscreenManager.createOffscreenDocument();
+            return offscreenManager.sendToOffscreen(message as any, "ECDSA primes");
+        },
+        updateState: (patch) => stateManager.updateState(patch),
+    });
+    installInsecureTestPrimesHook(EcdsaPrimeCache.instance);
 
     // Initialize session manager
     sessionManager = new SessionManager(
@@ -309,6 +327,8 @@ function setupMessageHandlers(): void {
                         const initResult = await offscreenManager.sendInitData(currentState.deviceId);
                         if (initResult.success) {
                             console.log("✅ [Background] Successfully sent init data to offscreen");
+                            // A fresh offscreen document has an empty prime pool.
+                            syncEcdsaPrimes();
                         } else {
                             console.warn("❌ [Background] Failed to send init data to offscreen:", initResult.error);
                         }

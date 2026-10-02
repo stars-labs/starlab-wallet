@@ -17,7 +17,7 @@ import type {
 import { MESSAGE_TYPES, isRpcMessage, isAccountManagement, isNetworkManagement, isUIRequest } from "@stars-labs/types/messages";
 import { StateManager, withoutSecrets } from "./stateManager";
 import { redactForLog } from "../../utils/redact";
-import { walletIdFromSession } from "../../utils/wallet-id";
+import { walletIdFromSession, ECDSA_CURVE } from "../../utils/wallet-id";
 import { OffscreenManager } from "./offscreenManager";
 import { WebSocketManager } from "./webSocketManager";
 import { SessionManager } from "./sessionManager";
@@ -41,6 +41,7 @@ import {
     type SupportedChain,
 } from "@stars-labs/types/appstate";
 import { encryptShareBackup, openShareBackup } from "../../utils/shareBackup";
+import { EcdsaPrimeCache, syncEcdsaPrimes } from "./ecdsaPrimes";
 
 /**
  * Handles messages from popup interface
@@ -1139,6 +1140,17 @@ export class PopupMessageHandler {
                 });
                 return;
             }
+            // `curve: "secp256k1-ecdsa"` also returns the wallet's
+            // threshold-ECDSA share (Ethereum signing).
+            if (message.curve === ECDSA_CURVE) {
+                const ecdsaShare = await keystoreManager.getCurveShare(walletId, ECDSA_CURVE);
+                if (!ecdsaShare) {
+                    sendResponse({ success: false, error: `Wallet ${walletId} has no Ethereum (ECDSA) key share` });
+                    return;
+                }
+                sendResponse({ success: true, keyShare, ecdsaShare });
+                return;
+            }
             sendResponse({ success: true, keyShare });
         } catch (error) {
             sendResponse({
@@ -1217,14 +1229,26 @@ export class PopupMessageHandler {
                 ? lastResult.chain
                 : getDefaultChainForCurve(curve);
             const protocolBlockchain = getProtocolBlockchainForChain(primaryChain);
+            // secp256k1: the DKG also made the threshold-ECDSA key (Ethereum).
+            const ecdsaShareJson: string | null = state.pendingEcdsaShareJson ?? null;
+            const ecdsaGroupPublicKey: string | undefined = state.ecdsaGroupPublicKey || undefined;
+            if (curve === "secp256k1" && (!ecdsaShareJson || !ecdsaGroupPublicKey)) {
+                sendResponse({
+                    success: false,
+                    error: "The wallet's Ethereum (ECDSA) key is missing — the DKG didn't finish. Run it again.",
+                });
+                return;
+            }
             const { blockchains, addressFor, primaryAddress } = await this.deriveWalletAddresses(
                 curve,
                 lastResult.groupPublicKey ?? "",
                 primaryChain,
                 lastResult.address ?? undefined,
+                curve === "secp256k1" ? ecdsaGroupPublicKey : undefined,
             );
 
             const keyShareData: KeyShareData = {
+                ...(curve === "secp256k1" ? { ecdsa_group_public_key: ecdsaGroupPublicKey } : {}),
                 // Canonical FROST material: engine keystore fields +
                 // hex group key + explicit device→FROST-id map.
                 ...keyShareCore,
@@ -1289,6 +1313,10 @@ export class PopupMessageHandler {
                 });
                 return;
             }
+            if (curve === "secp256k1" && ecdsaShareJson) {
+                // The ECDSA share: its own curve entry, same password.
+                await km.setCurveShare(walletId, ECDSA_CURVE, ecdsaShareJson);
+            }
 
             // Save succeeded. Drop the in-memory key material + flip
             // UI state so popup moves to a "wallet ready" view. The DKG
@@ -1298,8 +1326,10 @@ export class PopupMessageHandler {
                 // @ts-ignore — off-type fields, same pattern as elsewhere
                 pendingKeystoreJson: null,
                 pendingKeystoreReady: false,
+                pendingEcdsaShareJson: null,
                 sessionInfo: null,
             } as any);
+            syncEcdsaPrimes();
             // updateState doesn't notify the popup; without this the save
             // form stays up after a successful save.
             this.stateManager.broadcastCurrentState();
@@ -1330,6 +1360,8 @@ export class PopupMessageHandler {
         groupPublicKey: string,
         primaryChain: SupportedChain,
         fallbackAddress?: string,
+        /** secp256k1 wallets: the threshold-ECDSA root key (Ethereum accounts). */
+        ecdsaGroupPublicKey?: string,
     ): Promise<{ blockchains: any[]; addressFor: (chain: SupportedChain) => string | undefined; primaryAddress: string }> {
         const chainIds: Partial<Record<SupportedChain, number>> = {
             ethereum: 1,
@@ -1348,31 +1380,33 @@ export class PopupMessageHandler {
             solana: "base58",
             sui: "hex",
         };
-        let derivedAddresses: Array<{ chain: SupportedChain; path: string; address: string }> = [];
+        let derivedAddresses: Array<{ chain: SupportedChain; path: string; address: string; curve: string }> = [];
         try {
-            if (groupPublicKey) {
+            // Ethereum comes from the ECDSA key; the FROST key covers the rest.
+            const keys: Array<[string, string]> = [];
+            if (ecdsaGroupPublicKey) keys.push([ECDSA_CURVE, ecdsaGroupPublicKey]);
+            if (groupPublicKey) keys.push([curve, groupPublicKey]);
+            for (const [keyCurve, key] of keys) {
                 const derived = await this.offscreenManager.sendToOffscreen(
                     {
                         type: "deriveAccounts",
-                        curve,
-                        groupPublicKey,
+                        curve: keyCurve,
+                        groupPublicKey: key,
                         count: 1,
                     } as any,
                     "Derive wallet account 0 addresses",
                 );
                 if (derived?.success && Array.isArray(derived.accounts?.[0]?.addresses)) {
-                    derivedAddresses = derived.accounts[0].addresses
-                        .map((addr: any) => {
-                            const chain = normalizeDerivedAddressChain(addr.chain);
-                            return chain && typeof addr.address === "string"
-                                ? {
-                                      chain,
-                                      path: String(addr.path ?? ""),
-                                      address: addr.address,
-                                  }
-                                : null;
-                        })
-                        .filter(Boolean);
+                    derivedAddresses.push(
+                        ...derived.accounts[0].addresses
+                            .map((addr: any) => {
+                                const chain = normalizeDerivedAddressChain(addr.chain);
+                                return chain && typeof addr.address === "string"
+                                    ? { chain, path: String(addr.path ?? ""), address: addr.address, curve: keyCurve }
+                                    : null;
+                            })
+                            .filter(Boolean),
+                    );
                 }
             }
         } catch (deriveErr) {
@@ -1397,6 +1431,7 @@ export class PopupMessageHandler {
             address: string | undefined,
             enabled = chain === primaryChain,
             path = "",
+            keyCurve: string = curve,
         ) => {
             if (!address) return;
             blockchainEntries.set(chain, {
@@ -1407,16 +1442,16 @@ export class PopupMessageHandler {
                 address_format: addressFormats[chain] ?? "unknown",
                 enabled,
                 metadata: {
-                    curve,
+                    curve: keyCurve,
                     label: getChainLabel(chain),
                     derivation_path: path,
                 },
             });
         };
         for (const addr of derivedAddresses) {
-            addBlockchainEntry(addr.chain, addr.address, addr.chain === primaryChain, addr.path);
+            addBlockchainEntry(addr.chain, addr.address, addr.chain === primaryChain, addr.path, addr.curve);
         }
-        addBlockchainEntry(primaryChain, primaryAddress, true);
+        if (!blockchainEntries.has(primaryChain)) addBlockchainEntry(primaryChain, primaryAddress, true);
         return { blockchains: Array.from(blockchainEntries.values()), addressFor, primaryAddress };
     }
 
@@ -1745,6 +1780,8 @@ export class PopupMessageHandler {
                 
                 // Restore wallet state if available
                 await checkAndRestoreKeystores();
+                // The password is here: prepare the next wallet's ECDSA primes.
+                syncEcdsaPrimes();
             } else {
                 sendResponse({ success: false, error: "Invalid password" });
             }
@@ -1795,7 +1832,9 @@ export class PopupMessageHandler {
             const deviceId = this.stateManager.getState().deviceId;
             
             await keystoreManager.createKeystore(message.password, deviceId);
-            
+            // Onboarding done: start on the ECDSA primes a first wallet needs.
+            syncEcdsaPrimes();
+
             sendResponse({ success: true });
         } catch (error) {
             console.error("[PopupMessageHandler] Error creating keystore:", error);
@@ -2064,6 +2103,22 @@ export class OffscreenMessageHandler {
             // payload shape (payload.payload.keyShareData) not
             // emitted by the current webrtc.ts. Kept as private
             // methods for reference but not dispatched to.
+
+            // Threshold-ECDSA safe primes (offscreen PrimePool ↔ encrypted cache).
+            case "ecdsaPrimesProgress" as any:
+                EcdsaPrimeCache.instance?.onProgress((payload as any).progress);
+                this.stateManager.broadcastCurrentState();
+                break;
+            case "ecdsaPrimesReady" as any:
+                await EcdsaPrimeCache.instance?.onReady((payload as any).primesJson);
+                break;
+            case "ecdsaPrimesConsumed" as any:
+                await EcdsaPrimeCache.instance?.onConsumed();
+                break;
+            case "ecdsaDkgStatus" as any:
+                this.stateManager.updateState({ ecdsaDkgStatus: (payload as any).status });
+                this.stateManager.broadcastCurrentState();
+                break;
 
             default:
                 // Forward to state manager for state updates

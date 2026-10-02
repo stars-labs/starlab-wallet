@@ -8,7 +8,7 @@
 // ===================================================================
 
 import { KeystoreService } from './keystoreService';
-import type { KeyShareData, ExtensionWalletMetadata } from "@stars-labs/types/keystore";
+import type { KeyShareData, ExtensionWalletMetadata, EncryptedKeyShare } from "@stars-labs/types/keystore";
 
 interface KeystoreSession {
     unlocked: boolean;
@@ -365,7 +365,30 @@ export class KeystoreManager {
         
         return await this.keystoreService.getKeyShare(walletId);
     }
-    
+
+    /** Store another curve's share of a wallet (the threshold-ECDSA share). */
+    public async setCurveShare(walletId: string, curve: string, shareJson: string): Promise<void> {
+        if (this.isLocked()) throw new Error("Keystore is locked");
+        await this.keystoreService.setCurveShare(walletId, curve, shareJson);
+    }
+
+    /** A wallet's share for `curve` (null when it has none). */
+    public async getCurveShare(walletId: string, curve: string): Promise<string | null> {
+        if (this.isLocked()) throw new Error("Keystore is locked");
+        return await this.keystoreService.getCurveShare(walletId, curve);
+    }
+
+    /** Encrypt / decrypt a secret with the keystore password (the ECDSA prime cache). */
+    public async encryptSecret(id: string, plaintext: string): Promise<EncryptedKeyShare> {
+        if (this.isLocked()) throw new Error("Keystore is locked");
+        return await this.keystoreService.encryptSecret(id, plaintext);
+    }
+
+    public async decryptSecret(encrypted: EncryptedKeyShare): Promise<string> {
+        if (this.isLocked()) throw new Error("Keystore is locked");
+        return await this.keystoreService.decryptSecret(encrypted);
+    }
+
     // === Private Helper Methods ===
     
     private async saveSession(): Promise<void> {

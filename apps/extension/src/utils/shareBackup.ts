@@ -97,6 +97,107 @@ export async function encryptShareBackup(
     );
 }
 
+/** Facts of an ECDSA key share (core-wasm `ecdsa_share_info`). */
+export interface EcdsaShareInfo {
+    participants: string[];
+    index: number;
+    threshold: number;
+    n: number;
+    group_public_key: string;
+}
+
+/**
+ * The wallet's threshold-ECDSA share as its own engine v2 share file —
+ * curve `secp256k1-ecdsa`, plaintext = the `EcdsaKeyShare` serde JSON,
+ * exactly the engine's `secp256k1-ecdsa/<wallet>.json` keystore entry
+ * (`Keystore::save_ecdsa_share`), so a multi-curve wallet backs up as one
+ * file per curve, like the engine's export.
+ */
+export async function encryptEcdsaShareBackup(
+    shareJson: string,
+    info: EcdsaShareInfo,
+    wallet: { id: string; name?: string; deviceId: string; createdAt?: number },
+    password: string,
+): Promise<string> {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await deriveKey(password, salt, "encrypt");
+    const ciphertext = new Uint8Array(
+        await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(shareJson)),
+    );
+    const data = new Uint8Array(salt.length + iv.length + ciphertext.length);
+    data.set(salt, 0);
+    data.set(iv, salt.length);
+    data.set(ciphertext, salt.length + iv.length);
+    const now = new Date().toISOString();
+    const metadata = {
+        session_id: wallet.id,
+        device_id: wallet.deviceId,
+        curve_type: ECDSA_BACKUP_CURVE,
+        threshold: info.threshold,
+        total_participants: info.n,
+        participant_index: info.index + 1,
+        group_public_key: info.group_public_key,
+        participants: info.participants,
+        created_at: new Date(wallet.createdAt || Date.now()).toISOString(),
+        last_modified: now,
+        ...(wallet.name ? { label: wallet.name } : {}),
+    };
+    return JSON.stringify(
+        { version: "2.0", encrypted: true, algorithm: SHARE_BACKUP_ALGORITHM, data: toBase64(data), metadata },
+        null,
+        2,
+    );
+}
+
+export const ECDSA_BACKUP_CURVE = "secp256k1-ecdsa";
+
+/** The curve a share file is for (its metadata), without decrypting it. */
+export function shareBackupCurve(fileJson: string): string | null {
+    try {
+        const c = JSON.parse(fileJson)?.metadata?.curve_type;
+        return typeof c === "string" ? c : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Open an ECDSA share file (`encryptEcdsaShareBackup`'s or the engine's
+ * `secp256k1-ecdsa` export). Returns the share JSON; the caller checks it
+ * against the metadata with core-wasm (`ecdsa_share_info`).
+ */
+export async function openEcdsaShareBackup(
+    fileJson: string,
+    password: string,
+): Promise<{ metadata: Omit<ShareBackupMetadata, "curve_type"> & { curve_type: string }; shareJson: string }> {
+    let file: any;
+    try {
+        file = JSON.parse(fileJson);
+    } catch {
+        throw new Error("Not a Starlab key share file (not JSON)");
+    }
+    const metadata = file?.metadata;
+    if (file?.version !== "2.0" || file?.encrypted !== true || !metadata || typeof file.data !== "string") {
+        throw new Error("Not a Starlab key share file; expected an encrypted v2.0 share file");
+    }
+    if (metadata.curve_type !== ECDSA_BACKUP_CURVE) throw new Error(`Not an ECDSA share file (${metadata.curve_type})`);
+    if (file.algorithm !== SHARE_BACKUP_ALGORITHM) {
+        throw new Error(`Unsupported key share encryption ${String(file.algorithm)}; re-export it as ${SHARE_BACKUP_ALGORITHM}`);
+    }
+    const walletId = metadata.session_id ?? metadata.wallet_id;
+    if (typeof walletId !== "string" || !walletId) throw new Error("Key share file has no wallet id");
+    const raw = Uint8Array.from(atob(file.data), (c) => c.charCodeAt(0));
+    const key = await deriveKey(password, raw.slice(0, 16), "decrypt");
+    let plain: Uint8Array;
+    try {
+        plain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: raw.slice(16, 28) }, key, raw.slice(28)));
+    } catch {
+        throw new Error("Wrong password for this key share file");
+    }
+    return { metadata: { ...metadata, session_id: walletId }, shareJson: new TextDecoder().decode(plain) };
+}
+
 /**
  * Open an engine-format share file (the engine's or ours). Checks what the
  * engine's `validate_share` checks — the payload is a FROST share for the

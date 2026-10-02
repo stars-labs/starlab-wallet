@@ -91,9 +91,14 @@ describe("engine share file → extension (openShareBackup)", () => {
             const inst = curve === "secp256k1" ? new FrostDkgSecp256k1() : new FrostDkgEd25519();
             try {
                 inst.import_keystore(derive(toEngineKeystoreJson(keyShare), standard_account_path(chain, 0)!));
-                const address = inst.get_address();
                 const engineAccount0 = expected.account0.find((a: string[]) => a[1] === standard_account_path(chain, 0));
-                expect(address.toLowerCase()).toBe(engineAccount0[2].toLowerCase());
+                if (curve === "secp256k1") {
+                    // The share's group key lists the engine's Taproot (bc1p…) account 0.
+                    const listed = JSON.parse(derive_account_addresses("secp256k1", keyShare.group_public_key, 0));
+                    expect(listed.find((a: any) => a.chain === "Bitcoin").address).toBe(engineAccount0[2]);
+                } else {
+                    expect(inst.get_address().toLowerCase()).toBe(engineAccount0[2].toLowerCase());
+                }
             } finally {
                 inst.free();
             }
@@ -146,7 +151,8 @@ describe("importKeystore handler with an engine file", () => {
         const [{ id, keyShare, meta }] = keystore.added;
         expect(id).toBe("w-transfer");
         expect(meta.name).toBe("Savings");
-        expect(meta.address.toLowerCase()).toBe(expected.account0[0][2].toLowerCase());
+        // FROST secp256k1 is the Bitcoin (BIP-340) key; Ethereum needs the ECDSA file.
+        expect(meta.address).toBe(expected.account0.find((a: string[]) => a[0] === "Bitcoin")[2]);
         expect(keyShare.group_public_key).toBe(expected.group_public_key);
         expect(keyShare.participants).toEqual(["device-a", "device-b", "device-c"]);
     });

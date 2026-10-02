@@ -491,6 +491,16 @@ export class KeystoreService {
         await storage.setItem(`local:${this.INDEX_KEY}`, this.keystoreIndex);
     }
     
+    /** Change a wallet's primary address in the index (e.g. once its
+     *  Ethereum (ECDSA) share is attached). */
+    public async updateWalletAddress(walletId: string, address: string): Promise<void> {
+        const wallet = this.keystoreIndex?.wallets.find((w) => w.id === walletId);
+        if (!wallet) throw new Error(`Wallet ${walletId} not found`);
+        wallet.address = address;
+        this.keystoreIndex!.lastModified = Date.now();
+        await this.saveKeystoreIndex();
+    }
+
     /**
      * Another curve's share of a wallet (the threshold-ECDSA
      * `secp256k1-ecdsa` share next to the FROST one): the engine's

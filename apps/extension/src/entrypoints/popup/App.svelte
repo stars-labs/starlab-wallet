@@ -3392,10 +3392,14 @@
                             const input = document.createElement("input");
                             input.type = "file";
                             input.accept = ".json";
+                            // A wallet backup is one file per key (Ethereum's
+                            // ECDSA share is its own file): pick them together.
+                            input.multiple = true;
                             input.onchange = async (e) => {
-                                const file = (e.target as HTMLInputElement)
-                                    .files?.[0];
+                                const picked = Array.from((e.target as HTMLInputElement).files ?? []);
+                                const file = picked[0];
                                 if (file) {
+                                    const keystoreFiles = await Promise.all(picked.map((f) => f.text()));
                                     const reader = new FileReader();
                                     reader.onload = async (event) => {
                                         const keystoreData = event.target
@@ -3421,6 +3425,7 @@
                                                 {
                                                     type: "importKeystore",
                                                     keystoreData,
+                                                    keystoreFiles,
                                                     password,
                                                     chain: protocolChainFor(appState.chain),
                                                 },

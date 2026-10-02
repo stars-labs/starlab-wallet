@@ -303,20 +303,28 @@
                     return;
                 }
                 if (response?.success && response.keystoreData) {
-                    const blob = new Blob([response.keystoreData], {
-                        type: "application/json",
-                    });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = `starlab-share-backup-${chain}-${Date.now()}.json`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
+                    // One file per key, named like the engine's export
+                    // (`<stem>-<curve>.json` when a wallet has several).
+                    const files: { curve: string; keystoreData: string }[] =
+                        response.files ?? [{ curve: chain, keystoreData: response.keystoreData }];
+                    const stem = `starlab-share-backup-${chain}-${Date.now()}`;
+                    for (const f of files) {
+                        const blob = new Blob([f.keystoreData], { type: "application/json" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = files.length > 1 ? `${stem}-${f.curve}.json` : `${stem}.json`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    }
                     backupPassword = "";
                     backupPasswordConfirm = "";
-                    backupStatus = "Encrypted backup saved. Store it offline, away from this device.";
+                    backupStatus =
+                        files.length > 1
+                            ? `Encrypted backup saved as ${files.length} files (one per key) — keep them together, offline.`
+                            : "Encrypted backup saved. Store it offline, away from this device.";
                 } else {
                     backupStatus = `Export failed: ${response?.error ?? "unknown error"}`;
                 }

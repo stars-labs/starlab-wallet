@@ -60,6 +60,8 @@ function makeSessionManager() {
     return { mgr, appState, announces, broadcast, wsClient, sendToOffscreen };
 }
 
+const DIGEST = "ab".repeat(32);
+
 const keyShare = () =>
     ({
         group_public_key: "02cafe",
@@ -68,6 +70,7 @@ const keyShare = () =>
         // Stored order is not the wire order: the announce sorts.
         participants: ["tui", "ext-alice", "desktop"],
         participant_identifiers: { desktop: 1, "ext-alice": 2, tui: 3 },
+        ecdsa_group_public_key: "03ec05a0",
         curve: "secp256k1",
     }) as any;
 
@@ -76,7 +79,7 @@ const validConfig = () => ({
     walletName: "Treasury",
     blockchain: "ethereum" as const,
     keyShare: keyShare(),
-    signingMessageHex: "deadbeef",
+    signingMessageHex: DIGEST,
 });
 
 describe("SessionManager.createSigningSession", () => {
@@ -123,7 +126,27 @@ describe("SessionManager.createSigningSession", () => {
 
     it("does not announce when the account key can't be derived", async () => {
         env.sendToOffscreen.mockImplementation(async () => ({ success: false, error: "locked" }) as any);
-        const res = await env.mgr.createSigningSession(validConfig());
+        const res = await env.mgr.createSigningSession({
+            ...validConfig(),
+            blockchain: "solana",
+            keyShare: { ...keyShare(), curve: "ed25519" },
+        });
+        expect(res.success).toBe(false);
+        expect(env.announces).toHaveLength(0);
+    });
+
+    it("refuses an Ethereum signing for a wallet without an ECDSA key", async () => {
+        const res = await env.mgr.createSigningSession({
+            ...validConfig(),
+            keyShare: { ...keyShare(), ecdsa_group_public_key: undefined },
+        });
+        expect(res.success).toBe(false);
+        expect(res.error).toContain("ECDSA");
+        expect(env.announces).toHaveLength(0);
+    });
+
+    it("refuses an Ethereum payload that is not a 32-byte hash", async () => {
+        const res = await env.mgr.createSigningSession({ ...validConfig(), signingMessageHex: "deadbeef" });
         expect(res.success).toBe(false);
         expect(env.announces).toHaveLength(0);
     });
@@ -142,17 +165,18 @@ describe("SessionManager.createSigningSession", () => {
         expect(wire.proposer_id).toBe("ext-alice");
         // The wallet's whole cohort, sorted (engine StartSigning).
         expect(wire.participants).toEqual(["desktop", "ext-alice", "tui"]);
-        expect(wire.curve_type).toBe("secp256k1");
+        // Ethereum signs with the threshold-ECDSA key (engine parity).
+        expect(wire.curve_type).toBe("secp256k1-ecdsa");
         expect(wire.coordination_type).toBe("Network");
         // Signing-specific sibling fields TUI reads at top level
         // (not nested under a content object).
         // CLI/TUI co-signers load (materializing if needed) the account-0
         // child wallet named here — the key the extension signs with too.
         expect(wire.wallet_name).toBe("wallet-xyz-ethereum-0");
-        // The ACCOUNT child's key (what everyone signs under), not the root.
-        expect(wire.group_public_key).toBe("child-of-02cafe-ethereum-0");
+        // The ECDSA ROOT key, as the engine announces it.
+        expect(wire.group_public_key).toBe("03ec05a0");
         expect(wire.blockchain).toBe("ethereum");
-        expect(wire.signing_message_hex).toBe("deadbeef");
+        expect(wire.signing_message_hex).toBe(DIGEST);
         // accepted_devices is extension-local — must NOT be on the wire.
         expect("accepted_devices" in wire).toBe(false);
     });
@@ -165,7 +189,7 @@ describe("SessionManager.createSigningSession", () => {
         const msg = env.sendToOffscreen.mock.calls.map((c: any[]) => c[0]).find((m: any) => m.type !== "deriveAccountGroupKey");
         expect(msg.type).toBe("sessionReadyForSigning");
         expect(msg.sessionInfo.session_id).toBe(res.sessionId);
-        expect(msg.sessionInfo.signing_message_hex).toBe("deadbeef");
+        expect(msg.sessionInfo.signing_message_hex).toBe(DIGEST);
         expect(msg.blockchain).toBe("ethereum");
     });
 

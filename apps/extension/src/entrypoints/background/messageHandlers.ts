@@ -40,7 +40,14 @@ import {
     normalizeDerivedAddressChain,
     type SupportedChain,
 } from "@stars-labs/types/appstate";
-import { encryptShareBackup, openShareBackup } from "../../utils/shareBackup";
+import {
+    encryptShareBackup,
+    openShareBackup,
+    encryptEcdsaShareBackup,
+    openEcdsaShareBackup,
+    shareBackupCurve,
+    type EcdsaShareInfo,
+} from "../../utils/shareBackup";
 import { EcdsaPrimeCache, syncEcdsaPrimes } from "./ecdsaPrimes";
 
 /**
@@ -1424,6 +1431,9 @@ export class PopupMessageHandler {
         const primaryAddress =
             addressFor(primaryChain) ??
             fallbackAddress ??
+            // e.g. a secp256k1 share imported without its Ethereum (ECDSA)
+            // file: show the Bitcoin address rather than none.
+            derivedAddresses[0]?.address ??
             "";
         const blockchainEntries = new Map<string, any>();
         const addBlockchainEntry = (
@@ -1661,12 +1671,108 @@ export class PopupMessageHandler {
      * saving a DKG wallet). The wallet is added and made active; no session
      * is created.
      */
+    /** `ecdsa_share_info` of a share JSON (wasm lives in the offscreen document). */
+    private async ecdsaShareInfo(shareJson: string): Promise<EcdsaShareInfo> {
+        await this.offscreenManager.createOffscreenDocument();
+        const res = await this.offscreenManager.sendToOffscreen({ type: "ecdsaShareInfo", shareJson } as any, "ecdsaShareInfo");
+        if (!res?.success) throw new Error(`Not a valid ECDSA key share: ${res?.error ?? "no offscreen response"}`);
+        return res.info as EcdsaShareInfo;
+    }
+
+    /**
+     * Import a wallet backup: one engine share file, or a wallet's files
+     * (`keystoreFiles`: one per curve — the FROST share plus, for a
+     * secp256k1 wallet, its Ethereum `secp256k1-ecdsa` share). An ECDSA
+     * file attaches to its wallet (imported first, or already here).
+     */
     private async handleImportKeystoreMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
         try {
-            if (typeof message.keystoreData !== "string" || typeof message.password !== "string") {
+            const files: string[] = Array.isArray(message.keystoreFiles)
+                ? message.keystoreFiles.filter((f: unknown): f is string => typeof f === "string")
+                : typeof message.keystoreData === "string"
+                  ? [message.keystoreData]
+                  : [];
+            if (files.length === 0 || typeof message.password !== "string") {
                 sendResponse({ success: false, error: "Missing key share file or password" });
                 return;
             }
+            const frost = files.filter((f) => shareBackupCurve(f) !== ECDSA_CURVE);
+            const ecdsa = files.filter((f) => shareBackupCurve(f) === ECDSA_CURVE);
+            if (frost.length > 1) {
+                sendResponse({ success: false, error: "Import one wallet at a time" });
+                return;
+            }
+            let result: any = { success: true };
+            if (frost.length === 1) {
+                result = await new Promise<any>((resolve) =>
+                    this.importFrostShareFile(frost[0], message.password, message.chain, resolve),
+                );
+                if (!result.success) {
+                    sendResponse(result);
+                    return;
+                }
+            }
+            for (const file of ecdsa) {
+                const attached = await this.importEcdsaShareFile(file, message.password);
+                result = { ...result, walletId: attached.walletId, address: attached.address ?? result.address };
+            }
+            await checkAndRestoreKeystores();
+            syncEcdsaPrimes();
+            sendResponse(result);
+        } catch (error) {
+            console.error("[PopupMessageHandler] Error importing keystore:", error);
+            sendResponse({ success: false, error: (error as Error).message });
+        }
+    }
+
+    /** Attach an ECDSA share file to its (FROST) wallet in this keystore. */
+    private async importEcdsaShareFile(fileJson: string, password: string): Promise<{ walletId: string; address?: string }> {
+        const { metadata, shareJson } = await openEcdsaShareBackup(fileJson, password);
+        const info = await this.ecdsaShareInfo(shareJson);
+        if (info.group_public_key.toLowerCase() !== String(metadata.group_public_key).toLowerCase()) {
+            throw new Error("ECDSA key share does not match the file's group public key");
+        }
+        const km = KeystoreManager.getInstance();
+        if (km.isLocked() && !(await km.unlock(password))) {
+            throw new Error("Unlock the wallet first (the file's password doesn't open this keystore)");
+        }
+        const walletId = metadata.session_id;
+        const keyShare = await km.getKeyShare(walletId);
+        const wallet = km.getWallets().find((w) => w.id === walletId);
+        if (!keyShare || !wallet) {
+            throw new Error(`Import wallet ${walletId}'s main share file first (or together with this one)`);
+        }
+        if (keyShare.curve !== "secp256k1") throw new Error(`Wallet ${walletId} is not a secp256k1 wallet`);
+        if (keyShare.ecdsa_group_public_key && keyShare.ecdsa_group_public_key !== info.group_public_key) {
+            throw new Error(`Wallet ${walletId} already has a different Ethereum key`);
+        }
+        await km.setCurveShare(walletId, ECDSA_CURVE, shareJson);
+        const primaryChain: SupportedChain = isSupportedChain(wallet.blockchain) ? (wallet.blockchain as SupportedChain) : "ethereum";
+        const { blockchains, addressFor, primaryAddress } = await this.deriveWalletAddresses(
+            "secp256k1",
+            keyShare.group_public_key,
+            primaryChain,
+            undefined,
+            info.group_public_key,
+        );
+        await km.updateWalletKeyShare(walletId, {
+            ...keyShare,
+            ecdsa_group_public_key: info.group_public_key,
+            blockchains,
+            ethereum_address: addressFor("ethereum"),
+        });
+        await km.updateWalletAddress(walletId, primaryAddress);
+        return { walletId, address: primaryAddress };
+    }
+
+    private async importFrostShareFile(
+        keystoreData: string,
+        password: string,
+        chain: unknown,
+        sendResponse: (response: any) => void,
+    ): Promise<void> {
+        const message = { keystoreData, password, chain };
+        try {
             const { metadata, keyShare } = await openShareBackup(message.keystoreData, message.password);
 
             const km = KeystoreManager.getInstance();
@@ -1747,7 +1853,23 @@ export class PopupMessageHandler {
                 return;
             }
             const keystoreData = await encryptShareBackup(keyShare, wallet, message.password);
-            sendResponse({ success: true, keystoreData });
+            // One file per curve, like the engine's export: a secp256k1
+            // wallet's Ethereum (ECDSA) share is its own file.
+            const files: { curve: string; keystoreData: string }[] = [{ curve: keyShare.curve, keystoreData }];
+            const ecdsaShare = await keystoreManager.getCurveShare(wallet.id, ECDSA_CURVE);
+            if (ecdsaShare) {
+                const info = await this.ecdsaShareInfo(ecdsaShare);
+                files.push({
+                    curve: ECDSA_CURVE,
+                    keystoreData: await encryptEcdsaShareBackup(
+                        ecdsaShare,
+                        info,
+                        { id: wallet.id, name: wallet.name, deviceId: keyShare.device_id, createdAt: keyShare.created_at },
+                        message.password,
+                    ),
+                });
+            }
+            sendResponse({ success: true, keystoreData, files });
         } catch (error) {
             console.error("[PopupMessageHandler] Error exporting keystore:", error);
             sendResponse({ success: false, error: (error as Error).message });

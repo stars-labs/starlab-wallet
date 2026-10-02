@@ -4,7 +4,7 @@ import type { WebRTCAppMessage } from "@stars-labs/types/webrtc";
 import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from "@stars-labs/types/websocket";
 
 // Import WASM modules for FROST DKG
-import wasmInit, { FrostDkgEd25519, FrostDkgSecp256k1, FrostReshareEd25519, FrostReshareSecp256k1, derive_account_addresses, ecdsa_primes_from_parts } from "@stars-labs/core-wasm";
+import wasmInit, { FrostDkgEd25519, FrostDkgSecp256k1, FrostReshareEd25519, FrostReshareSecp256k1, derive_account_addresses, ecdsa_primes_from_parts, ecdsa_share_info } from "@stars-labs/core-wasm";
 import { PrimePool } from "../../ecdsa/primePool";
 import { spawnEcdsaWorker } from "../../ecdsa/spawn";
 import { redactForLog } from "../../utils/redact";
@@ -146,6 +146,15 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
             console.log("Offscreen: Received 'createOffscreen' command. Document is already active.", payload);
             sendResponse({ success: true, message: "Offscreen document is already active." });
             break;
+        case "ecdsaShareInfo":
+            // Validate an ECDSA key share (backup import / export).
+            try {
+                sendResponse({ success: true, info: JSON.parse(ecdsa_share_info(payload.shareJson)) });
+            } catch (e) {
+                sendResponse({ success: false, error: (e as { message?: string }).message ?? String(e) });
+            }
+            break;
+
         // ECDSA safe primes (driven by background/ecdsaPrimes.ts).
         case "ecdsaPrimesEnsure":
             primePool.ensure();

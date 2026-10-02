@@ -119,12 +119,12 @@ describe("encrypted safe-prime cache", () => {
         const { d, sent, storage } = await deps();
         const cache = new EcdsaPrimeCache(d);
         await cache.sync();
-        expect(sent.at(-1)).toEqual({ type: "ecdsaPrimesEnsure" });
+        expect(sent[sent.length - 1]).toEqual({ type: "ecdsaPrimesEnsure" });
         await cache.onReady('{"primes":"SECRET"}');
         const stored = JSON.stringify(storage.data[PRIMES_STORAGE_KEY]);
         expect(stored).not.toContain("SECRET");
         await cache.sync();
-        expect(sent.at(-1)).toEqual({ type: "ecdsaPrimesLoad", primesJson: '{"primes":"SECRET"}' });
+        expect(sent[sent.length - 1]).toEqual({ type: "ecdsaPrimesLoad", primesJson: '{"primes":"SECRET"}' });
         await cache.onConsumed();
         expect(storage.data[PRIMES_STORAGE_KEY]).toBeUndefined();
     });

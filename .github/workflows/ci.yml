@@ -41,12 +41,12 @@ jobs:
         curve: [secp256k1, ed25519]
     steps:
       - uses: actions/checkout@v4
-      # Match the integrated engine revision consumed by the desktop. A named
-      # feature branch can lag the vendored WASM and omit client fixes.
+      # Match the desktop client fixes and integrated cache/deletion/control
+      # tests. Core/core-wasm are unchanged; the vendored WASM still matches.
       - uses: actions/checkout@v4
         with:
           repository: stars-labs/starlab-mpc
-          ref: fab8e16634ce4c03d71b00ff9f92bcb058ecc9d4
+          ref: 031e81f3177a839eebdd7dfa48e8710e2d999222
           path: starlab-mpc
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

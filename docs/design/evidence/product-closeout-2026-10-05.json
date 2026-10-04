@@ -6324,26 +6324,6 @@
         },
         "default_title": "MPC Wallet"
       },
-      "content_scripts": [
-        {
-          "matches": [
-            "<all_urls>"
-          ],
-          "js": [
-            "content-scripts/content.js"
-          ],
-          "run_at": "document_start"
-        },
-        {
-          "matches": [
-            "<all_urls>"
-          ],
-          "run_at": "document_start",
-          "js": [
-            "content-scripts/content.js"
-          ]
-        }
-      ],
       "background": {
         "service_worker": "background.js"
       },
@@ -6357,6 +6337,17 @@
           ],
           "matches": [
             "<all_urls>"
+          ]
+        }
+      ],
+      "content_scripts": [
+        {
+          "matches": [
+            "<all_urls>"
+          ],
+          "run_at": "document_start",
+          "js": [
+            "content-scripts/content.js"
           ]
         }
       ]
@@ -6393,7 +6384,8 @@
     "providerGate": "1passed4.9seconds:oneinit/oneinitialannouncement/sameprovider+UUIDondiscovery/eth_accounts=[]",
     "providerEvidence": "/tmp/starlab-single-provider-evidence.json",
     "publishedHead": "8cb4d35",
-    "integratedEngine": "031e81f3177a839eebdd7dfa48e8710e2d999222"
+    "integratedEngine": "031e81f3177a839eebdd7dfa48e8710e2d999222",
+    "manifestProvenance": "Final immutable production manifest from /tmp/starlab-single-provider-release-build/chrome-mv3/manifest.json. The two duplicate content script entries belonged to earlier builds; their manifest SHA256 values remain preserved in builds."
   },
   "provider": {
     "sourceRevision": "a4b8ee34c1743afd5af4ee3fc3986b11aff9b8b0",

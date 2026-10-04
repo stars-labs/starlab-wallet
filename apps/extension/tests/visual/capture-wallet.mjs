@@ -40,6 +40,7 @@ async function fixture(page, mode, theme) {
   const session={accepted_devices:['This browser','Desktop','Phone'],session_id:'public-ceremony-fixture',wallet_name:'Everyday wallet',session_type:'dkg',proposer_id:'Desktop',participants:['This browser','Desktop','Phone'],threshold:2,total:3,blockchain:'ethereum',curve:'secp256k1',group_public_key:state.dkgGroupPublicKey,signing_message_hex:'44657369676e20726576696577'};
   if(['setup-waiting','setup-primes','setup-keygen','save-wallet'].includes(mode)){state.sessionInfo=session;state.dkgState=mode==='setup-waiting'?0:mode==='save-wallet'?7:6;state.ecdsaDkgStatus=mode==='setup-primes'?'waiting-primes':mode==='setup-keygen'?'keygen':null;state.ecdsaPrimes={ready:2,total:4,generating:true};state.pendingKeystoreReady=mode==='save-wallet';}
   if(mode==='invite')state.invites=[session];
+  if(mode==='signing-progress')state.sessionInfo={...session,session_type:'signing'};
   if(mode==='hardware'||mode==='watch-only'){data.wallet_accounts=[{id:'public-hardware-account',name:mode==='hardware'?'Ledger account':'Watch-only account',address,blockchain:'ethereum',type:mode==='hardware'?'hardware':'watch-only',deviceType:mode==='hardware'?'ledger':undefined}];data.wallet_current_account='public-hardware-account';}
 
   if(mode.startsWith('receive-')&&nativeChain!=='qr-error'){state.chain=nativeChain;wallet.blockchain=nativeChain;}
@@ -112,6 +113,7 @@ async function capture(name,mode='funded',theme='light',width=380,action){
 }
 try {
  for(const theme of ['light','dark']){
+  await capture(`signing-session-identity-${theme}`,'signing-progress',theme,380,async p=>{await p.getByText('Waiting for signatures',{exact:true}).waitFor();if(await p.getByText('Ready to sign',{exact:true}).count()||await p.getByText('Share setup',{exact:true}).count())throw Error('Wallet creation panel leaked into signing session');});
   for(const chain of ['bitcoin','solana','sui','qr-error'])await capture(`receive-${chain}-${theme}`,`receive-${chain}`,theme,380,p=>p.getByRole('button',{name:'Receive',exact:true}).click());
   for(const mode of ['password-error','password-busy'])await capture(`${mode}-${theme}`,mode,theme,380,async p=>{await p.getByRole('button',{name:'Unlock wallet',exact:true}).click();await p.getByPlaceholder('Enter password',{exact:true}).fill('public-wrong-password');await p.getByRole('button',{name:'Continue',exact:true}).click();if(mode==='password-error')await p.getByText('Incorrect password. Try again.',{exact:true}).waitFor();});
   await capture(`save-validation-${theme}`,'save-wallet',theme,380,async p=>{await p.getByPlaceholder('Password (at least 8 characters)').fill('public-password');await p.getByPlaceholder('Confirm password').fill('different-password');await p.getByRole('button',{name:'Encrypt & save',exact:true}).click();});

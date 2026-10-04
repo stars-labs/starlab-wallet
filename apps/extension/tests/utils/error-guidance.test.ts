@@ -44,3 +44,10 @@ describe("guideError", () => {
  expect(message).toContain("Unlock the wallet");
  expect(message).not.toContain("Wrong password");
  });
+
+it("an unknown peer needs reconnection rather than a new room", () => {
+ const message = guideError("Unknown device: stage5-tui", "connection");
+ expect(message).toContain("Unknown device: stage5-tui");
+ expect(message).toContain("Reconnect that device");
+ expect(message).not.toContain("strong room");
+});

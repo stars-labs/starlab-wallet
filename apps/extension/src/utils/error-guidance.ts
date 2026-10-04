@@ -19,7 +19,9 @@ export function guideError(raw: unknown, context: ErrorContext): string {
 
     switch (context) {
         case "connection":
-            if (lc.includes("room") || lc.includes("400") || lc.includes("rejected") || lc.includes("unauthor")) {
+            if (lc.includes("unknown device")) {
+                hint = "A device is not connected to this room. Reconnect that device, then retry.";
+            } else if (lc.includes("room") || lc.includes("400") || lc.includes("rejected") || lc.includes("unauthor")) {
                 hint = `No / weak room. ${ROOM_HINT}`;
             } else {
                 hint =

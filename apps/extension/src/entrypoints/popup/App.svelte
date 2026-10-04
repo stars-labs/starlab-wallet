@@ -3060,8 +3060,8 @@
             </div>
         {/if}
 
-    <!-- Active shared-wallet session (DKG ceremony in progress / done) -->
-    {#if appState.sessionInfo}
+    <!-- Wallet creation has its own progress; signing uses the signing roster above. -->
+    {#if appState.sessionInfo?.session_type === "dkg"}
         <div class="card card-pad">
             <div class="mb-3 flex items-center justify-between">
                 <h3 class="flex items-center gap-1.5 text-sm font-bold">

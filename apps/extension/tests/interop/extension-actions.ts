@@ -142,7 +142,7 @@ export async function saveWallet(page: Page, password: string): Promise<void> {
  * initiator): Sign message → Review → Confirm & broadcast.
  */
 export async function signMessage(page: Page, message: string): Promise<void> {
-  const trigger = page.getByRole("button", { name: /Sign message Request signatures/ });
+  const trigger = page.getByRole("button", { name: /^Sign message\b/ });
   await expect(trigger).toBeEnabled({ timeout: 30_000 });
   await trigger.click();
   await page.locator("#sign-msg").fill(message);

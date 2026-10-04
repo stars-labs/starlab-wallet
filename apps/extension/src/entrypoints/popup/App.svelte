@@ -143,11 +143,7 @@
     onMount(() => initTheme());
     onDestroy(() => unsubTheme());
 
-    // Hero card: reveal the raw group public key on demand + a tiny
-    // copy-confirmation flag for the address (CopyButton's surface
-    // styling is wrong on the gradient, so the hero copies inline).
-    let showGroupKey = false;
-    // Wallet views: token/activity feed + send/receive (added incrementally).
+    // Address copy feedback; protocol details live under Advanced.
     let showSend = false;
     let showReceive = false;
     let sendStatus = "";
@@ -1941,6 +1937,7 @@
             onSubmit: handleUnlockPassword,
             onCancel: () => { showPasswordPrompt = false; }
         };
+        passwordPromptError = "";
         showPasswordPrompt = true;
     }
     
@@ -1952,12 +1949,14 @@
             onSubmit: handleCreateKeystore,
             onCancel: () => { showPasswordPrompt = false; }
         };
+        passwordPromptError = "";
         showPasswordPrompt = true;
     }
     
+    let passwordPromptError = "";
     async function handleUnlockPassword(event: CustomEvent) {
         const password = event.detail.password;
-        showPasswordPrompt = false;
+        passwordPromptError = "";
         
         chrome.runtime.sendMessage({ 
             type: MESSAGE_TYPES.UNLOCK_KEYSTORE,
@@ -1965,10 +1964,11 @@
             rememberDuration: 15 * 60 * 1000 // 15 minutes
         }, (response) => {
             if (chrome.runtime.lastError) {
-                console.error("[UI] Error unlocking keystore:", chrome.runtime.lastError.message);
+                passwordPromptError = "Could not unlock this device. Try again.";
                 return;
             }
             if (response && response.success) {
+                showPasswordPrompt = false;
                 keystoreStatus.locked = false;
                 keystoreStatus.wallets = response.wallets;
                 keystoreStatus.activeWallet = response.activeWallet;
@@ -1977,32 +1977,32 @@
                 // Check for pending imports after unlock
                 checkPendingImports();
             } else {
-                console.error("[UI] Failed to unlock keystore:", response?.error);
-                // Don't auto-re-pop the modal (it created an inescapable loop on
-                // a wrong password). The user can retry via the header 🔓 button.
+                passwordPromptError = response?.error ?? "Incorrect password. Try again.";
+                // Keep the modal open so the password can be corrected.
             }
         });
     }
     
     async function handleCreateKeystore(event: CustomEvent) {
         const password = event.detail.password;
-        showPasswordPrompt = false;
+        passwordPromptError = "";
         
         chrome.runtime.sendMessage({ 
             type: MESSAGE_TYPES.CREATE_KEYSTORE,
             password
         }, (response) => {
             if (chrome.runtime.lastError) {
-                console.error("[UI] Error creating keystore:", chrome.runtime.lastError.message);
+                passwordPromptError = "Could not create this wallet. Try again.";
                 return;
             }
             if (response && response.success) {
+                showPasswordPrompt = false;
                 keystoreStatus.initialized = true;
                 keystoreStatus.locked = false;
                 console.log("[UI] Keystore created successfully");
                 checkKeystoreStatus();
             } else {
-                console.error("[UI] Failed to create keystore:", response?.error);
+                passwordPromptError = response?.error ?? "Could not create this wallet. Try again.";
             }
         });
     }
@@ -2309,22 +2309,7 @@
                     >
                         {addrCopied ? "Copied" : "Copy address"}
                     </button>
-                    {#if appState.dkgGroupPublicKey}
-                        <button
-                            class="rounded-lg bg-primary-soft px-2.5 py-1.5 text-xs font-semibold text-primary backdrop-blur transition hover:bg-surface-3"
-                            on:click={() => (showGroupKey = !showGroupKey)}
-                        >
-                            Group key
-                        </button>
-                    {/if}
                 </div>
-                {#if showGroupKey && appState.dkgGroupPublicKey}
-                    <div
-                        class="relative mt-2 break-all rounded-lg bg-surface-2 p-2 font-mono text-[10px] text-muted"
-                    >
-                        {appState.dkgGroupPublicKey}
-                    </div>
-                {/if}
             </div>
         {/if}
 
@@ -2361,6 +2346,7 @@
         {#if canSign && displayAddress}
             {#if showSend && isEvmChain(appState.chain)}
                 <div class="card card-pad">
+                    {#key `${displayAddress}:${appState.chain}:${currentEvmNetworkId}`}
                     <SendForm
                         from={displayAddress}
                         chain={appState.chain}
@@ -2368,10 +2354,11 @@
                         on:submit={handleSendSubmit}
                         on:cancel={() => (showSend = false)}
                     />
+                    {/key}
                 </div>
             {:else if showReceive}
                 <div class="card card-pad">
-                    <ReceiveCard address={displayAddress} chain={String(appState.chain)} network={evmNetworks.find((n) => n.id === currentEvmNetworkId)?.name ?? ""} />
+                    <ReceiveCard address={displayAddress} chain={String(appState.chain)} network={isEvmChain(appState.chain) ? evmNetworks.find((n) => n.id === currentEvmNetworkId)?.name ?? "" : ""} />
                     <button class="btn-ghost mt-2 w-full" on:click={() => (showReceive = false)}>Close</button>
                 </div>
             {:else}
@@ -3300,6 +3287,15 @@
         bind:open={showDeveloper}
     >
         <div class="space-y-4">
+            {#if appState.dkgGroupPublicKey}
+                <div>
+                    <span class="label">Wallet group key</span>
+                    <div class="flex items-center gap-2">
+                        <code class="mono min-w-0 flex-1 break-all rounded-lg bg-surface-2 px-2 py-1.5 text-xs">{appState.dkgGroupPublicKey}</code>
+                        <CopyButton value={appState.dkgGroupPublicKey} variant="icon" />
+                    </div>
+                </div>
+            {/if}
             <!-- Device id -->
             <div>
                 <span class="label">Your device ID</span>
@@ -3541,6 +3537,7 @@
      can be async — return value is discarded). -->
 {#if showPasswordPrompt}
     <PasswordPrompt
+        bind:error={passwordPromptError}
         title={passwordPromptConfig.title}
         message={passwordPromptConfig.message}
         confirmMode={passwordPromptConfig.confirmMode}

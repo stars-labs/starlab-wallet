@@ -14,7 +14,8 @@
     let confirmPassword: string = '';
     let showPassword: boolean = false;
     let showConfirmPassword: boolean = false;
-    let error: string = '';
+    export let error: string = '';
+    $: if (error) loading = false;
     let loading: boolean = false;
     
     function validatePassword(): boolean {

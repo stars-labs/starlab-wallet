@@ -570,6 +570,13 @@
             return;
         }
 
+        try {
+            const rpcUrl = new URL(customNetworkRpcUrl);
+            if (!["http:", "https:"].includes(rpcUrl.protocol)) throw new Error();
+        } catch {
+            customNetworkError = "RPC URL must start with http:// or https://";
+            return;
+        }
         const chainId = parseInt(customNetworkChainId, 10);
         if (isNaN(chainId)) {
             customNetworkError = "Chain ID must be a valid number";
@@ -852,7 +859,7 @@
                                 </div>
                                 <div class="truncate text-muted">
                                     Spender {shortHexId(r.spender)}
-                                    <span class="block">{r.current === -1n ? "Allowance unavailable" : `Allowance: ${r.current}`}</span>
+                                    <span class="block">{r.current === -1n ? "Allowance unavailable" : r.current === (2n ** 256n - 1n) ? "Unlimited allowance" : `Allowance: ${r.current}`}</span>
                                 </div>
                             </div>
                             </div><Button size="sm" variant="ghost" on:click={() => revokeAllowance(r)}>

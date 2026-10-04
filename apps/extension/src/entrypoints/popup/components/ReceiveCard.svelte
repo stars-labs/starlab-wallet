@@ -66,5 +66,5 @@
     .rc-label { font-weight: 600; }
     .rc-qr { width: 200px; height: 200px; border-radius: 8px; background: #fff; padding: 8px; }
     .rc-addr { font-family: monospace; font-size: 12px; word-break: break-all; text-align: center; opacity: 0.85; }
-    .rc-copy { padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(127,127,127,0.3); cursor: pointer; background: transparent; }
+    .rc-copy { display:flex; align-items:center; gap:8px; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
 </style>

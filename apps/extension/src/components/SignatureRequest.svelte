@@ -37,49 +37,29 @@
         return addr;
     }
     
-    async function handleApprove() {
-        approving = true;
+    let approvalError = "";
+    async function respond(approved: boolean) {
+        approving = approved;
+        rejecting = !approved;
+        approvalError = "";
         try {
-            chrome.runtime.sendMessage({
-                type: 'approveMessageSignature',
-                requestId: signingId,
-                approved: true
-            }, (response) => {
-                if (chrome.runtime.lastError) {
-                    console.error('[SignatureRequest] Error approving signature:', chrome.runtime.lastError.message);
-                    return;
-                }
-                console.log('[SignatureRequest] Signature approved');
-                dispatch('complete');
+            const response = await chrome.runtime.sendMessage({
+                type: 'approveMessageSignature', requestId: signingId, approved,
             });
-        } catch (error) {
-            console.error('[SignatureRequest] Error approving signature:', error);
+            if (response?.success === false || response?.error) {
+                approvalError = response.error ?? "Could not complete this request. Try again.";
+                return;
+            }
+            dispatch('complete', signingId);
+        } catch {
+            approvalError = "Could not complete this request. Try again.";
         } finally {
             approving = false;
-        }
-    }
-    
-    async function handleReject() {
-        rejecting = true;
-        try {
-            chrome.runtime.sendMessage({
-                type: 'approveMessageSignature',
-                requestId: signingId,
-                approved: false
-            }, (response) => {
-                if (chrome.runtime.lastError) {
-                    console.error('[SignatureRequest] Error rejecting signature:', chrome.runtime.lastError.message);
-                    return;
-                }
-                console.log('[SignatureRequest] Signature rejected');
-                dispatch('complete');
-            });
-        } catch (error) {
-            console.error('[SignatureRequest] Error rejecting signature:', error);
-        } finally {
             rejecting = false;
         }
     }
+    function handleApprove() { void respond(true); }
+    function handleReject() { void respond(false); }
 </script>
 
 <div class="card card-pad">
@@ -115,6 +95,7 @@
         this message with your wallet.
     </p>
 
+    {#if approvalError}<p class="mt-3 text-xs text-danger-fg">{approvalError}</p>{/if}
     <div class="mt-3 flex gap-2">
         <Button
             variant="secondary"

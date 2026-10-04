@@ -61,8 +61,8 @@ export default defineConfig({
     },
   }),
   manifest: {
-    name: 'Browser Wallet',
-    description: 'A secure browser extension wallet for Ethereum',
+    name: 'Starlab Wallet',
+    description: 'A shared wallet for Ethereum, Bitcoin, Solana and Sui.',
     version: '1.0.0',
     // `notifications` added for Ext-3a: chrome.notifications push
     // when someone else announces a signing session we're a

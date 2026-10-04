@@ -36,11 +36,15 @@
     function fiat(n?: number): string {
         return n === undefined
             ? "—"
-            : `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+            : `$${n.toLocaleString(undefined, { maximumFractionDigits: 2, ...(Math.abs(n) >= 1_000_000 ? { notation: "compact" as const } : {}) })}`;
     }
+    function fullFiat(n?: number): string {
+        return n === undefined ? "—" : `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+    }
+
     function amt(s: string): string {
         const n = Number(s);
-        return Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 6 }) : s;
+        return Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: Math.abs(n) >= 1_000_000 ? 2 : 6, ...(Math.abs(n) >= 1_000_000 ? { notation: "compact" as const } : {}) }) : s;
     }
 
     onMount(load);
@@ -61,14 +65,14 @@
         <ul class="tl-rows">
             <li class="tl-row">
                 <div class="asset-identity"><TokenIcon {networkId} symbol={portfolio.native.symbol} chain={String(chain)} /><div><span class="tl-sym">{portfolio.native.symbol}</span><span class="asset-network">Native asset</span></div></div>
-                <span class="tl-bal">{amt(portfolio.native.balance)}</span>
-                <span class="tl-fiat">{fiat(portfolio.native.fiat)}</span>
+                <span class="tl-bal" title={portfolio.native.balance} aria-label={portfolio.native.balance}>{amt(portfolio.native.balance)}</span>
+                <span class="tl-fiat" title={fullFiat(portfolio.native.fiat)} aria-label={fullFiat(portfolio.native.fiat)}>{fiat(portfolio.native.fiat)}</span>
             </li>
             {#each portfolio.tokens as t (t.address)}
                 <li class="tl-row">
-                    <div class="asset-identity"><TokenIcon {networkId} symbol={t.symbol} chain={String(chain)} address={t.address} /><div><span class="tl-sym">{t.name ?? t.symbol}</span><span class="asset-network">{t.symbol}</span></div></div>
-                    <span class="tl-bal">{amt(t.balance)}</span>
-                    <span class="tl-fiat">{fiat(t.fiat)}</span>
+                    <div class="asset-identity"><TokenIcon {networkId} symbol={t.symbol} chain={String(chain)} address={t.address} /><div><span class="tl-sym" title={t.name ?? t.symbol}>{t.name ?? t.symbol}</span><span class="asset-network">{t.symbol}</span></div></div>
+                    <span class="tl-bal" title={t.balance} aria-label={t.balance}>{amt(t.balance)}</span>
+                    <span class="tl-fiat" title={fullFiat(t.fiat)} aria-label={fullFiat(t.fiat)}>{fiat(t.fiat)}</span>
                 </li>
             {/each}
         </ul>
@@ -81,7 +85,7 @@
     .tl-refresh { background: none; border: none; cursor: pointer; font-size: 16px; opacity: 0.7; }
     .tl-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
     .tl-row { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(127,127,127,0.15); }
-    .tl-sym { font-weight: 600; }
-    .tl-bal { opacity: 0.85; }
-    .tl-fiat { min-width: 70px; text-align: right; opacity: 0.7; }
+    .tl-sym { display:block; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .tl-bal { max-width:90px; text-align:right; white-space:nowrap; opacity:0.85; }
+    .tl-fiat { min-width:70px; max-width:100px; text-align:right; white-space:nowrap; opacity:0.7; }
 </style>

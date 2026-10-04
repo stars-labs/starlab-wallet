@@ -48,7 +48,16 @@
     }
     
     function handleKeydown(event: KeyboardEvent) {
-        if (event.key === 'Enter' && !confirmMode) {
+        if (event.key === 'Tab') {
+            const controls = Array.from((event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('input:not(:disabled), button:not(:disabled), [tabindex="0"]')).filter(node => node.tabIndex >= 0);
+            const first = controls[0];
+            const last = controls[controls.length - 1];
+            if (first && last && ((event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last))) {
+                event.preventDefault();
+                (event.shiftKey ? last : first).focus();
+            }
+        } else if (event.key === 'Enter' && !confirmMode && event.target instanceof HTMLInputElement) {
+            event.preventDefault();
             handleSubmit();
         } else if (event.key === 'Escape') {
             handleCancel();
@@ -61,7 +70,11 @@
     // just appeared the focus landing on the password field is the
     // expected UX, not a surprise.
     function autofocus(node: HTMLElement) {
+        const previous = document.activeElement;
         node.focus();
+        return { destroy() {
+            if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+        } };
     }
 </script>
 
@@ -96,7 +109,6 @@
                     type="button"
                     class="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted hover:text-content"
                     on:click={() => (showPassword = !showPassword)}
-                    tabindex="-1"
                 >
                     {showPassword ? "Hide" : "Show"}
                 </button>
@@ -122,8 +134,7 @@
                         class="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted hover:text-content"
                         on:click={() =>
                             (showConfirmPassword = !showConfirmPassword)}
-                        tabindex="-1"
-                    >
+                        >
                         {showConfirmPassword ? "Hide" : "Show"}
                     </button>
                 </div>

@@ -73,7 +73,7 @@
                 const up = await probeSandbox();
                 if (!up.evm && !up.solana) {
                     sandboxStatus =
-                        "No local nodes found — run scripts/sandbox.sh first.";
+                        "Start the local simulation nodes on your computer, then try again.";
                     return;
                 }
                 await enableSandbox();

@@ -36,7 +36,7 @@ describe("completed signing invite retirement", () => {
     });
     it("retries a withdrawal lost while disconnected before requesting session replay", () => {
         const mgr = new StateManager({deviceId: "creator"});
-        const socket = {readyState: WebSocket.CLOSED, send: jest.fn(), close: jest.fn()};
+        const socket = {readyState: WebSocket.CLOSED as number, send: jest.fn(), close: jest.fn()};
         const client = new WebSocketClient("ws://localhost");
         (client as any).ws = socket;
         const transport = new WebSocketManager(mgr.getState(), {updateWebSocketClient() {}} as any, () => {}, async () => ({success: true}), mgr);

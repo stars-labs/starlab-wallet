@@ -15,6 +15,7 @@
 // ===================================================================
 
 import { defineBackground } from '#imports';
+import { isInternalSender } from './rpcOrigin';
 import AccountService from '../../services/accountService';
 import NetworkService from '../../services/networkService';
 import WalletClientService from '../../services/walletClient';
@@ -274,20 +275,24 @@ function setupMessageHandlers(): void {
         // dApp RPC relayed by a content script: permissions are keyed by the
         // sending frame's origin as Chrome reports it — never by a value the
         // message carries, and never empty (empty means "internal caller").
-        if (sender.tab && isRpcMessage(message as PopupToBackgroundMessage)) {
-            let origin = sender.origin ?? "";
-            if (!origin && sender.url) {
-                try {
-                    origin = new URL(sender.url).origin;
-                } catch {
-                    origin = "";
+        if (isRpcMessage(message as PopupToBackgroundMessage)) {
+            if (isInternalSender(sender, chrome.runtime.id)) {
+                (message as { origin?: string }).origin = "";
+            } else {
+                let origin = sender.origin ?? "";
+                if (!origin && sender.url) {
+                    try {
+                        origin = new URL(sender.url).origin;
+                    } catch {
+                        origin = "";
+                    }
                 }
+                if (!origin || origin === "null") {
+                    sendResponse({ success: false, error: "Unknown request origin" });
+                    return true;
+                }
+                (message as { origin?: string }).origin = origin;
             }
-            if (!origin || origin === "null") {
-                sendResponse({ success: false, error: "Unknown request origin" });
-                return true;
-            }
-            (message as { origin?: string }).origin = origin;
         }
 
         // Handle async operations

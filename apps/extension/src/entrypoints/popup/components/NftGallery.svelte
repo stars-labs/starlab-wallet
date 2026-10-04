@@ -65,7 +65,8 @@
             items = chain === "solana" ? await loadSolana() : await loadEvm();
             loaded = true;
         } catch (e) {
-            error = (e as Error).message;
+            console.error("Collectibles could not be loaded", e);
+            error = "Collectibles are unavailable. Try again shortly.";
         } finally {
             loading = false;
         }

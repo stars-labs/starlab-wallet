@@ -106,6 +106,7 @@
             <dd class="mono break-all rounded-lg bg-surface-2 p-2">
                 {formatMessage(message)}
             </dd>
+            {#if message.startsWith("0x") && message.length > 66}<details class="mt-2"><summary class="cursor-pointer text-xs text-muted">View full message</summary><code class="mono mt-2 block max-h-40 overflow-auto break-all text-xs">{message}</code></details>{/if}
         </div>
     </dl>
 

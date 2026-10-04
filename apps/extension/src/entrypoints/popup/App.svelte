@@ -138,6 +138,7 @@
     // session proposal, import/export, test actions). Collapsed by
     // default so the main surface stays product-focused.
     let showDeveloper = false;
+    let showAccountSetup = false;
 
     onMount(() => initTheme());
     onDestroy(() => unsubTheme());
@@ -2130,7 +2131,7 @@
     <div class="flex-1 space-y-4 px-4 py-4">
     {#if appState.showSettings}
         <Settings
-            currentAddress={appState.dkgAddress || ""}
+            currentAddress={displayAddress}
             on:backToWallet={({ detail }) => {
                 if (isSupportedChain(detail.chain)) {
                     appState.chain = detail.chain;
@@ -2255,7 +2256,7 @@
                 <div class="relative flex items-center justify-between">
                     <span class="flex items-center gap-2">
                         <span
-                            class="text-xs font-semibold uppercase tracking-wide text-white/80"
+                            class="text-xs font-semibold uppercase tracking-wide text-muted"
                         >
                             <ChainIcon chain={String(appState.chain)} size={22} /> {chainLabel(appState.chain)}
                         </span>
@@ -2271,14 +2272,14 @@
                     </span>
                     {#if appState.sessionInfo}
                         <span
-                            class="rounded-full bg-white/20 px-2 py-0.5 text-xs font-semibold"
+                            class="rounded-full bg-primary-soft px-2 py-0.5 text-xs font-semibold"
                         >
                             {appState.sessionInfo.threshold}-of-{appState
                                 .sessionInfo.total}
                         </span>
                     {:else if appState.dkgLastResult}
                         <span
-                            class="rounded-full bg-white/20 px-2 py-0.5 text-xs font-semibold"
+                            class="rounded-full bg-primary-soft px-2 py-0.5 text-xs font-semibold"
                         >
                             {appState.dkgLastResult.threshold}-of-{appState
                                 .dkgLastResult.total}
@@ -2303,14 +2304,14 @@
                 </button>
                 <div class="relative mt-3 flex gap-2">
                     <button
-                        class="rounded-lg bg-white/20 px-2.5 py-1.5 text-xs font-semibold text-white backdrop-blur transition hover:bg-white/30"
+                        class="rounded-lg bg-primary-soft px-2.5 py-1.5 text-xs font-semibold text-primary backdrop-blur transition hover:bg-surface-3"
                         on:click={() => copyAddress(displayAddress)}
                     >
                         {addrCopied ? "Copied" : "Copy address"}
                     </button>
                     {#if appState.dkgGroupPublicKey}
                         <button
-                            class="rounded-lg bg-white/20 px-2.5 py-1.5 text-xs font-semibold text-white backdrop-blur transition hover:bg-white/30"
+                            class="rounded-lg bg-primary-soft px-2.5 py-1.5 text-xs font-semibold text-primary backdrop-blur transition hover:bg-surface-3"
                             on:click={() => (showGroupKey = !showGroupKey)}
                         >
                             Group key
@@ -2319,7 +2320,7 @@
                 </div>
                 {#if showGroupKey && appState.dkgGroupPublicKey}
                     <div
-                        class="relative mt-2 break-all rounded-lg bg-black/15 p-2 font-mono text-[10px] text-white/90"
+                        class="relative mt-2 break-all rounded-lg bg-surface-2 p-2 font-mono text-[10px] text-muted"
                     >
                         {appState.dkgGroupPublicKey}
                     </div>
@@ -2329,16 +2330,16 @@
 
         <!-- First-run onboarding (#26): guided create-or-join wizard, shown
              until this profile has a wallet (or the user dismisses it). -->
-        {#if (keystoreStatus.wallets?.length ?? 0) === 0 && !hasExternalAccounts && !showCreateWallet && !onboardingDismissed}
+        {#if showAccountSetup || ((keystoreStatus.wallets?.length ?? 0) === 0 && !hasExternalAccounts && !showCreateWallet && !onboardingDismissed)}
             <Onboarding
                 wsConnected={appState.wsConnected}
-                on:create={() => (showCreateWallet = true)}
+                on:create={() => { showAccountSetup = false; showCreateWallet = true; }}
                 on:ledger={connectLedgerAccounts}
                 on:yubikey={refreshYubiKeyAccounts}
                 on:simulation={({ detail }) =>
                     addSimulationAccount(detail.address, detail.blockchain)}
                 on:reconnect={reconnectSignalAfterRoomSave}
-                on:done={() => (onboardingDismissed = true)}
+                on:done={() => { onboardingDismissed = true; showAccountSetup = false; }}
             />
         {/if}
         {#if accountSetupStatus}
@@ -2363,13 +2364,14 @@
                     <SendForm
                         from={displayAddress}
                         chain={appState.chain}
+                        networkId={currentEvmNetworkId}
                         on:submit={handleSendSubmit}
                         on:cancel={() => (showSend = false)}
                     />
                 </div>
             {:else if showReceive}
                 <div class="card card-pad">
-                    <ReceiveCard address={displayAddress} chain={String(appState.chain)} />
+                    <ReceiveCard address={displayAddress} chain={String(appState.chain)} network={evmNetworks.find((n) => n.id === currentEvmNetworkId)?.name ?? ""} />
                     <button class="btn-ghost mt-2 w-full" on:click={() => (showReceive = false)}>Close</button>
                 </div>
             {:else}
@@ -2379,10 +2381,10 @@
                         on:click={() => { showSend = true; sendStatus = ""; }}
                         disabled={selectedAccount !== 0 || !isEvmChain(appState.chain)}
                         title={selectedAccount !== 0
-                            ? "Signing currently pins to Account 0 — per-session account selection ships next"
+                            ? "Sending is currently available on Account 0"
                             : isEvmChain(appState.chain)
                               ? "Send"
-                              : "Transaction sending is not wired for this chain yet"}
+                              : "Sending is not available for this network"}
                     ><Icon name="send" size={20} /> Send</button>
                     <button
                         class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
@@ -2395,7 +2397,7 @@
                 {#key dataEpoch}
                     {#if isEvmChain(appState.chain)}
                         <div class="card card-pad">
-                            <TokenList address={displayAddress} chain={appState.chain} />
+                            <TokenList address={displayAddress} chain={appState.chain} networkId={currentEvmNetworkId} />
                         </div>
                         <div class="card card-pad">
                             <ActivityFeed address={displayAddress} chain={appState.chain} />
@@ -2417,10 +2419,10 @@
             {/if}
         {/if}
 
-        <!-- Sign message: inline form (opened from the action above) -->
-        <div class="section-title">Wallet tools</div>
+        <!-- Sign message and account tools -->
+        {#if canCreate || canSign}<div class="section-title">Wallet tools</div>{/if}
         <!-- Secondary wallet tools -->
-        <!-- Primary actions -->
+        <!-- Wallet management actions -->
         {#if canCreate || canSign}
             <div class="grid grid-cols-2 gap-2.5 wallet-actions">
                 {#if canCreate}
@@ -2463,10 +2465,14 @@
                             <Icon name="edit" size={17} />
                         </span>
                         <span class="text-sm font-semibold">Sign message</span>
-                        <span class="text-xs text-muted">Request signatures</span>
+                        <span class="text-xs text-muted">Co-sign with your devices</span>
                     </button>
                 {/if}
             </div>
+        {/if}
+
+        {#if keystoreStatus.initialized}
+            <button class="btn btn-secondary btn-block" on:click={() => (showAccountSetup = !showAccountSetup)}><Icon name="plus" size={18} /> Add hardware or watch-only account</button>
         {/if}
 
         {#if canSign && showSignForm}
@@ -2643,7 +2649,7 @@
                         </dd>
                     </div>
                     {#if signPreview.eip191Hash}
-                        <div>
+                        <details class="rounded-lg border border-line p-2"><summary class="cursor-pointer text-xs text-muted">Technical details</summary>
                             <dt class="label mb-1">
                                 EIP-191 hash
                                 <span class="font-normal text-faint"
@@ -2655,7 +2661,7 @@
                             >
                                 {signPreview.eip191Hash}
                             </dd>
-                        </div>
+                        </details>
                     {/if}
                 </dl>
                 <p class="mt-3 text-xs text-muted">
@@ -2768,7 +2774,7 @@
         {#if signingErrorToasts.length > 0}
             <div class="fixed right-4 top-4 z-40 space-y-2">
                 {#each signingErrorToasts as toast (toast.expiresAt)}
-                    <div class="alert alert-error shadow-lg">
+                    <div class="alert alert-danger shadow-lg">
                         <p class="font-semibold">Signing failed</p>
                         <p class="text-[11px] opacity-80">{toast.error}</p>
                     </div>
@@ -3045,7 +3051,7 @@
 
         <!-- Multi-account support. Also rendered for hardware/simulation users
              even before any FROST DKG completes. -->
-        {#if appState.dkgState === DkgState.Complete || hasExternalAccounts}
+        {#if hasExternalAccounts}
             <AccountManager blockchain={isSupportedChain(appState.chain) ? appState.chain : "ethereum"} />
         {/if}
 
@@ -3208,6 +3214,7 @@
                         Wallet ready. Any {appState.sessionInfo.threshold} of {appState
                             .sessionInfo.total} can sign together.
                     </div>
+                    {#if showDeveloper}
                     <Button
                         variant="ghost"
                         block
@@ -3216,6 +3223,7 @@
                     >
                         Run test signing
                     </Button>
+                    {/if}
                 </div>
             {:else if appState.dkgState === DkgState.Initializing || appState.dkgState === DkgState.Round1InProgress || appState.dkgState === DkgState.Round1Complete || appState.dkgState === DkgState.Round2InProgress || appState.dkgState === DkgState.Round2Complete || appState.dkgState === DkgState.Finalizing}
                 <div class="mt-3 border-t border-line pt-3">
@@ -3286,8 +3294,8 @@
 
     <!-- Developer options (connection, devices, manual sessions) -->
     <Collapsible
-        title="Developer options"
-        subtitle="Connection, devices & manual sessions"
+        title="Advanced"
+        subtitle="Connection and device details"
         icon="code"
         bind:open={showDeveloper}
     >
@@ -3410,103 +3418,7 @@
                 <div class="divider"></div>
 
                 <div class="space-y-2">
-                    <span class="label">Keystore</span>
-                    <button
-                        class="btn btn-secondary btn-block btn-sm"
-                        on:click={() => {
-                            const input = document.createElement("input");
-                            input.type = "file";
-                            input.accept = ".json";
-                            // A wallet backup is one file per key (Ethereum's
-                            // ECDSA share is its own file): pick them together.
-                            input.multiple = true;
-                            input.onchange = async (e) => {
-                                const picked = Array.from((e.target as HTMLInputElement).files ?? []);
-                                const file = picked[0];
-                                if (file) {
-                                    const keystoreFiles = await Promise.all(picked.map((f) => f.text()));
-                                    const reader = new FileReader();
-                                    reader.onload = async (event) => {
-                                        const keystoreData = event.target
-                                            ?.result as string;
-                                        try {
-                                            const parsedKeystore =
-                                                JSON.parse(keystoreData);
-                                            let password = undefined;
-                                            if (
-                                                parsedKeystore.encrypted === true
-                                            ) {
-                                                password = prompt(
-                                                    "This keystore is encrypted. Please enter the password:",
-                                                );
-                                                if (!password) {
-                                                    alert(
-                                                        "Password is required for encrypted keystores",
-                                                    );
-                                                    return;
-                                                }
-                                            }
-                                            chrome.runtime.sendMessage(
-                                                {
-                                                    type: "importKeystore",
-                                                    keystoreData,
-                                                    keystoreFiles,
-                                                    password,
-                                                    chain: protocolChainFor(appState.chain),
-                                                },
-                                                (response) => {
-                                                    if (
-                                                        chrome.runtime.lastError
-                                                    ) {
-                                                        console.error(
-                                                            "[UI] Error importing keystore:",
-                                                            chrome.runtime
-                                                                .lastError
-                                                                .message,
-                                                        );
-                                                        alert(
-                                                            "Failed to import keystore: " +
-                                                                chrome.runtime
-                                                                    .lastError
-                                                                    .message,
-                                                        );
-                                                        return;
-                                                    }
-                                                    if (response.success) {
-                                                        console.log(
-                                                            "[UI] Keystore imported successfully",
-                                                        );
-                                                        alert(
-                                                            "Keystore imported successfully!",
-                                                        );
-                                                    } else {
-                                                        console.error(
-                                                            "[UI] Failed to import keystore:",
-                                                            response.error,
-                                                        );
-                                                        alert(
-                                                            "Failed to import keystore: " +
-                                                                response.error,
-                                                        );
-                                                    }
-                                                },
-                                            );
-                                        } catch (err) {
-                                            console.error(
-                                                "[UI] Error reading keystore file:",
-                                                err,
-                                            );
-                                            alert("Invalid keystore file");
-                                        }
-                                    };
-                                    reader.readAsText(file);
-                                }
-                            };
-                            input.click();
-                        }}
-                    >
-                        <Icon name="upload" size={15} /> Import keystore from CLI
-                    </button>
+
 
                 </div>
 

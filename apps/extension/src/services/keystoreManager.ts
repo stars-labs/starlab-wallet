@@ -366,9 +366,9 @@ export class KeystoreManager {
         return await this.keystoreService.getKeyShare(walletId);
     }
 
-    public async updateWalletAddress(walletId: string, address: string): Promise<void> {
+    public async updateWalletAddress(walletId: string, address: string, blockchain?: string): Promise<void> {
         if (this.isLocked()) throw new Error("Keystore is locked");
-        await this.keystoreService.updateWalletAddress(walletId, address);
+        await this.keystoreService.updateWalletAddress(walletId, address, blockchain);
     }
 
     /** Store another curve's share of a wallet (the threshold-ECDSA share). */

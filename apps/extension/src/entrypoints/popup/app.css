@@ -507,3 +507,9 @@
     .hero .bg-white\/20 { background:var(--c-primary-soft); color:var(--c-primary); }
     .hero .bg-black\/15 { background:var(--c-surface-2); color:var(--c-text); }
 }
+@layer components {
+    .modal-panel { max-height:calc(100vh - 32px); overflow:auto; }
+}
+@layer components {
+    .feature-title-icon { display:inline-flex; align-items:center; justify-content:center; flex:none; width:36px; height:36px; border-radius:12px; background:var(--c-primary-soft); color:var(--c-primary); }
+}

@@ -10,6 +10,8 @@
     // and a light poll re-fetches while any row is still pending (covers a
     // broadcast lost to popup-open races).
     import { onMount, onDestroy } from "svelte";
+    import { formatUnits } from "viem";
+    import { nativeSymbol } from "../../../lib/ui/tokenIdentity";
     import type { SupportedChain } from "@stars-labs/types/appstate";
 
     export let address: string | undefined = undefined;
@@ -53,6 +55,11 @@
         }
     }
 
+    function nativeValue(value: string): string {
+        try { return Number(formatUnits(BigInt(value), chain === "solana" ? 9 : 18)).toLocaleString(undefined, { maximumFractionDigits: 6 }); }
+        catch { return "—"; }
+    }
+
     const PENDING_POLL_MS = 15_000;
     let pollTimer: ReturnType<typeof setInterval> | undefined;
     function onRuntimeMessage(message: any) {
@@ -89,7 +96,7 @@
             {#each items as a (a.hash)}
                 <li class="af-row">
                     <span class="af-kind"><ChainIcon chain={String(chain)} size={28} /> {a.kind}</span>
-                    <span class="af-to">→ {short(a.to)}</span>
+                    <span class="af-to" title={a.to}>{short(a.to)}{#if a.kind !== "token-transfer"}<span class="af-value">{nativeValue(a.value)} {nativeSymbol(String(chain))}</span>{/if}</span>
                     <span class="af-status af-{a.status}">{a.status}</span>
                     <span class="af-time">{when(a.timestamp)}</span>
                 </li>
@@ -107,6 +114,7 @@
     .af-kind { display:flex; align-items:center; gap:8px; grid-area: kind; font-weight: 600; text-transform: capitalize; }
     .af-to { grid-area: to; opacity: 0.8; font-family: monospace; }
     .af-status { grid-area: status; font-size: 11px; text-transform: uppercase; }
+    .af-value { display:block; font-family:var(--font-sans); color:var(--c-text); font-size:12px; }
     .af-time { grid-area: time; opacity: 0.5; font-size: 11px; }
     .af-pending { color: var(--c-warning-fg); }
     .af-confirmed { color: var(--c-success-fg); }

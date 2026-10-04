@@ -4,7 +4,8 @@
     export let chain = "ethereum";
     export let address: string | undefined = undefined;
     export let size = 36;
-    $: image = tokenImage(symbol, chain, address);
+    export let networkId: number | undefined = undefined;
+    $: image = tokenImage(symbol, chain, address, networkId);
 </script>
 <span class="token-icon" style:width={`${size}px`} style:height={`${size}px`} aria-label={`${symbol} token`}>
     {#if image}<img src={image} alt="" />{:else}<span>{symbol.replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase() || "?"}</span>{/if}

@@ -3,46 +3,56 @@
     import ChainIcon from "../../../lib/ui/ChainIcon.svelte";
     import Icon from "../../../lib/ui/Icon.svelte";
     // Receive screen: address + scannable QR. Pure client-side (qrcode lib).
-    import { onMount } from "svelte";
 
     export let address: string;
+    export let network = "";
     export let chain: string = "ethereum";
 
     let dataUrl = "";
     let copied = false;
     let error = "";
+    let copyError = "";
+    let renderEpoch = 0;
 
-    async function render() {
+    async function render(targetAddress: string) {
+        const epoch = ++renderEpoch;
+        error = "";
+        dataUrl = "";
         try {
             const QRCode = (await import("qrcode")).default;
-            dataUrl = await QRCode.toDataURL(address, { width: 200, margin: 1 });
+            const nextUrl = await QRCode.toDataURL(targetAddress, { width: 200, margin: 1 });
+            if (epoch === renderEpoch) dataUrl = nextUrl;
         } catch (e) {
-            error = (e as Error).message;
+            if (epoch === renderEpoch) error = (e as Error).message;
         }
     }
 
     async function copy() {
+        copyError = "";
         try {
             await navigator.clipboard.writeText(address);
             copied = true;
             setTimeout(() => (copied = false), 1500);
         } catch {
-            /* clipboard blocked */
+            copyError = "Could not copy. Select the address and copy it manually.";
         }
     }
 
-    onMount(render);
+    $: if (address) void render(address);
 </script>
 
 <div class="receive">
-    <ChainIcon {chain} size={48} /><div class="rc-label">Receive crypto</div><span class="badge badge-primary">{chain}</span><p class="text-xs text-muted">Only send assets on this network.</p>
+    <ChainIcon {chain} size={48} /><div class="rc-label">Receive crypto</div><span class="badge badge-primary">{network || chain.charAt(0).toUpperCase() + chain.slice(1)}</span><p class="text-xs text-muted">Only send assets on this network.</p>
     {#if error}
         <div class="rc-error">{error}</div>
     {:else if dataUrl}
         <img class="rc-qr" src={dataUrl} alt="QR code for {address}" />
+    {:else}
+        <div class="state-panel" aria-busy="true"><div class="skeleton-row"></div>Creating QR code…</div>
     {/if}
     <code class="rc-addr">{address}</code>
     <button class="btn btn-primary rc-copy" on:click={copy}><Icon name={copied ? "check" : "copy"} size={16} />{copied ? "Copied" : "Copy address"}</button>
+    {#if copyError}<p class="text-xs text-danger-fg">{copyError}</p>{/if}
 </div>
 
 <style>

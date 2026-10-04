@@ -493,10 +493,11 @@ export class KeystoreService {
     
     /** Change a wallet's primary address in the index (e.g. once its
      *  Ethereum (ECDSA) share is attached). */
-    public async updateWalletAddress(walletId: string, address: string): Promise<void> {
+    public async updateWalletAddress(walletId: string, address: string, blockchain?: string): Promise<void> {
         const wallet = this.keystoreIndex?.wallets.find((w) => w.id === walletId);
         if (!wallet) throw new Error(`Wallet ${walletId} not found`);
         wallet.address = address;
+        if (blockchain) wallet.blockchain = blockchain;
         this.keystoreIndex!.lastModified = Date.now();
         await this.saveKeystoreIndex();
     }

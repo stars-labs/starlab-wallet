@@ -73,7 +73,7 @@
     on:keydown={handleKeydown}
 >
     <div class="modal-panel">
-        <h2 id="password-prompt-title" class="text-base font-bold">{title}</h2>
+        <div id="password-prompt-title"><FeatureHeader {title} icon="lock" /></div>
         <p class="mt-1 text-xs text-muted">{message}</p>
 
         <div class="mt-4">

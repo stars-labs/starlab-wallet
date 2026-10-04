@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { tokenName } from "../lib/ui/tokenIdentity";
+    import WalletRestore from "./WalletRestore.svelte";
     import TokenIcon from "../lib/ui/TokenIcon.svelte";
     import ChainIcon from "../lib/ui/ChainIcon.svelte";
     import { onMount } from "svelte";
@@ -7,6 +9,7 @@
     import type { SupportedChain } from "@stars-labs/types/appstate";
     import {
         CHAIN_METADATA,
+        getProtocolBlockchainForChain,
         EVM_CHAINS,
         LIMITED_CHAINS,
         getCompatibleChains,
@@ -685,25 +688,25 @@
             <ul class="space-y-2">
                 {#each dappPermissions as p (p.origin)}
                     <li class="flex items-center justify-between gap-2">
-                        <div class="min-w-0">
+                        <div class="asset-identity"><span class="feature-title-icon"><Icon name="link" size={20} /></span><div class="min-w-0">
                             <div class="truncate text-xs font-semibold">{p.origin}</div>
                             <div class="truncate text-xs text-muted">
                                 {p.connectedAccounts.map(shortAcct).join(", ")}
                             </div>
                         </div>
-                        <Button
+                        </div><Button
                             size="sm"
                             variant="ghost"
                             on:click={() => revokeDapp(p.origin)}
                         >
-                            Revoke
+                            Disconnect
                         </Button>
                     </li>
                 {/each}
             </ul>
             <p class="text-xs text-muted">
-                Revoking removes the site's access; it takes effect on the
-                site's next request.
+                Disconnecting removes the site's account access. Existing token
+                approvals remain active until you revoke them below.
             </p>
         {/if}
     </div>
@@ -766,7 +769,7 @@
             file (CLI-compatible).
             One share alone can never sign — the threshold protects you — but treat
             the file like a secret: store it offline, never paste it anywhere.
-            Restore via "Import keystore" or the CLI.
+            Restore your device from this file when needed.
         </p>
         <label class="flex items-center gap-2 text-xs">
             <input type="checkbox" bind:checked={backupAcknowledged} />
@@ -794,6 +797,7 @@
         {#if backupStatus}
             <p class="text-xs text-muted">{backupStatus}</p>
         {/if}
+        <WalletRestore chain={getProtocolBlockchainForChain(chain)} />
     </div>
 
     <!-- Devices / Reshare (M3 #23): rotate shares or retire a device -->
@@ -844,10 +848,11 @@
                         <li class="flex items-center justify-between gap-2">
                             <div class="asset-identity"><TokenIcon symbol="?" chain={String(r.chainId)} address={r.token} size={28} /><div class="min-w-0 text-xs">
                                 <div class="truncate font-semibold">
-                                    token {shortHexId(r.token)} → spender {shortHexId(r.spender)}
+                                    {tokenName(String(r.chainId), r.token)} · {shortHexId(r.token)}
                                 </div>
                                 <div class="truncate text-muted">
-                                    {r.current === -1n ? "current allowance unknown" : `allowance: ${r.current}`}
+                                    Spender {shortHexId(r.spender)}
+                                    <span class="block">{r.current === -1n ? "Allowance unavailable" : `Allowance: ${r.current}`}</span>
                                 </div>
                             </div>
                             </div><Button size="sm" variant="ghost" on:click={() => revokeAllowance(r)}>
@@ -867,9 +872,8 @@
     <div class="card card-pad space-y-2">
         <h3 class="section-title"><span class="section-icon"><Icon name="monitor" size={17} /></span>Sandbox mode</h3>
         <p class="text-xs text-muted">
-            Point the wallet at local fork chains (anvil :8545 / surfpool :8899)
-            — real signing &amp; broadcast, no real funds. Start the nodes with
-            <code>scripts/sandbox.sh</code>.
+            Explore transactions in a simulated environment. Your devices
+            still co-sign, while no real funds are spent.
         </p>
         <div class="flex items-center gap-2">
             <Button
@@ -915,7 +919,7 @@
                 </optgroup>
             </select>
             <p class="mt-1 text-xs text-muted">
-                {CHAIN_METADATA[chain].family} · {getRequiredCurve(chain)}
+                {CHAIN_METADATA[chain].family} network
             </p>
             {#if CHAIN_METADATA[chain].status === "limited"}
                 <p class="mt-1 text-xs text-muted">{CHAIN_METADATA[chain].note}</p>

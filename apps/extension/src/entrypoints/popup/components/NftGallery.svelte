@@ -25,9 +25,9 @@
     let error = "";
 
     const BADGE: Record<string, string> = {
-        erc721: "721",
-        erc1155: "1155",
-        metaplex: "SOL",
+        erc721: "NFT",
+        erc1155: "Edition",
+        metaplex: "Solana",
     };
 
     async function loadEvm(): Promise<NftItem[]> {
@@ -120,6 +120,6 @@
     .ng-badge { left: 4px; }
     .ng-count { right: 4px; }
     .ng-card img, .ng-placeholder { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: rgba(127,127,127,0.15); display: block; }
-    .ng-placeholder { display: flex; align-items: center; justify-content: center; font-size: 12px; opacity: 0.7; }
+    .ng-placeholder { display: flex; flex-direction:column; gap:8px; align-items: center; justify-content: center; font-size: 12px; opacity: 0.7; }
     .ng-card figcaption { font-size: 11px; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

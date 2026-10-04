@@ -8,6 +8,7 @@
     import type { SupportedChain } from "@stars-labs/types/appstate";
 
     export let address: string | undefined = undefined;
+    export let networkId: number | undefined = undefined;
     export let chain: SupportedChain = "ethereum";
 
     let loading = true;
@@ -56,16 +57,16 @@
     {:else if error}
         <div class="state-panel state-error"><Icon name="alert" /><span>{error}</span><button class="btn btn-secondary btn-sm" on:click={load}>Try again</button></div>
     {:else if portfolio}
-        
+
         <ul class="tl-rows">
             <li class="tl-row">
-                <div class="asset-identity"><TokenIcon symbol={portfolio.native.symbol} chain={String(chain)} /><div><span class="tl-sym">{portfolio.native.symbol}</span><span class="asset-network">Native asset</span></div></div>
+                <div class="asset-identity"><TokenIcon {networkId} symbol={portfolio.native.symbol} chain={String(chain)} /><div><span class="tl-sym">{portfolio.native.symbol}</span><span class="asset-network">Native asset</span></div></div>
                 <span class="tl-bal">{amt(portfolio.native.balance)}</span>
                 <span class="tl-fiat">{fiat(portfolio.native.fiat)}</span>
             </li>
             {#each portfolio.tokens as t (t.address)}
                 <li class="tl-row">
-                    <div class="asset-identity"><TokenIcon symbol={t.symbol} chain={String(chain)} address={t.address} /><div><span class="tl-sym">{t.name ?? t.symbol}</span><span class="asset-network">{t.symbol}</span></div></div>
+                    <div class="asset-identity"><TokenIcon {networkId} symbol={t.symbol} chain={String(chain)} address={t.address} /><div><span class="tl-sym">{t.name ?? t.symbol}</span><span class="asset-network">{t.symbol}</span></div></div>
                     <span class="tl-bal">{amt(t.balance)}</span>
                     <span class="tl-fiat">{fiat(t.fiat)}</span>
                 </li>

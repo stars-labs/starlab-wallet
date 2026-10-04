@@ -1,9 +1,11 @@
 <script lang="ts">
     import { createEventDispatcher } from "svelte";
+    import FeatureHeader from "./FeatureHeader.svelte";
     import Icon from "./Icon.svelte";
 
     export let title: string = "";
     export let subtitle: string = "";
+    export let icon = "shield";
     /** Show the ✕ close affordance + allow backdrop click to close. */
     export let dismissable: boolean = true;
 
@@ -21,14 +23,7 @@
     <div class="modal-panel" role="dialog" aria-modal="true">
         {#if title || dismissable}
             <div class="mb-3 flex items-start justify-between gap-3">
-                <div>
-                    {#if title}
-                        <h3 class="text-base font-bold text-content">{title}</h3>
-                    {/if}
-                    {#if subtitle}
-                        <p class="mt-0.5 text-xs text-muted">{subtitle}</p>
-                    {/if}
-                </div>
+                <FeatureHeader {title} {subtitle} {icon} />
                 {#if dismissable}
                     <button
                         class="icon-btn -mr-1 -mt-1 shrink-0"

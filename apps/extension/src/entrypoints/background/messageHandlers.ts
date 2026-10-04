@@ -17,7 +17,7 @@ import type {
 import { MESSAGE_TYPES, isRpcMessage, isAccountManagement, isNetworkManagement, isUIRequest } from "@stars-labs/types/messages";
 import { StateManager, withoutSecrets } from "./stateManager";
 import { redactForLog } from "../../utils/redact";
-import { walletIdFromSession, ECDSA_CURVE } from "../../utils/wallet-id";
+import { walletIdFromSession, ECDSA_CURVE, isEcdsaChain } from "../../utils/wallet-id";
 import { OffscreenManager } from "./offscreenManager";
 import { WebSocketManager } from "./webSocketManager";
 import { SessionManager } from "./sessionManager";
@@ -1713,7 +1713,7 @@ export class PopupMessageHandler {
                 }
             }
             for (const file of ecdsa) {
-                const attached = await this.importEcdsaShareFile(file, message.password);
+                const attached = await this.importEcdsaShareFile(file, message.password, message.chain);
                 result = { ...result, walletId: attached.walletId, address: attached.address ?? result.address };
             }
             await checkAndRestoreKeystores();
@@ -1726,7 +1726,7 @@ export class PopupMessageHandler {
     }
 
     /** Attach an ECDSA share file to its (FROST) wallet in this keystore. */
-    private async importEcdsaShareFile(fileJson: string, password: string): Promise<{ walletId: string; address?: string }> {
+    private async importEcdsaShareFile(fileJson: string, password: string, requestedChain?: unknown): Promise<{ walletId: string; address?: string }> {
         const { metadata, shareJson } = await openEcdsaShareBackup(fileJson, password);
         const info = await this.ecdsaShareInfo(shareJson);
         if (info.group_public_key.toLowerCase() !== String(metadata.group_public_key).toLowerCase()) {
@@ -1747,7 +1747,10 @@ export class PopupMessageHandler {
             throw new Error(`Wallet ${walletId} already has a different Ethereum key`);
         }
         await km.setCurveShare(walletId, ECDSA_CURVE, shareJson);
-        const primaryChain: SupportedChain = isSupportedChain(wallet.blockchain) ? (wallet.blockchain as SupportedChain) : "ethereum";
+        const primaryChain: SupportedChain = isSupportedChain(requestedChain) &&
+            (isEcdsaChain(requestedChain) || getRequiredCurve(requestedChain) === keyShare.curve)
+            ? requestedChain
+            : isSupportedChain(wallet.blockchain) ? wallet.blockchain : "ethereum";
         const { blockchains, addressFor, primaryAddress } = await this.deriveWalletAddresses(
             "secp256k1",
             keyShare.group_public_key,
@@ -1761,7 +1764,7 @@ export class PopupMessageHandler {
             blockchains,
             ethereum_address: addressFor("ethereum"),
         });
-        await km.updateWalletAddress(walletId, primaryAddress);
+        await km.updateWalletAddress(walletId, primaryAddress, primaryChain);
         return { walletId, address: primaryAddress };
     }
 

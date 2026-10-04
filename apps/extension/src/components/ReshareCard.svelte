@@ -207,7 +207,7 @@
                 return `Round 2 of 2 — packages ${rs.round2Received.length}/${rs.participants.length}`;
             case "Complete":
                 return rs.saved
-                    ? "Done — new shares saved. Addresses unchanged."
+                    ? "Done — new Bitcoin, Solana or Sui shares saved. Their addresses are unchanged."
                     : "Ceremony finished, but saving the new share failed.";
             case "Failed":
                 return `Reshare failed: ${rs.error ?? "unknown error"}`;
@@ -221,10 +221,12 @@
 </script>
 
 <div class="card card-pad space-y-2" data-testid="reshare-card">
-    <FeatureHeader title="Manage wallet devices" subtitle="Refresh shares or replace a device" icon="users" />
+    <FeatureHeader title="Manage wallet devices" subtitle="Refresh Bitcoin, Solana or Sui shares" icon="users" />
     <p class="text-xs text-muted">
-        Rotate this wallet's key shares or retire a lost device. The group key
-        — and every address — stays the same; only the shares change.
+        Refresh this wallet's Bitcoin, Solana or Sui shares while keeping
+        their addresses. Ethereum shares and device access stay unchanged.
+        To retire a device for Ethereum, create a new wallet with the devices
+        you trust and transfer the funds to its new address.
         <strong>All remaining devices must be online and join.</strong>
     </p>
 
@@ -309,8 +311,9 @@
                     />
                 </label>
                 <p class="text-[10px] text-muted">
-                    The removed device's share becomes useless after the
-                    reshare. The removed device does NOT need to be online —
+                    The removed device's Bitcoin, Solana or Sui share cannot
+                    join new signing sessions after the refresh. Its Ethereum
+                    share stays unchanged. The removed device does NOT need to be online —
                     everyone else does. Adding a brand-new device is not
                     supported yet (every reshare participant must already hold
                     a share).

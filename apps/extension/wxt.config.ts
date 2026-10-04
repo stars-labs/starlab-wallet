@@ -95,13 +95,6 @@ export default defineConfig({
         "32": "assets/icon-32.png"
       }
     },
-    content_scripts: [
-      {
-        matches: ['<all_urls>'],
-        js: ['content-scripts/content.js'],
-        run_at: 'document_start'
-      }
-    ],
     background: {
       service_worker: "entrypoints/background/index.ts",
       type: "module"

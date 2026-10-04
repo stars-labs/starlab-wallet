@@ -59,6 +59,7 @@ export class StateManager {
     private static readonly STATE_STORAGE_KEY = 'starlab_background_state';
     private isStateLoaded = false;
     private pendingPopupPorts: chrome.runtime.Port[] = [];
+    private withdrawSigningInvite?: (sessionId: string) => void;
     private rpcHandler?: any; // Will be set after initialization
     /** External observers of dkgState transitions. Keepalive uses
      *  this; see `keepaliveController.ts`. */
@@ -162,9 +163,12 @@ export class StateManager {
         console.log("[StateManager] All pending popup ports processed");
     }
 
-    /**
-     * Set the RPC handler for signature callbacks
-     */
+    /** Withdraw discovery after the signing transport has sent the result. */
+    setSigningInviteWithdrawal(handler: (sessionId: string) => void): void {
+        this.withdrawSigningInvite = handler;
+    }
+
+    /** Set the RPC handler for signature callbacks. */
     setRpcHandler(handler: any): void {
         this.rpcHandler = handler;
         console.log("[StateManager] RPC handler set");
@@ -704,6 +708,15 @@ export class StateManager {
                         sessionId: info.sessionId,
                         completedAt: Date.now(),
                     };
+                    // Offscreen emits completion after sending the final signature.
+                    // Remove discovery at the proposer only; keep the mesh alive
+                    // for slower signers and participants outside the signer set.
+                    const session = this.appState.sessionInfo;
+                    if (session?.session_type === "signing" &&
+                        session.session_id === info.sessionId &&
+                        session.proposer_id === this.appState.deviceId) {
+                        this.withdrawSigningInvite?.(info.sessionId);
+                    }
                     // Clear the active signing session so "+ Sign" is
                     // available again, and drop the finished request.
                     this.dropSigningInvite(info.sessionId);

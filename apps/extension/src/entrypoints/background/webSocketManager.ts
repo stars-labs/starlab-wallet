@@ -86,6 +86,9 @@ export class WebSocketManager {
         this.sendToOffscreen = sendToOffscreen;
         this.stateManager = stateManager;
         this.signingNotifier = signingNotifier ?? null;
+        this.stateManager?.setSigningInviteWithdrawal?.((sessionId: string) => {
+            this.wsClient?.sendLeaveSession(sessionId);
+        });
     }
 
     /**

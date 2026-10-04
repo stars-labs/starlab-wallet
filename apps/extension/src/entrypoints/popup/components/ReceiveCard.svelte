@@ -18,6 +18,9 @@
         const epoch = ++renderEpoch;
         error = "";
         dataUrl = "";
+        copied = false;
+        copyError = "";
+        if (!targetAddress) return;
         try {
             const QRCode = (await import("qrcode")).default;
             const nextUrl = await QRCode.toDataURL(targetAddress, { width: 200, margin: 1 });
@@ -28,6 +31,7 @@
     }
 
     async function copy() {
+        if (!address) return;
         copyError = "";
         try {
             await navigator.clipboard.writeText(address);
@@ -38,12 +42,14 @@
         }
     }
 
-    $: if (address) void render(address);
+    $: void render(address);
 </script>
 
 <div class="receive">
     <ChainIcon {chain} size={48} /><div class="rc-label">Receive crypto</div><span class="badge badge-primary">{network || chain.charAt(0).toUpperCase() + chain.slice(1)}</span><p class="text-xs text-muted">Only send assets on this network.</p>
-    {#if error}
+    {#if !address}
+        <p class="text-xs text-muted" role="status">No receive address available.</p>
+    {:else if error}
         <div class="rc-error">{error}</div>
     {:else if dataUrl}
         <img class="rc-qr" src={dataUrl} alt="QR code for {address}" />
@@ -51,7 +57,7 @@
         <div class="state-panel" aria-busy="true"><div class="skeleton-row"></div>Creating QR code…</div>
     {/if}
     <code class="rc-addr">{address}</code>
-    <button class="btn btn-primary rc-copy" on:click={copy}><Icon name={copied ? "check" : "copy"} size={16} />{copied ? "Copied" : "Copy address"}</button>
+    <button class="btn btn-primary rc-copy" on:click={copy} disabled={!address}><Icon name={copied ? "check" : "copy"} size={16} />{copied ? "Copied" : "Copy address"}</button>
     {#if copyError}<p class="text-xs text-danger-fg">{copyError}</p>{/if}
 </div>
 

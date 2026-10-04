@@ -28,8 +28,8 @@ jobs:
   # Extension <-> CLI interop (apps/extension/tests/interop): the built
   # extension in headed Chromium (xvfb) runs DKG, signing and reshare with
   # real starlab-cli peers over a private signal server. The CLI comes from
-  # starlab-mpc: the branch with this PR's name when one exists (a paired
-  # protocol change), otherwise main.
+  # the same pinned starlab-mpc revision used by the desktop, so the CI
+  # oracle tests the integrated engine represented by the vendored WASM.
   interop:
     runs-on: ubuntu-latest
     # secp256k1 DKGs also create the threshold-ECDSA key (aux info is ~2 min
@@ -41,21 +41,12 @@ jobs:
         curve: [secp256k1, ed25519]
     steps:
       - uses: actions/checkout@v4
-      - name: Pick the starlab-mpc ref
-        id: mpc
-        run: |
-          branch="${{ github.head_ref || github.ref_name }}"
-          if git ls-remote --exit-code --heads https://github.com/stars-labs/starlab-mpc "$branch" >/dev/null; then
-            echo "ref=$branch" >> "$GITHUB_OUTPUT"
-          else
-            # Threshold ECDSA (Stage 4): the engine side lives on
-            # feat/ecdsa-cggmp24 until both land together; back to main then.
-            echo "ref=feat/ecdsa-cggmp24" >> "$GITHUB_OUTPUT"
-          fi
+      # Match the integrated engine revision consumed by the desktop. A named
+      # feature branch can lag the vendored WASM and omit client fixes.
       - uses: actions/checkout@v4
         with:
           repository: stars-labs/starlab-mpc
-          ref: ${{ steps.mpc.outputs.ref }}
+          ref: 3c5982d0d458fce1a04c393a679fb5a91a2a168f
           path: starlab-mpc
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

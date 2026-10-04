@@ -212,21 +212,28 @@
 
     // Hero-card portfolio fiat total (#13). null = not loaded / unavailable.
     let heroFiat: number | null = null;
-    let heroFiatFor = ""; // chain:address the current value belongs to
-    async function loadHeroFiat(address: string, chain: SupportedChain) {
+    let heroFiatFor = "";
+    async function loadHeroFiat(address: string, chain: SupportedChain, requestKey: string) {
+        heroFiatFor = requestKey;
+        heroFiat = null;
         try {
             const res = await chrome.runtime.sendMessage({ type: "getPortfolio", address, chain });
-            if (res?.success && typeof res.portfolio?.totalFiat === "number") {
-                heroFiat = res.portfolio.totalFiat;
-                heroFiatFor = `${chain}:${address}`;
+            if (heroFiatFor !== requestKey) return;
+            const portfolio = res?.portfolio;
+            const assets = portfolio ? [portfolio.native, ...(portfolio.tokens ?? [])].filter(Boolean) : [];
+            const hasPrices = assets.some((asset) => typeof asset.fiat === "number" && Number.isFinite(asset.fiat));
+            const fullyPriced = assets.every((asset) => Number(asset.balance) === 0 || (typeof asset.fiat === "number" && Number.isFinite(asset.fiat)));
+            if (res?.success && hasPrices && fullyPriced && typeof portfolio.totalFiat === "number" && Number.isFinite(portfolio.totalFiat)) {
+                heroFiat = portfolio.totalFiat;
             }
         } catch {
-            /* price feed down — keep whatever we had */
+            /* Unavailable pricing remains unavailable. */
         }
     }
-    // Refresh whenever the displayed address changes (wallet switch / DKG done).
-    $: if (isEvmChain(appState.chain) && displayAddress && `${appState.chain}:${displayAddress}` !== heroFiatFor) {
-        loadHeroFiat(displayAddress, appState.chain);
+    $: heroFiatKey = isEvmChain(appState.chain) && displayAddress ? `${appState.chain}:${displayAddress}:${currentEvmNetworkId ?? ""}` : "";
+    $: if (heroFiatKey !== heroFiatFor) {
+        if (heroFiatKey && appState.chain) loadHeroFiat(displayAddress, appState.chain, heroFiatKey);
+        else { heroFiatFor = ""; heroFiat = null; }
     }
     async function handleSendSubmit(e: CustomEvent) {
         const { tx, asset, amount, to, tokenAddress } = e.detail;
@@ -2292,6 +2299,8 @@
                     <div class="relative mt-2 text-2xl font-bold tracking-tight">
                         ${heroFiat.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                     </div>
+                {:else}
+                    <div class="relative mt-2 text-2xl font-bold tracking-tight" aria-label="Fiat value unavailable">—</div>
                 {/if}
                 <button
                     class="relative mt-3 flex items-center gap-2"

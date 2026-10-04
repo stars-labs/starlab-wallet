@@ -48,6 +48,7 @@ export class WebSocketManager {
     private sessionManager: SessionManager;
     private broadcastToPopup: (message: BackgroundToPopupMessage) => void;
     private sendToOffscreen: (message: OffscreenMessage, description: string) => Promise<{ success: boolean; error?: string }>;
+    private retiredSigningInvites = new Set<string>();
     private stateManager?: any; // StateManager for persistence
     /**
      * The URL we actually called `initialize` with. Kept so the status
@@ -87,6 +88,7 @@ export class WebSocketManager {
         this.stateManager = stateManager;
         this.signingNotifier = signingNotifier ?? null;
         this.stateManager?.setSigningInviteWithdrawal?.((sessionId: string) => {
+            this.retiredSigningInvites.add(sessionId);
             this.wsClient?.sendLeaveSession(sessionId);
         });
     }
@@ -238,6 +240,9 @@ export class WebSocketManager {
             console.log("[WebSocketManager] Registering with server as peer:", this.appState.deviceId);
             try {
                 this.wsClient!.register(this.appState.deviceId);
+                for (const sessionId of this.retiredSigningInvites) {
+                    this.wsClient!.sendLeaveSession(sessionId);
+                }
                 console.log("[WebSocketManager] Registration sent to server");
                 this.reconnectAttempt = 0;
                 // Back after a drop mid-ceremony: tell the server (and so the
@@ -683,6 +688,7 @@ export class WebSocketManager {
     ): void {
         const sessionId = (msg as any).session_id as string | undefined;
         if (!sessionId) return;
+        this.retiredSigningInvites.delete(sessionId);
         const current: AppState = this.stateManager?.getState() ?? this.appState;
         const currentInvites = current.invites ?? [];
         const before = currentInvites.length;

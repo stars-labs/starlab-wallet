@@ -34,6 +34,22 @@ describe("completed signing invite retirement", () => {
         expect(socket.send).toHaveBeenCalledWith(JSON.stringify({type: "leave_session", session_id: "first"}));
         expect(socket.close).not.toHaveBeenCalled();
     });
+    it("retries a withdrawal lost while disconnected before requesting session replay", () => {
+        const mgr = new StateManager({deviceId: "creator"});
+        const socket = {readyState: WebSocket.CLOSED, send: jest.fn(), close: jest.fn()};
+        const client = new WebSocketClient("ws://localhost");
+        (client as any).ws = socket;
+        const transport = new WebSocketManager(mgr.getState(), {updateWebSocketClient() {}} as any, () => {}, async () => ({success: true}), mgr);
+        (transport as any).wsClient = client;
+        (transport as any).setupEventHandlers();
+        mgr.updateState({sessionInfo: session("first")});
+        complete(mgr, "first");
+        expect(socket.send).not.toHaveBeenCalled();
+        socket.readyState = WebSocket.OPEN;
+        for (const open of (client as any).onOpenCallbacks) open();
+        expect(socket.send.mock.calls[0][0]).toBe(JSON.stringify({type: "register", device_id: "creator"}));
+        expect(socket.send.mock.calls[1][0]).toBe(JSON.stringify({type: "leave_session", session_id: "first"}));
+    });
     it("co-signers and outsiders never send leave_session", () => {
         for (const deviceId of ["signer", "observer"]) {
             const mgr = new StateManager({deviceId});

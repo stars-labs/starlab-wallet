@@ -49,6 +49,7 @@ beforeEach(async () => {
     KeystoreService.resetInstance();
 });
 afterEach(() => {
+    (KeystoreService as any).testMode = true;
     (globalThis as any).crypto = savedCrypto;
 });
 
@@ -105,6 +106,11 @@ describe("import an engine backup, then sign from the popup", () => {
             ),
         );
         expect(imported).toMatchObject({ success: true, walletId: "w-transfer" });
+        const restored = KeystoreManager.getInstance().getWallets().find((wallet) => wallet.id === "w-transfer")!;
+        expect(restored.blockchain).toBe("ethereum");
+        const account0 = JSON.parse(derive_account_addresses("secp256k1-ecdsa", ECDSA_WALLET.group_public_key, 0));
+        expect(restored.address).toBe(account0.find((entry: any) => entry.chain === "Ethereum").address);
+        expect(imported.address).toBe(restored.address);
 
         const signed = await new Promise<any>((resolve) =>
             (bg.handler as any).handleCreateSigningSessionRequest({ walletId: "w-transfer", message: "hello" }, resolve),
@@ -119,6 +125,18 @@ describe("import an engine backup, then sign from the popup", () => {
         // Ethereum signs with the imported ECDSA key.
         expect(info.curve_type).toBe("secp256k1-ecdsa");
         expect(info.group_public_key).toBe(ECDSA_WALLET.group_public_key);
+
+        await KeystoreManager.getInstance().lock();
+        (KeystoreManager as any).instance = null;
+        KeystoreService.resetInstance();
+        // Exercise the real persisted-index read; resetInstance skips it by default.
+        (KeystoreService as any).testMode = false;
+        const reloaded = KeystoreManager.getInstance();
+        await reloaded.initialize("device-a");
+        expect(await reloaded.unlock(PASSWORD)).toBe(true);
+        expect(reloaded.getWallets().find((wallet) => wallet.id === "w-transfer")).toMatchObject({
+            blockchain: "ethereum", address: restored.address,
+        });
     }, 30000);
 
     it("an Ethereum signing needs the wallet's ECDSA share file too", async () => {

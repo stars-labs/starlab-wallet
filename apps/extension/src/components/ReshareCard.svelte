@@ -7,13 +7,13 @@
      * device ids from the decrypted key share) and offers two flows:
      *
      *   - Rotate shares: same cohort, same threshold — every device
-     *     gets a brand-new share, the group key (and all addresses)
+     *     gets a brand-new FROST share, the FROST group key and addresses
      *     stay identical. Use after a device might have leaked its
      *     share.
      *   - Replace device: remove a lost/retired device from the
      *     cohort (optionally adjusting the threshold). The remaining
      *     devices reshare among themselves; the removed device's
-     *     share becomes useless.
+     *     FROST share is excluded from the refreshed cohort; its Ethereum key is unchanged.
      *
      * Both flows announce a `reshare` session over the signal
      * server; the OTHER devices must be online and join (their popup
@@ -311,9 +311,8 @@
                     />
                 </label>
                 <p class="text-[10px] text-muted">
-                    The removed device's Bitcoin, Solana or Sui share cannot
-                    join new signing sessions after the refresh. Its Ethereum
-                    share stays unchanged. The removed device does NOT need to be online —
+                    The removed device is excluded from the refreshed
+                    Bitcoin, Solana or Sui cohort. Its Ethereum share stays unchanged. The removed device does NOT need to be online —
                     everyone else does. Adding a brand-new device is not
                     supported yet (every reshare participant must already hold
                     a share).

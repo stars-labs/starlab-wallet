@@ -46,7 +46,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: stars-labs/starlab-mpc
-          ref: 031e81f3177a839eebdd7dfa48e8710e2d999222
+          ref: c70839e3fcb7a88e9ba3d1c3840df51987fdba4a
           path: starlab-mpc
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

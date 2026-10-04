@@ -12,6 +12,7 @@ body, .wallet-main { min-height: 0; }
 .wallet-tools > button { display:grid; grid-template-columns:28px minmax(0,1fr); gap:2px 8px; min-height:72px; text-align:left; }
 .wallet-tools > button > span:first-child { grid-row:span 2; width:28px; height:28px; }
 .wallet-tools > button > span { min-width:0; }
+.portfolio-secondary { display:flex; flex-direction:column; gap:10px; min-width:0; }
 .state-panel { padding:16px 10px; }
 .sf-review-amount { padding:12px 0; }
 .modal-panel { padding:14px; }
@@ -25,9 +26,8 @@ body, .wallet-main { min-height: 0; }
         gap:12px; align-items:start;
     }
     .wallet-content:has(> .portfolio-panel) > * { grid-column:1 / -1; }
-    .wallet-content:has(> .portfolio-panel) > .portfolio-panel { grid-column:1; grid-row:span 2; }
-    .wallet-content:has(> .portfolio-panel) > .activity-panel,
-    .wallet-content:has(> .portfolio-panel) > .collectibles-panel { grid-column:2; }
+    .wallet-content:has(> .portfolio-panel) > .portfolio-panel { grid-column:1; }
+    .wallet-content:has(> .portfolio-panel) > .portfolio-secondary { grid-column:2; gap:12px; }
     .hero { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:24px; align-items:center; }
     .hero > div:first-child { grid-column:1 / -1; }
     .hero-address { margin-top:4px; }

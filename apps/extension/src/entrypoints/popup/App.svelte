@@ -2398,11 +2398,13 @@
                         <div class="card card-pad portfolio-panel">
                             <TokenList address={displayAddress} chain={appState.chain} networkId={currentEvmNetworkId} />
                         </div>
+                        <div class="portfolio-secondary">
                         <div class="card card-pad activity-panel">
                             <ActivityFeed address={displayAddress} chain={appState.chain} />
                         </div>
                         <div class="card card-pad collectibles-panel">
                             <NftGallery address={displayAddress} chain={appState.chain || "ethereum"} />
+                        </div>
                         </div>
                     {:else if appState.chain === "solana"}
                         <div class="card card-pad">

@@ -6385,7 +6385,8 @@
     "providerEvidence": "/tmp/starlab-single-provider-evidence.json",
     "publishedHead": "8cb4d35",
     "integratedEngine": "031e81f3177a839eebdd7dfa48e8710e2d999222",
-    "manifestProvenance": "Final immutable production manifest from /tmp/starlab-single-provider-release-build/chrome-mv3/manifest.json. The two duplicate content script entries belonged to earlier builds; their manifest SHA256 values remain preserved in builds."
+    "manifestProvenance": "Final immutable production manifest from /tmp/starlab-single-provider-release-build/chrome-mv3/manifest.json. The two duplicate content script entries belonged to earlier builds; their manifest SHA256 values remain preserved in builds.",
+    "artifactRole": "Historical production artifact before the natural-height Settings follow-up. The default archive path is mutable; its recorded5063189hash is not the later0887e59artifact."
   },
   "provider": {
     "sourceRevision": "a4b8ee34c1743afd5af4ee3fc3986b11aff9b8b0",
@@ -6417,5 +6418,6 @@
     "browserScreenshot": "/home/freeman.xiong/Documents/github/stars-labs/starlab-wallet-ecdsa-stage4/apps/extension/test-results/provider.pw.ts-production--7d292-s-one-provider-per-document/provider.png",
     "previousDuplicateContentScriptEntries": 2,
     "publishedHead": "8cb4d35"
-  }
+  },
+  "latestPackagingEvidence": "settings-natural-2026-10-05.json"
 }

@@ -125,3 +125,26 @@ ZIP SHA-256 is
 Firefox builds, but Firefox cryptographic runtime and physical hardware-card
 signing remain unverified. Remote CI status must be checked against the
 current PR head separately from these local results.
+
+
+## Natural-height wide Settings follow-up
+
+The latest compact review found gaps below shorter cards in the wide grid.
+Presentation source `1ae6d4318659e213b5f4a732fe0e48d8211cca01` uses two natural-height
+CSS columns at wide widths, preserves cards intact and follows existing DOM
+order down each column. Popup remains a single flex column. No font size,
+button target, form behavior or dependency changed. Actual consecutive card
+gaps are 10px in the popup and 12px wide; short cards no longer reserve a grid row.
+
+Four actual light/dark popup/wide public-fixture cases pass with no page errors
+or horizontal overflow. Full-page and 600px viewport PNGs, all 30 production
+bundle hashes and source pins are in [follow-up evidence](evidence/settings-natural-2026-10-05.json).
+Earlier 242 captures retain their earlier versions and are not relabeled as
+new captures. Normal root build, Svelte (zero errors/warnings), standard ZIP
+and actual Chromium provider regression (one test, 2.4 seconds) pass.
+
+The new versioned production ZIP SHA-256 is
+`0887e59fbb960a73767cc4ff8e37c1dfb1518961de79ce282c0a0af23f5d8e59`.
+It has 30 unique entries, exactly one content script and no insecure prime hook.
+The earlier `5063189…` ZIP evidence is a historical artifact; this new ZIP is
+archived independently at `/tmp/starlab-wallet-versioned-releases/1ae6d43/chrome.zip`.

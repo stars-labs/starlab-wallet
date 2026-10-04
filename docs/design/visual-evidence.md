@@ -58,3 +58,12 @@ Final navigation source validation: `/tmp/starlab-last-navigation-check.log` (ze
 Shared Ethereum signature-result badge correction: the generic result now reads `Ethereum · threshold ECDSA`, covering personal-message, typed-data and transaction-prehash signatures without mislabeling all results EIP-191. The explicit EIP-191 message preview remains unchanged. `sign-completed-light` and `sign-completed-dark` were recaptured in `/tmp/starlab-signature-label-shots`, inspected and replaced in the 198-image acceptance manifest (zero capture errors). Their immutable source revision is `5648ee6`, with exact `sourceAppSha256`. Isolated build `/tmp/starlab-signature-label-build/chrome-mv3` passes; Svelte check has zero errors and warnings. No live production bundle was replaced.
 
 Hero pricing correction (`e18da4c`): unavailable fiat renders a dash; the request identity includes chain/address/network and clears previous fiat before fetch. Held assets require finite fiat pricing; missing prices on zero balances do not invalidate a priced portfolio. All prices missing stays unavailable. Ten real-component fixture captures/assertions pass with zero errors: missing-price, network-reset, account-reset, stale old-network response and final signature result, each in light/dark. Artifacts `/tmp/starlab-hero-pricing-shots` and `/tmp/starlab-hero-pricing-stale-shots`; the acceptance manifest now contains 206 unique captures and records immutable source revisions. Svelte check has zero errors/warnings; isolated production build `/tmp/starlab-hero-pricing-build/chrome-mv3` succeeds. Previous captures are historical per-image evidence, not claims of unchanged pricing behavior.
+
+## Glass and light refinement after the original acceptance
+
+The user subsequently requested transparent glass, light/shadow and premium
+interaction. The older per-image provenance above remains historical.
+[New acceptance](glass-and-motion.md) recaptures every prior 206 scenario and
+adds 24 material/interaction cases, for 230 unique zero-error captures.
+It documents actual blur, ordinary-card compositing, meaningful press feedback,
+reduced motion, source hashes and interrupted-run metadata recovery.

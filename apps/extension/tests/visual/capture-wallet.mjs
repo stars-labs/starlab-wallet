@@ -2,6 +2,9 @@
  * No secret shares, production debug hooks, real RPCs, or protocol assertions.
  * Usage: WALLET_VISUAL_BUILD=/tmp/starlab-design-build/chrome-mv3 node tests/visual/capture-wallet.mjs
  */
+import {edgeScenario as settingsScenario,captureEdgeSettings} from './edge-settings.mjs';
+import {edgeScenario as approvalScenario,captureEdgeApprovals} from './edge-approvals.mjs';
+const edgeScenario=mode=>{const a=settingsScenario(mode),b=approvalScenario(mode);return {responses:{...a.responses,...b.responses},pendingMessages:[...(a.pendingMessages??[]),...(b.pendingMessages??[])],storage:{...a.storage,...b.storage},state:{...a.state,...b.state}};};
 import { chromium } from '@playwright/test';
 import { encodeAbiParameters } from 'viem';
 import { createServer } from 'node:http';
@@ -20,9 +23,11 @@ const browser=await chromium.launch({headless:true,executablePath:process.env.PL
 const manifest=[];
 const selectedCases=(process.env.WALLET_VISUAL_CASES??"").split(",").filter(Boolean);
 async function fixture(page, mode, theme) {
- await page.addInitScript(({mode,theme})=>{
+ const descriptor = typeof edgeScenario === "function" ? edgeScenario(mode) : {};
+ await page.addInitScript(({mode,theme,descriptor})=>{
   localStorage.setItem('starlab_theme',theme);
-  const address='0x2fb6ae33558e46ec6baa39c9c98cd00f4b0f7548';
+  const nativeChain=mode.startsWith('receive-')?mode.slice(8):'ethereum';
+  const address=nativeChain==='bitcoin'?'bc1pjtaxg3publicdesignfixture00000000000000000000000000000000':nativeChain==='solana'?'11111111111111111111111111111111':nativeChain==='sui'?'0x'+'11'.repeat(32):nativeChain==='qr-error'?'0x'+'11'.repeat(3000):'0x2fb6ae33558e46ec6baa39c9c98cd00f4b0f7548';
   const wallet={id:'public-demo-wallet',name:'Everyday wallet',blockchain:'ethereum',address,threshold:2,total:3,curve:'secp256k1'};
   const data={signalRoom:'public-design-fixture-room',wallet_accounts:[],wallet_current_account:null};
   if(mode==='settings-populated'){
@@ -37,26 +42,29 @@ async function fixture(page, mode, theme) {
   if(mode==='invite')state.invites=[session];
   if(mode==='hardware'||mode==='watch-only'){data.wallet_accounts=[{id:'public-hardware-account',name:mode==='hardware'?'Ledger account':'Watch-only account',address,blockchain:'ethereum',type:mode==='hardware'?'hardware':'watch-only',deviceType:mode==='hardware'?'ledger':undefined}];data.wallet_current_account='public-hardware-account';}
 
+  if(mode.startsWith('receive-')&&nativeChain!=='qr-error'){state.chain=nativeChain;wallet.blockchain=nativeChain;}
+  if(mode.startsWith('password-'))state.locked=true;
+  Object.assign(data,descriptor.storage??{});Object.assign(state,descriptor.state??{});
   const event={addListener(){},removeListener(){}};
   const portfolio={native:{symbol:'ETH',balance:mode==='zero'?'0':'1.284',fiat:mode==='zero'?0:3528.84},tokens:[{symbol:'USDC',name:'USD Coin',balance:'250',fiat:250,address:'0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'},{symbol:'USDT',name:'Tether USD',balance:'100',fiat:100,address:'0xdAC17F958D2ee523a2206206994597C13D831ec7'},{symbol:'DAI',name:'Dai',balance:'25',fiat:25,address:'0x6B175474E89094C44Da98b954EedeAC495271d0F'},{symbol:'USDC',name:'Unverified custom token',balance:'10',address:'0x1111111111111111111111111111111111111111'},{symbol:'USDC',name:'No contract provided',balance:'4'}],totalFiat:3903.84};
-  function response(msg){switch(msg.type){
+  function response(msg){if(descriptor.responses&&Object.hasOwn(descriptor.responses,msg.type))return descriptor.responses[msg.type];if(msg.type==='unlockKeystore'&&mode==='password-error')return{success:false,error:'Incorrect password. Try again.'};switch(msg.type){
    case'getState':return state;
    case'exportKeystore':return{success:true,keystoreData:JSON.stringify({encrypted:true,publicFixture:true})};
    case'importKeystore':return mode==='restore-error'?{success:false,error:'The backup password is incorrect.'}:{success:true};
    case'rpcRequest':return mode==='send-wait'?new Promise(()=>{}):mode==='send-rejected'?{error:{code:4001,message:'A co-signer declined this transaction.'}}:{result:'0x'+'44'.repeat(32)};
 
-   case'getKeystoreStatus':return{success:true,status:{initialized:mode!=='onboarding',locked:mode==='locked',wallets:mode==='onboarding'?[]:[wallet],activeWallet:mode==='onboarding'?null:wallet}};
+   case'getKeystoreStatus':return{success:true,status:{initialized:mode!=='onboarding',locked:mode==='locked'||mode.startsWith('password-'),wallets:mode==='onboarding'?[]:[wallet],activeWallet:mode==='onboarding'?null:wallet}};
    case'getPortfolio':return mode==='error'?{success:false,error:'Balances are unavailable. Check your connection.'}:{success:true,portfolio};
    case'getActivity':return{success:true,activity:mode==='zero'?[]:[{hash:'0xfixture1',to:'0x46b471336610f695c6e3b42ea88dde5cc07f7412',value:'20000000000000000',kind:'Send',status:'confirmed',timestamp:1791108000000},{hash:'0xfixture2',to:address,value:'100000000000000000',kind:'Receive',status:'pending',timestamp:1791107700000},{hash:'0xfixture3',to:address,value:'10000000000000000',kind:'Send',status:'failed',timestamp:1791107000000}]};
-   case'deriveAccounts':return{success:true,accounts:[0,1,2].map(account=>({account,addresses:[{chain:'ethereum',path:"m/44'/60'/0'/0/0",address}]}))};
+   case'deriveAccounts':return{success:true,accounts:[0,1,2].map(account=>({account,addresses:[{chain:state.chain,path:"m/44'/60'/0'/0/0",address:mode==='send-account-reset'&&account>0?'0x'+String(account+1).repeat(40):address}]}))};
    case'getWalletCohort':return{success:true,cohort:{walletId:wallet.id,deviceId:'This browser',threshold:2,total:3,participants:['This browser','Desktop','Phone'],curve:'secp256k1',groupPublicKey:state.dkgGroupPublicKey}};
    case'getPendingConnectRequests':return{success:true,requests:mode==='dapp-connect'?[{requestId:'public-connect',origin:'https://app.example.org',blockchain:'ethereum',accounts:[{address,name:'Everyday wallet'},{address:'0x46b471336610f695c6e3b42ea88dde5cc07f7412',name:'Savings account'}],selected:[address]}]:[]};
    case'getPendingSignatureRequests':return{success:true,requests:mode==='dapp-sign'?[{signingId:'public-signature',message:'Sign in to Example app',origin:'https://app.example.org',fromAddress:address}]:[]};
    case'listdevices':return{devices:[]};
    default:return{success:true,wallets:[wallet],accounts:[],contacts:[],allowances:[],pendingImports:[],sessions:[]};
   }}
-  window.chrome={runtime:{id:'public-design-fixture',getURL:(p)=>new URL(p,location.href).href,lastError:null,onMessage:event,connect(){return{onMessage:{addListener(fn){setTimeout(()=>{fn({type:'initialState',...state});if(mode==='cosign-request')fn({type:'sessionAvailable',session:{...session,session_type:'signing'}});if(mode==='signing-progress')fn({type:'signingProgress',signingId:'public-progress',state:'Waiting for signatures',selectedSigners:session.participants,commitmentsReceived:['This browser','Desktop'],sharesReceived:['This browser']});},30);},removeListener(){}},onDisconnect:event,postMessage(){},disconnect(){}};},sendMessage(msg,callback){if(mode==='loading'&&msg.type==='getPortfolio')return new Promise(()=>{});const result=response(msg);if(callback)setTimeout(()=>callback(result),0);return Promise.resolve(result);}},storage:{local:{async get(){return data;},async set(values){Object.assign(data,values);},async remove(){}},session:{async get(){return{};},async set(){},async remove(){}},onChanged:event},tabs:{query:async()=>[],create:async()=>{}},alarms:{onAlarm:event,create(){}},notifications:{create(){}},extension:{getViews:()=>[]}};
- },{mode,theme});
+  window.chrome={runtime:{id:'public-design-fixture',getURL:(p)=>new URL(p,location.href).href,lastError:null,onMessage:event,connect(){return{onMessage:{addListener(fn){window.__fixtureEmit=fn;setTimeout(()=>{fn({type:'initialState',...state});if(mode==='cosign-request')fn({type:'sessionAvailable',session:{...session,session_type:'signing'}});if(mode==='signing-progress')fn({type:'signingProgress',signingId:'public-progress',state:'Waiting for signatures',selectedSigners:session.participants,commitmentsReceived:['This browser','Desktop'],sharesReceived:['This browser']});},30);},removeListener(){}},onDisconnect:event,postMessage(){},disconnect(){}};},sendMessage(msg,callback){if(descriptor.pendingMessages?.includes(msg.type)||(mode==='password-busy'&&msg.type==='unlockKeystore'))return new Promise(()=>{});if(mode==='loading'&&msg.type==='getPortfolio')return new Promise(()=>{});const result=response(msg);if(callback)setTimeout(()=>callback(result),0);return Promise.resolve(result);}},storage:{local:{async get(){return data;},async set(values){Object.assign(data,values);},async remove(){}},session:{async get(){return{};},async set(){},async remove(){}},onChanged:event},tabs:{query:async()=>[],create:async()=>{}},alarms:{onAlarm:event,create(){}},notifications:{create(){}},extension:{getViews:()=>[]}};
+ },{mode,theme,descriptor});
 }
 async function capture(name,mode='funded',theme='light',width=380,action){
  if(selectedCases.length&&!selectedCases.includes(name))return;
@@ -72,8 +80,9 @@ async function capture(name,mode='funded',theme='light',width=380,action){
    let body;try{body=route.request().postDataJSON();}catch{return route.abort();}
    const address='0x2fb6ae33558e46ec6baa39c9c98cd00f4b0f7548';
    const result=req=>{
+    if(process.env.WALLET_VISUAL_DEBUG)console.log('NFT RPC',req.method,JSON.stringify(req.params));
     if(req.method==='eth_blockNumber')return '0x100';
-    if(req.method==='eth_getLogs')return req.params[0].topics?.[0]==='0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'?[1,2,3].map(id=>({address:'0x2222222222222222222222222222222222222222',data:'0x',topics:['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef','0x'+'00'.repeat(32),'0x'+address.slice(2).padStart(64,'0'),'0x'+id.toString(16).padStart(64,'0')],blockNumber:'0x100',transactionHash:'0x'+'aa'.repeat(32),transactionIndex:'0x0',blockHash:'0x'+'bb'.repeat(32),logIndex:'0x'+id.toString(16),removed:false})):[];
+    if(req.method==='eth_getLogs')return (req.params[0].topics?.[0]==='0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef')?[1,2,3].map(id=>({address:'0x2222222222222222222222222222222222222222',data:'0x',topics:['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef','0x'+'00'.repeat(32),'0x'+address.slice(2).padStart(64,'0'),'0x'+id.toString(16).padStart(64,'0')],blockNumber:'0x100',transactionHash:'0x'+'aa'.repeat(32),transactionIndex:'0x0',blockHash:'0x'+'bb'.repeat(32),logIndex:'0x'+id.toString(16),removed:false})):[];
     if(req.method==='eth_call'){
      const data=req.params[0].data;
      if(data.startsWith('0x6352211e'))return encodeAbiParameters([{type:'address'}],[address]);
@@ -103,6 +112,16 @@ async function capture(name,mode='funded',theme='light',width=380,action){
 }
 try {
  for(const theme of ['light','dark']){
+  for(const chain of ['bitcoin','solana','sui','qr-error'])await capture(`receive-${chain}-${theme}`,`receive-${chain}`,theme,380,p=>p.getByRole('button',{name:'Receive',exact:true}).click());
+  for(const mode of ['password-error','password-busy'])await capture(`${mode}-${theme}`,mode,theme,380,async p=>{await p.getByRole('button',{name:'Unlock wallet',exact:true}).click();await p.getByPlaceholder('Enter password',{exact:true}).fill('public-wrong-password');await p.getByRole('button',{name:'Continue',exact:true}).click();if(mode==='password-error')await p.getByText('Incorrect password. Try again.',{exact:true}).waitFor();});
+  await capture(`save-validation-${theme}`,'save-wallet',theme,380,async p=>{await p.getByPlaceholder('Password (at least 8 characters)').fill('public-password');await p.getByPlaceholder('Confirm password').fill('different-password');await p.getByRole('button',{name:'Encrypt & save',exact:true}).click();});
+  await capture(`create-error-${theme}`,'create-error',theme,380,async p=>{await p.getByRole('button',{name:/Create wallet/}).click();await p.getByRole('button',{name:'Create wallet',exact:true}).last().click();});
+  await capture(`sign-validation-${theme}`,'funded',theme,380,async p=>{await p.getByRole('button',{name:/Sign message/}).click();await p.getByRole('button',{name:'Review',exact:true}).click();});
+  await capture(`sign-preview-${theme}`,'funded',theme,380,async p=>{await p.getByRole('button',{name:/Sign message/}).click();await p.getByPlaceholder('Type the message to sign…').fill('Public design review message');await p.getByRole('button',{name:'Review',exact:true}).click();});
+  await capture(`sign-completed-${theme}`,'funded',theme,380,async p=>{await p.evaluate(()=>window.__fixtureEmit({type:'signingCompleted',signingId:'public-design-signature',signature:'11'.repeat(65),messageHex:'44657369676e',blockchain:'ethereum',sessionId:'public-design'}));});
+  await capture(`send-chain-reset-${theme}`,'send-chain-reset',theme,380,async p=>{await p.getByRole('button',{name:'Send',exact:true}).click();await p.getByPlaceholder('0x… or name.eth').fill('0x46b471336610f695c6e3b42ea88dde5cc07f7412');await p.getByPlaceholder('0.0',{exact:true}).fill('0.05');await p.getByRole('button',{name:'Review transfer',exact:true}).click();await p.getByRole('button',{name:'Confirm send',exact:true}).waitFor();await p.locator('select[title="EVM network"]').selectOption({index:1});await p.getByRole('button',{name:'Review transfer',exact:true}).waitFor();if(await p.getByRole('button',{name:'Confirm send',exact:true}).count())throw Error('Prepared review survived chain change');});
+  await capture(`send-account-reset-${theme}`,'send-account-reset',theme,380,async p=>{await p.getByRole('button',{name:'Send',exact:true}).click();await p.getByPlaceholder('0x… or name.eth').fill('0x46b471336610f695c6e3b42ea88dde5cc07f7412');await p.getByPlaceholder('0.0',{exact:true}).fill('0.05');await p.getByRole('button',{name:'Review transfer',exact:true}).click();await p.getByRole('button',{name:'Confirm send',exact:true}).waitFor();await p.locator(".acct-btn").click();await p.locator(".acct-item").filter({hasText:"Account 1"}).click();await p.getByRole('button',{name:'Review transfer',exact:true}).waitFor();if(await p.getByRole('button',{name:'Confirm send',exact:true}).count())throw Error('Prepared review survived account change');});
+
   for(const mode of ['funded','zero','loading','error','offline','locked','onboarding','hardware','watch-only','invite','setup-waiting','setup-primes','setup-keygen','save-wallet','dapp-connect','dapp-sign','cosign-request','signing-progress'])await capture(`home-${mode}-${theme}`,mode,theme);
   await capture(`home-tab-${theme}`,'funded',theme,1280);
   await capture(`collectibles-${theme}`,'nft-gallery',theme,380,async p=>{await p.getByRole('button',{name:'Load collectibles',exact:true}).click();await p.getByText('Orbit study',{exact:true}).waitFor();});
@@ -126,5 +145,7 @@ try {
   await capture(`custom-network-${theme}`,'funded',theme,380,async p=>{await p.getByRole('button',{name:'Settings',exact:true}).click();await p.getByRole('button',{name:'Add custom network',exact:true}).click();});
   await capture(`unlock-${theme}`,'locked',theme,380,p=>p.getByRole('button',{name:'Unlock wallet',exact:true}).click());
  }
+ await captureEdgeSettings(capture);
+ await captureEdgeApprovals(capture);
 } finally {await writeFile(resolve(output,'manifest.json'),JSON.stringify(manifest,null,2));await browser.close();server.close();}
 console.log(JSON.stringify({output,captures:manifest.length,pageErrors:manifest.filter(x=>x.errors.length)}));

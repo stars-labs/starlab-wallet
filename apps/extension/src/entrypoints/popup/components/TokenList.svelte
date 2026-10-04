@@ -36,15 +36,15 @@
     function fiat(n?: number): string {
         return n === undefined
             ? "—"
-            : `$${n.toLocaleString(undefined, { maximumFractionDigits: 2, ...(Math.abs(n) >= 1_000_000 ? { notation: "compact" as const } : {}) })}`;
+            : `$${n.toLocaleString("en-US", { maximumFractionDigits: 2, ...(Math.abs(n) >= 1_000_000 ? { notation: "compact" as const } : {}) })}`;
     }
     function fullFiat(n?: number): string {
-        return n === undefined ? "—" : `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+        return n === undefined ? "—" : `$${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
     }
 
     function amt(s: string): string {
         const n = Number(s);
-        return Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: Math.abs(n) >= 1_000_000 ? 2 : 6, ...(Math.abs(n) >= 1_000_000 ? { notation: "compact" as const } : {}) }) : s;
+        return Number.isFinite(n) ? n.toLocaleString("en-US", { maximumFractionDigits: Math.abs(n) >= 1_000_000 ? 2 : 6, ...(Math.abs(n) >= 1_000_000 ? { notation: "compact" as const } : {}) }) : s;
     }
 
     onMount(load);

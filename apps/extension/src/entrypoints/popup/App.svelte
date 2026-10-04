@@ -2081,7 +2081,7 @@
 <main class="flex min-h-[600px] flex-col">
     <!-- Header -->
     <header
-        class="sticky top-0 z-30 flex items-center gap-1.5 border-b border-line bg-surface px-4 py-3"
+        class="wallet-header sticky top-0 z-30 flex items-center gap-1.5 border-b border-line bg-surface px-4 py-3"
     >
         <div
             class="flex h-8 w-8 items-center justify-center rounded-xl text-sm font-black text-white"
@@ -2372,7 +2372,7 @@
                     <button class="btn-ghost mt-2 w-full" on:click={() => (showReceive = false)}>Close</button>
                 </div>
             {:else}
-                <div class="grid grid-cols-2 gap-2.5 wallet-actions">
+                <div class="grid grid-cols-2 gap-2.5 wallet-actions primary-actions">
                     <button
                         class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
                         on:click={() => { showSend = true; sendStatus = ""; }}

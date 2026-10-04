@@ -148,7 +148,7 @@
 <style>
     .acct-picker { position: relative; display: inline-block; }
     .acct-btn { background: rgba(255,255,255,0.2); border: none; border-radius: 8px; padding: 4px 10px; font-size: 12px; font-weight: 600; color: inherit; cursor: pointer; backdrop-filter: blur(4px); }
-    .acct-menu { position: absolute; top: 110%; left: 0; z-index: 30; min-width: 220px; background: var(--c-surface); color: var(--c-text); border: 1px solid rgba(127,127,127,0.3); border-radius: 10px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); }
+    .acct-menu { position: absolute; top: 110%; left: 0; z-index: 30; min-width: 220px; background: var(--glass-raised); color: var(--c-text); border: 1px solid rgba(127,127,127,0.3); border-radius: 10px; padding: 4px; box-shadow: var(--shadow-pop); backdrop-filter: blur(20px); }
     .acct-item { display: flex; justify-content: space-between; gap: 8px; width: 100%; text-align: left; background: none; border: none; border-radius: 6px; padding: 7px 10px; font-size: 12px; cursor: pointer; }
     .acct-item:hover { background: rgba(127,127,127,0.12); }
     .acct-item.active { font-weight: 700; }

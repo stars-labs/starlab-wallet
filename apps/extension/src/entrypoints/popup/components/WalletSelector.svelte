@@ -121,8 +121,8 @@
     .wallet-selector-button {
         width: 100%;
         padding: 12px 16px;
-        background: var(--c-surface);
-        border: 1px solid var(--c-line);
+        background: var(--glass-surface);
+        border: 1px solid var(--glass-outline);
         border-radius: 14px;
         cursor: pointer;
         display: flex;
@@ -182,13 +182,14 @@
         top: calc(100% + 8px);
         left: 0;
         right: 0;
-        background: var(--c-surface);
-        border: 1px solid var(--c-line);
+        background: var(--glass-raised);
+        border: 1px solid var(--glass-outline);
         border-radius: 14px;
         box-shadow: var(--shadow-pop);
+        backdrop-filter: blur(20px) saturate(125%);
         z-index: 100;
         overflow: hidden;
-        animation: slideDown 0.2s ease-out;
+        animation: slideDown 0.16s ease-out;
     }
     
     @keyframes slideDown {
@@ -288,7 +289,7 @@
         width: 100%;
         padding: 8px;
         background: none;
-        border: 1px solid var(--c-line);
+        border: 1px solid var(--glass-outline);
         border-radius: 8px;
         color: var(--c-text);
         font-size: 13px;

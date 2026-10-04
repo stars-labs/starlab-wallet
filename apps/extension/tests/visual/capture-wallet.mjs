@@ -2,6 +2,7 @@
  * No secret shares, production debug hooks, real RPCs, or protocol assertions.
  * Usage: WALLET_VISUAL_BUILD=/tmp/starlab-design-build/chrome-mv3 node tests/visual/capture-wallet.mjs
  */
+import {capturePremium} from './premium-captures.mjs';
 import {edgeScenario as settingsScenario,captureEdgeSettings} from './edge-settings.mjs';
 import {edgeScenario as approvalScenario,captureEdgeApprovals} from './edge-approvals.mjs';
 const edgeScenario=mode=>{const a=settingsScenario(mode),b=approvalScenario(mode);return {responses:{...a.responses,...b.responses},pendingMessages:[...(a.pendingMessages??[]),...(b.pendingMessages??[])],storage:{...a.storage,...b.storage},state:{...a.state,...b.state}};};
@@ -22,6 +23,7 @@ const url=`http://127.0.0.1:${server.address().port}/popup.html`;
 const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROME_PATH ?? '/nix/store/g0yvxs8p2ijrvmxpd5mim1ni0fyk9bnh-chromium-154.0.8037.57/bin/chromium',args:['--no-sandbox']});
 const manifest=[];
 const selectedCases=(process.env.WALLET_VISUAL_CASES??"").split(",").filter(Boolean);
+const skippedCases=(process.env.WALLET_VISUAL_SKIP_CASES??'').split(',').filter(Boolean);
 async function fixture(page, mode, theme) {
  const descriptor = typeof edgeScenario === "function" ? edgeScenario(mode) : {};
  await page.addInitScript(({mode,theme,descriptor})=>{
@@ -50,6 +52,7 @@ async function fixture(page, mode, theme) {
   Object.assign(data,descriptor.storage??{});Object.assign(state,descriptor.state??{});
   const event={addListener(){},removeListener(){}};
   const portfolio={native:{symbol:'ETH',balance:mode==='zero'?'0':'1.284',fiat:mode==='zero'?0:3528.84},tokens:[{symbol:'USDC',name:'USD Coin',balance:'250',fiat:250,address:'0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'},{symbol:'USDT',name:'Tether USD',balance:'100',fiat:100,address:'0xdAC17F958D2ee523a2206206994597C13D831ec7'},{symbol:'DAI',name:'Dai',balance:'25',fiat:25,address:'0x6B175474E89094C44Da98b954EedeAC495271d0F'},{symbol:'USDC',name:'Unverified custom token',balance:'10',address:'0x1111111111111111111111111111111111111111'},{symbol:'USDC',name:'No contract provided',balance:'4'}],totalFiat:3903.84};
+  if(mode==='premium-funded')for(const token of portfolio.tokens)if(token.fiat===undefined)token.balance='0';
   if(mode==='hero-missing-prices'){portfolio.native.fiat=undefined;portfolio.tokens=[];portfolio.totalFiat=0;}
   if(mode.startsWith('hero-reset')){portfolio.tokens=[];portfolio.native.fiat=123;portfolio.totalFiat=123;}
   window.__fixturePortfolio=portfolio;window.__fixturePendingPortfolio=false;window.__fixturePortfolioResolvers=[];
@@ -73,7 +76,7 @@ async function fixture(page, mode, theme) {
  },{mode,theme,descriptor});
 }
 async function capture(name,mode='funded',theme='light',width=380,action){
- if(selectedCases.length&&!selectedCases.includes(name))return;
+ if(skippedCases.includes(name)||(selectedCases.length&&!selectedCases.includes(name)))return;
  const page=await browser.newPage({viewport:{width,height:900}});const errors=[];page.on('pageerror',e=>errors.push(e.message));await fixture(page,mode,theme);await page.route('**/*',async route=>{
   if(new URL(route.request().url()).origin===new URL(url).origin)return route.continue();
   if(mode==='nft-gallery'){
@@ -106,7 +109,7 @@ async function capture(name,mode='funded',theme='light',width=380,action){
    return route.fulfill({contentType:'application/json',body:JSON.stringify(Array.isArray(body)?body.map(rpc):rpc(body))});
   }
   return route.abort();
- });await page.goto(url);await page.waitForTimeout(900);if(action){try{await action(page);}catch(error){errors.push(`Action: ${error.message}; ${await page.locator(".sf-error").allTextContents()}`);}}await page.waitForTimeout(300);await page.screenshot({path:resolve(output,name+'.png'),fullPage:true});manifest.push({name,mode,theme,width,fixture:true,errors});
+ });await page.goto(url);await page.waitForTimeout(900);let presentationEvidence;if(action){try{presentationEvidence=await action(page);}catch(error){errors.push(`Action: ${error.message}; ${await page.locator(".sf-error").allTextContents()}`);}}await page.waitForTimeout(300);await page.screenshot({path:resolve(output,name+'.png'),fullPage:true,timeout:60000});manifest.push({name,mode,theme,width,fixture:true,errors,...(presentationEvidence ? {presentationEvidence} : {})});
  if(name===`settings-populated-${theme}`){
   const cards=page.locator('.card');
   for(let index=0;index<await cards.count();index++){
@@ -114,9 +117,10 @@ async function capture(name,mode='funded',theme='light',width=380,action){
    const sectionName=`settings-section-${sectionTitle.toLowerCase().replace(/[^a-z0-9]+/g,'-')}-${theme}`;
    await card.screenshot({path:resolve(output,sectionName+'.png')});manifest.push({name:sectionName,sectionTitle,mode,theme,width,fixture:true,errors:[]});
   }
- }console.log(`Captured ${name}: ${errors.length} page errors`);await page.close();
+ }await writeFile(resolve(output,'manifest.json'),JSON.stringify(manifest,null,2));console.log(`Captured ${name}: ${errors.length} page errors`);await page.close();
 }
 try {
+ await capturePremium(capture);
  for(const theme of ['light','dark']){
   await capture(`wallet-add-navigation-${theme}`,'wallet-multiple',theme,380,async p=>{await p.locator('.wallet-selector-button').click();await p.getByRole('button',{name:'+ Add Wallet',exact:true}).click();await p.getByRole('heading',{name:'Create a shared wallet',exact:true}).waitFor();});
   await capture(`wallet-settings-navigation-${theme}`,'wallet-multiple',theme,380,async p=>{await p.locator('.wallet-selector-button').click();await p.getByRole('button',{name:'Wallet settings',exact:true}).click();await p.getByRole('heading',{name:'Settings',exact:true}).waitFor();await p.getByRole('heading',{name:'Manage wallet devices',exact:true}).waitFor();});

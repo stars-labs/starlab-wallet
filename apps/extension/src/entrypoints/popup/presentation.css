@@ -1,0 +1,137 @@
+/* Glass is reserved for structural surfaces; fields and status remain legible.
+   Ambient light is static. Only deliberate interactions and new overlays move. */
+:root {
+    --glass-surface: rgba(255, 255, 255, .76);
+    --glass-raised: rgba(255, 255, 255, .94);
+    --glass-edge: rgba(255, 255, 255, .9);
+    --glass-outline: rgba(126, 114, 168, .18);
+    --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, .95);
+    --ambient-violet: rgba(137, 105, 255, .17);
+    --ambient-blue: rgba(107, 163, 255, .13);
+    --ambient-rose: rgba(231, 179, 237, .15);
+    --action-glow: rgba(103, 83, 255, .2);
+    --glass-shadow-card: var(--glass-highlight), 0 3px 5px rgba(48, 32, 93, .025), 0 12px 28px -16px rgba(48, 32, 93, .22);
+    --glass-shadow-pop: var(--glass-highlight), 0 24px 64px -16px rgba(26, 18, 54, .3);
+    --glass-brand: linear-gradient(145deg, #7557ed, #6650e9 62%, #5942d6);
+}
+.dark {
+    --glass-surface: rgba(28, 29, 43, .78);
+    --glass-raised: rgba(30, 31, 46, .96);
+    --glass-edge: rgba(230, 223, 255, .14);
+    --glass-outline: rgba(199, 185, 255, .16);
+    --glass-highlight: inset 0 1px 0 rgba(234, 227, 255, .075);
+    --ambient-violet: rgba(115, 80, 210, .22);
+    --ambient-blue: rgba(65, 110, 173, .13);
+    --ambient-rose: rgba(151, 74, 147, .09);
+    --action-glow: rgba(115, 83, 255, .28);
+    --glass-shadow-card: var(--glass-highlight), 0 12px 30px -16px rgba(0, 0, 0, .55);
+    --glass-shadow-pop: var(--glass-highlight), 0 26px 70px -12px rgba(0, 0, 0, .65);
+    --glass-brand: linear-gradient(145deg, #7557ed, #6750e6 62%, #5944ce);
+}
+body {
+    background-image: radial-gradient(ellipse 430px 380px at 95% 2%, var(--ambient-violet), transparent 72%),
+        radial-gradient(ellipse 360px 440px at -5% 38%, var(--ambient-blue), transparent 75%),
+        radial-gradient(ellipse 390px 400px at 100% 85%, var(--ambient-rose), transparent 75%);
+    background-attachment: fixed;
+}
+.wallet-header {
+    background: color-mix(in srgb, var(--glass-surface) 88%, transparent);
+    border-color: var(--glass-outline);
+    backdrop-filter: blur(20px) saturate(135%);
+    box-shadow: var(--glass-highlight), 0 4px 18px -12px rgba(45, 30, 87, .25);
+}
+.card, .hero {
+    background: var(--glass-surface);
+    border-color: var(--glass-outline);
+    box-shadow: var(--shadow-card);
+}
+.hero {
+    backdrop-filter: blur(14px) saturate(125%);
+    background: radial-gradient(ellipse at 100% 0%, var(--ambient-violet), transparent 66%), var(--glass-surface);
+    border-color: var(--glass-edge);
+    box-shadow: var(--glass-highlight), 0 12px 36px -18px var(--action-glow), 0 3px 6px rgba(32, 23, 68, .035);
+}
+.modal-backdrop {
+    background: rgba(12, 10, 25, .46);
+    backdrop-filter: blur(12px) saturate(95%);
+    animation: wallet-overlay-in 140ms ease-out both;
+}
+.modal-panel {
+    background: var(--glass-raised);
+    border-color: var(--glass-edge);
+    box-shadow: var(--shadow-pop);
+    animation: wallet-panel-in 180ms cubic-bezier(.2, .8, .2, 1) both;
+}
+.btn, .icon-btn, .wallet-actions > button, button.card,
+.wallet-selector-button, .sf-actions button, .acct-btn {
+    transition: background-color 160ms ease, border-color 160ms ease,
+        color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+.btn-primary, .sf-actions .sf-submit, .primary-actions > button:first-child {
+    background: var(--grad-brand);
+    color: #fff;
+    border-color: rgba(255, 255, 255, .2);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 6px 16px -6px var(--action-glow);
+}
+.btn:disabled, .wallet-actions > button:disabled, .sf-submit:disabled {
+    box-shadow: none;
+}
+.wallet-actions > button, button.card {
+    background: var(--glass-surface);
+    border-color: var(--glass-outline);
+    box-shadow: var(--shadow-card);
+}
+.feature-title-icon {
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--glass-edge) 70%, transparent);
+    border: 1px solid color-mix(in srgb, var(--c-primary) 12%, transparent);
+}
+.sf-review {
+    background: color-mix(in srgb, var(--c-primary-soft) 32%, var(--c-surface-2));
+    border-color: var(--glass-outline);
+    border-radius: 14px;
+    box-shadow: var(--glass-highlight);
+}
+.input, .textarea, .select, .sf-field input, .sf-field select {
+    box-shadow: inset 0 1px 2px rgba(31, 20, 64, .025);
+}
+:is(button, a, input, textarea, select, summary):focus-visible {
+    outline: 2px solid var(--c-primary);
+    outline-offset: 3px;
+    box-shadow: 0 0 0 5px var(--c-primary-soft);
+}
+@media (hover: hover) {
+    .btn-primary:hover:not(:disabled), .sf-actions .sf-submit:hover:not(:disabled),
+    .primary-actions > button:first-child:hover:not(:disabled) {
+        filter: none;
+        transform: translateY(-1px);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 8px 22px -6px var(--action-glow);
+    }
+    .wallet-actions > button:last-child:hover:not(:disabled), button.card:hover:not(:disabled) {
+        border-color: color-mix(in srgb, var(--c-primary) 38%, var(--glass-outline));
+        transform: translateY(-1px);
+        box-shadow: var(--glass-highlight), 0 8px 24px -12px var(--action-glow);
+    }
+    .icon-btn:hover:not(:disabled) { background: var(--c-primary-soft); color: var(--c-primary); }
+}
+.btn:active:not(:disabled), .wallet-actions > button:active:not(:disabled),
+.sf-actions button:active:not(:disabled), button.card:active:not(:disabled) {
+    transform: translateY(1px) scale(.985);
+}
+@keyframes wallet-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes wallet-panel-in { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
+@media (min-width: 600px) {
+    html { background-image: radial-gradient(ellipse at 70% 0%, var(--ambient-violet), transparent 55%); }
+    body { border-color: var(--glass-outline); box-shadow: var(--shadow-pop); }
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+        scroll-behavior: auto !important;
+    }
+    .btn, .wallet-actions > button, .sf-actions button, button.card { transform: none !important; }
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+    :root, .dark { --glass-surface: var(--c-surface); --glass-raised: var(--c-surface); }
+}

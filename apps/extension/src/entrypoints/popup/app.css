@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./presentation.css";
 
 /* Class-based dark mode (driven by src/lib/theme.ts), but the actual
    palette also tracks the system when theme = "system". We toggle the
@@ -14,7 +15,7 @@
  * the active theme automatically.
  * ------------------------------------------------------------------ */
 :root {
-    --c-bg: #f3f4f7;
+    --c-bg: #f4f3f9;
     --c-surface: #ffffff;
     --c-surface-2: #f4f5f8;
     --c-surface-3: #e9ebf0;
@@ -23,7 +24,7 @@
 
     --c-text: #14161c;
     --c-muted: #5d626c;
-    --c-faint: #9499a3;
+    --c-faint: #777487;
 
     --c-primary: #6753ff;
     --c-primary-hover: #5a45f0;
@@ -46,14 +47,14 @@
     --c-info-soft: #e8f0fe;
     --c-info-fg: #1d4ed8;
 
-    --grad-brand: linear-gradient(135deg, #6753ff 0%, #9b5cff 55%, #b961ff 100%);
-    --shadow-card: 0 1px 2px rgba(16, 18, 27, 0.04), 0 4px 16px rgba(16, 18, 27, 0.06);
-    --shadow-pop: 0 12px 40px rgba(16, 18, 27, 0.18);
+    --grad-brand: var(--glass-brand);
+    --shadow-card: var(--glass-shadow-card);
+    --shadow-pop: var(--glass-shadow-pop);
     --ring: rgba(103, 83, 255, 0.4);
 }
 
 .dark {
-    --c-bg: #0c0d11;
+    --c-bg: #101019;
     --c-surface: #15171d;
     --c-surface-2: #1b1e25;
     --c-surface-3: #232730;
@@ -62,7 +63,7 @@
 
     --c-text: #e9ebf0;
     --c-muted: #9aa0ab;
-    --c-faint: #6b7280;
+    --c-faint: #918da4;
 
     --c-primary: #8776ff;
     --c-primary-hover: #978bff;
@@ -85,9 +86,9 @@
     --c-info-soft: rgba(106, 163, 255, 0.14);
     --c-info-fg: #8db8ff;
 
-    --grad-brand: linear-gradient(135deg, #6d5bff 0%, #8f5bff 55%, #a45bff 100%);
-    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.35);
-    --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55);
+    --grad-brand: var(--glass-brand);
+    --shadow-card: var(--glass-shadow-card);
+    --shadow-pop: var(--glass-shadow-pop);
     --ring: rgba(135, 118, 255, 0.45);
 }
 

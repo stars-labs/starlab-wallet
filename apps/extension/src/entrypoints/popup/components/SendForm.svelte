@@ -280,12 +280,12 @@
     .sf-field input, .sf-field select { padding: 8px; border-radius: 8px; border: 1px solid rgba(127,127,127,0.3); background: transparent; }
     .sf-actions { display: flex; gap: 8px; justify-content: flex-end; }
     .sf-actions button { padding: 8px 16px; border-radius: 8px; cursor: pointer; border: 1px solid rgba(127,127,127,0.3); background: transparent; }
-    .sf-actions .sf-submit { background: var(--c-primary); color: var(--c-primary-fg); border-color: var(--c-primary); }
+    .sf-actions .sf-submit { background: var(--grad-brand); color: var(--c-primary-fg); border-color: var(--c-primary); }
     .sf-submit:disabled { opacity: 0.5; cursor: default; }
     .sf-error { color: var(--c-danger-fg); font-size: 13px; }
-    .sf-muted { opacity: 0.6; }
-    .sf-note { font-size: 11px; opacity: 0.55; margin: 0; }
-    .sf-review { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid rgba(127,127,127,0.25); border-radius: 8px; font-size: 13px; }
+    .sf-muted { color: var(--c-muted); }
+    .sf-note { font-size: 11px; color: var(--c-muted); margin: 0; }
+    .sf-review { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--glass-outline); border-radius: 14px; font-size: 13px; }
     .sf-preflight { display: flex; flex-direction: column; gap: 2px; border-top: 1px dashed rgba(127,127,127,0.25); padding-top: 6px; font-size: 12px; }
     .sf-pf-ok { color: var(--c-success-fg); font-weight: 600; }
     .sf-pf-bad { color: var(--c-danger-fg); font-weight: 600; }

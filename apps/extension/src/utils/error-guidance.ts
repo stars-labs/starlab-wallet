@@ -44,7 +44,9 @@ export function guideError(raw: unknown, context: ErrorContext): string {
                 hint =
                     "A quorum (the threshold) must approve. Make sure enough co-signers are online in " +
                     "the same room and approved the request.";
-            } else if (lc.includes("password") || lc.includes("unlock") || lc.includes("decrypt")) {
+            } else if (lc.includes("unlock") || lc.includes("locked")) {
+                hint = "Unlock the wallet to sign — it locks automatically after inactivity.";
+            } else if (lc.includes("password") || lc.includes("decrypt")) {
                 hint = "Wrong password for this wallet — enter the password you set on this device.";
             } else if (lc.includes("not found")) {
                 hint = "Wallet/account not found on this device — pick the right one.";

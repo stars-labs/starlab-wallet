@@ -47,6 +47,9 @@
     import TokenList from "./components/TokenList.svelte";
     import ActivityFeed from "./components/ActivityFeed.svelte";
     import NftGallery from "./components/NftGallery.svelte";
+    import { observeKeystoreSession } from "../../utils/keystoreSession";
+    import { verifyEthereumSignature } from "../../utils/signatureVerification";
+    import { addressForChain, publicWalletState } from "../../utils/walletAccount";
     import AccountPicker from "./components/AccountPicker.svelte";
     import Onboarding from "./components/Onboarding.svelte";
     import SendForm from "./components/SendForm.svelte";
@@ -200,13 +203,8 @@
         accountAddresses = e.detail.addresses;
         refreshWalletData(); // remount balance/activity panels for the new address
     }
-    // The address every panel shows: the selected account's address on the
-    // current chain. Falls back to the group-key address ONLY while the
-    // first derivation is still in flight (never user-selectable).
-    $: displayAddress =
-        addressForChain(accountAddresses, appState.chain) ??
-        accountAddresses[0]?.address ??
-        appState.dkgAddress;
+    // Panels always use the selected account on the selected chain.
+    $: displayAddress = addressForChain(accountAddresses, appState.chain) ?? "";
 
     // Onboarding wizard dismissal (#26) — session-scoped; the wizard also
     // disappears permanently once a wallet exists.
@@ -321,22 +319,6 @@
             : chain === "solana"
               ? "solana"
               : "ethereum";
-    }
-    function addressForChain(
-        addresses: { chain: string; path: string; address: string }[],
-        chain: string | undefined,
-    ): string | undefined {
-        const desired = isSupportedChain(chain) ? chain : "ethereum";
-        const normalized = addresses.map((addr) => ({
-            ...addr,
-            chain:
-                normalizeDerivedAddressChain(addr.chain) ??
-                addr.chain.toLowerCase(),
-        }));
-        return (
-            normalized.find((addr) => addr.chain === desired)?.address ??
-            normalized.find((addr) => addr.chain === protocolChainFor(desired))?.address
-        );
     }
     function shortAddr(addr: string | undefined): string {
         if (!addr) return "";
@@ -518,9 +500,8 @@
     // Ext-2e: populated when the offscreen FROST ceremony finalizes
     // (via the `signingCompleted` message from background). Renders
     // a dismissable banner with the aggregated signature hex + a
-    // copy-to-clipboard button. secp256k1 FROST signs BIP-340 Schnorr:
-    // the EIP-191 hash is what was signed, but the signature is NOT
-    // ecrecover-compatible.
+    // copy-to-clipboard button. Ethereum signs the EIP-191 hash with
+    // the threshold-ECDSA key, yielding an ecrecover-compatible signature.
     type SignatureBanner = {
         signingId: string;
         signature: string;
@@ -529,6 +510,7 @@
         sessionId: string;
     };
     let signatureBanner: SignatureBanner | null = null;
+    let signatureVerification = "";
     let signatureCopied = false;
 
     // Ext-3b: TUI Stage 1 parity (a4c52ca). When a signing-session
@@ -874,9 +856,9 @@
                     // Other state fields. The background owns the DKG
                     // result: a popup opened after the ceremony only learns
                     // the group key / address from this snapshot.
-                    dkgAddress: message.dkgAddress || appState.dkgAddress || "",
-                    dkgGroupPublicKey:
-                        message.dkgGroupPublicKey || appState.dkgGroupPublicKey || "",
+                    ...publicWalletState(message),
+                    ecdsaDkgStatus: message.ecdsaDkgStatus ?? null,
+                    ecdsaPrimes: message.ecdsaPrimes,
                     dkgError: appState.dkgError || "",
                     sessionAcceptanceStatus:
                         message.sessionAcceptanceStatus ||
@@ -891,6 +873,10 @@
                     "[UI] App state updated from initialState:",
                     appState,
                 );
+                if (!initialStateLoaded && message.lastSignature) {
+                    signatureBanner = message.lastSignature;
+                    void verifySignatureBanner(signatureBanner!);
+                }
                 initialStateLoaded = true; // Enable reactive saving after state is loaded
 
                 // Save the current UI preferences immediately after loading to ensure persistence
@@ -1134,6 +1120,19 @@
                 }
                 break;
 
+            case "signingSessionCreated":
+                appState = { ...appState, sessionInfo: message.sessionInfo };
+                signatureBanner = null;
+                signatureVerification = "";
+                signingProgress = {
+                    signingId: `sign_${message.sessionInfo.session_id}`,
+                    state: "Waiting for co-signers",
+                    selectedSigners: message.sessionInfo.participants ?? [],
+                    commitmentsReceived: [],
+                    sharesReceived: [],
+                };
+                break;
+
             case "signingCompleted":
                 // Ext-2e: FROST threshold signing ceremony finalized.
                 // Different from `signatureComplete` (legacy dApp-bridge
@@ -1151,6 +1150,7 @@
                     sessionId: message.sessionId,
                 };
                 signatureCopied = false;
+                void verifySignatureBanner(signatureBanner);
                 // Success banner replaces the in-progress roster.
                 signingProgress = null;
                 break;
@@ -1322,6 +1322,18 @@
         // Note: signMessage intentionally preserved so user can edit
         // and re-preview without retyping. TUI parity with Stage 3
         // CancelSigningRequest behavior.
+    }
+
+    async function verifySignatureBanner(banner: SignatureBanner) {
+        signatureVerification = "";
+        if (banner.blockchain !== "ethereum") return;
+        const expected = keystoreStatus.activeWallet?.address || appState.dkgAddress || "";
+        signatureVerification = "Verifying signature…";
+        const result = await verifyEthereumSignature(banner.messageHex, banner.signature, expected);
+        if (signatureBanner !== banner) return;
+        signatureVerification = result.verified
+            ? "Verified against the wallet's Ethereum address"
+            : "Signature could not be verified against the wallet's Ethereum address";
     }
 
     async function copySignatureToClipboard() {
@@ -1898,6 +1910,10 @@
             }
             if (response && response.success) {
                 keystoreStatus = response.status;
+                if (keystoreStatus.locked) {
+                    showSignForm = false;
+                    signPreview = null;
+                }
                 console.log("[UI] Keystore status:", keystoreStatus);
                 
                 // Do NOT auto-pop the Unlock modal on popup open — it was
@@ -1912,6 +1928,8 @@
         });
     }
     
+    onMount(() => observeKeystoreSession(checkKeystoreStatus));
+
     function showUnlockPrompt() {
         passwordPromptConfig = {
             title: "Unlock Wallet",
@@ -2625,7 +2643,7 @@
                             <dt class="label mb-1">
                                 EIP-191 hash
                                 <span class="font-normal text-faint"
-                                    >(signed as BIP-340 Schnorr — not ecrecover-compatible)</span
+                                    >(signed with threshold ECDSA — ecrecover-compatible)</span
                                 >
                             </dt>
                             <dd
@@ -2816,11 +2834,14 @@
                         <Icon name="x" size={15} />
                     </button>
                 </div>
+                {#if signatureVerification}
+                    <p class="mb-2 text-xs">{signatureVerification}</p>
+                {/if}
                 <dl class="space-y-2 text-xs">
                     <dd>
                         {#if signatureBanner.blockchain === "ethereum"}
-                            <span class="badge badge-warning"
-                                >EIP-191 · BIP-340 Schnorr (not ecrecover)</span
+                            <span class="badge badge-info"
+                                >EIP-191 · threshold ECDSA</span
                             >
                         {:else}
                             <span class="badge badge-info">ed25519 · Solana</span>

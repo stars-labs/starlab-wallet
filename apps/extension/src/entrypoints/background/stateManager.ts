@@ -592,8 +592,8 @@ export class StateManager {
                         `(keystore JSON ${info.keystoreJson ? "PRESENT" : "MISSING"})`,
                     );
                     this.broadcastToPopupPorts({
-                        type: "dkgCompleted",
                         ...info,
+                        type: "dkgCompleted",
                     } as any);
                     this.broadcastCurrentState();
                 }
@@ -750,8 +750,8 @@ export class StateManager {
                         );
                     }
                     this.broadcastToPopupPorts({
-                        type: "signingCompleted",
                         ...info,
+                        type: "signingCompleted",
                     } as any);
                     this.broadcastCurrentState();
                 }

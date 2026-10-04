@@ -7,11 +7,10 @@
     // group key exists only as the derivation parent. Account 0 is the
     // default identity.
     import { createEventDispatcher, onMount } from "svelte";
+    import { addressForChain } from "../../../utils/walletAccount";
     import {
-        getProtocolBlockchainForChain,
         isSupportedChain,
         normalizeDerivedAddressChain,
-        type ProtocolBlockchain,
         type SupportedChain,
     } from "@stars-labs/types/appstate";
 
@@ -33,6 +32,7 @@
     let loading = false;
     let error = "";
     let count = 3;
+    let loadEpoch = 0;
 
     function normalizeAddresses(addresses: ChainAddr[]): ChainAddr[] {
         return addresses
@@ -43,21 +43,16 @@
             .filter((addr) => !addr.chain || isSupportedChain(addr.chain));
     }
 
-    function addressForChain(addresses: ChainAddr[], desired: SupportedChain): ChainAddr | undefined {
-        const exact = addresses.find((addr) => addr.chain === desired);
-        if (exact) return exact;
-
-        const protocolChain: ProtocolBlockchain = getProtocolBlockchainForChain(desired);
-        return addresses.find((addr) => addr.chain === protocolChain);
-    }
-
     function addressHint(addresses: ChainAddr[]): string {
-        const addr = addressForChain(addresses, chain)?.address ?? addresses[0]?.address;
+        const addr = addressForChain(addresses, chain);
         return addr ? `${addr.slice(0, 10)}…` : "";
     }
 
     async function load() {
         if (!groupPublicKey) return;
+        const epoch = ++loadEpoch;
+        const frostKey = groupPublicKey;
+        const ecdsaKey = ecdsaGroupPublicKey;
         loading = true;
         error = "";
         try {
@@ -67,20 +62,21 @@
             const res = await chrome.runtime.sendMessage({
                 type: "deriveAccounts",
                 curve: curveKey,
-                groupPublicKey,
+                groupPublicKey: frostKey,
                 count,
             });
             // A secp256k1 wallet's Ethereum accounts come from its
             // threshold-ECDSA key (the FROST key covers Bitcoin).
             const ecdsa =
-                curveKey === "secp256k1" && ecdsaGroupPublicKey
+                curveKey === "secp256k1" && ecdsaKey
                     ? await chrome.runtime.sendMessage({
                           type: "deriveAccounts",
                           curve: "secp256k1-ecdsa",
-                          groupPublicKey: ecdsaGroupPublicKey,
+                          groupPublicKey: ecdsaKey,
                           count,
                       })
                     : null;
+            if (epoch !== loadEpoch) return;
             if (res?.success) {
                 accounts = res.accounts.map((account: Account) => ({
                     ...account,
@@ -99,9 +95,9 @@
                 }
             } else error = res?.error ?? "derivation failed";
         } catch (e) {
-            error = (e as Error).message;
+            if (epoch === loadEpoch) error = (e as Error).message;
         } finally {
-            loading = false;
+            if (epoch === loadEpoch) loading = false;
         }
     }
 

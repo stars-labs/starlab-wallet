@@ -38,3 +38,9 @@ describe("guideError", () => {
         expect(() => guideError(undefined, "signing")).not.toThrow();
     });
 });
+
+ it("a locked wallet does not imply a wrong password", () => {
+ const message = guideError("No key share — unlock the wallet first", "signing");
+ expect(message).toContain("Unlock the wallet");
+ expect(message).not.toContain("Wrong password");
+ });

@@ -49,3 +49,16 @@ describe("StateManager popup broadcasts", () => {
         expect(last).toEqual({ type: "dkgCompleted", address: "0xabc" });
     });
 });
+
+it("routes actual offscreen completions to the popup's result event names", async () => {
+    const mgr = await loadedStateManager();
+    const port = fakePort();
+    mgr.addPopupPort(port);
+    mgr.handleOffscreenStateUpdate({type: "signingComplete", signingId: "sign", sessionId: "s", signature: "abcd", messageHex: "42", blockchain: "ethereum"} as any);
+    const messages = port.postMessage.mock.calls.map((c) => c[0]);
+    expect(messages.some((m) => m.type === "signingCompleted" && m.signature === "abcd")).toBe(true);
+    expect(messages.some((m) => m.type === "signingComplete")).toBe(false);
+    mgr.handleOffscreenStateUpdate({type: "dkgComplete", groupPublicKey: "public", keystoreJson: SECRET} as any);
+    expect(port.postMessage.mock.calls.some((c) => c[0].type === "dkgCompleted")).toBe(true);
+    expect(sentPayloads(port)).not.toContain("SECRET_SHARE");
+});

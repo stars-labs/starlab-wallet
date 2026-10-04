@@ -912,7 +912,7 @@ export class PopupMessageHandler {
                 return;
             }
 
-            // EIP-191 digest for secp256k1 (signed as BIP-340 Schnorr).
+            // EIP-191 digest for the Ethereum threshold-ECDSA key.
             // ed25519: raw UTF-8 bytes.
             let messageHex: string;
             if (blockchain === "ethereum") {

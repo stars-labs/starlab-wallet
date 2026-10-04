@@ -138,7 +138,7 @@ export class WebSocketManager {
             // Also broadcast updated state
             const initErrorState: InitialStateMessage = {
                 type: "initialState",
-                ...this.appState
+                ...(this.stateManager?.getState() ?? this.appState)
             };
             this.broadcastToPopup(initErrorState as any);
         }
@@ -226,7 +226,7 @@ export class WebSocketManager {
             // Also broadcast updated full state
             const stateUpdate: InitialStateMessage = {
                 type: "initialState",
-                ...this.appState
+                ...(this.stateManager?.getState() ?? this.appState)
             };
             console.log("[WebSocketManager] Broadcasting full state update:", stateUpdate);
             this.broadcastToPopup(stateUpdate as any);
@@ -336,7 +336,7 @@ export class WebSocketManager {
             // Also broadcast updated state
             const disconnectedState: InitialStateMessage = {
                 type: "initialState",
-                ...this.appState
+                ...(this.stateManager?.getState() ?? this.appState)
             };
             this.broadcastToPopup(disconnectedState as any);
         });
@@ -366,7 +366,7 @@ export class WebSocketManager {
             // Also broadcast updated state
             const errorState: InitialStateMessage = {
                 type: "initialState",
-                ...this.appState
+                ...(this.stateManager?.getState() ?? this.appState)
             };
             this.broadcastToPopup(errorState as any);
         });

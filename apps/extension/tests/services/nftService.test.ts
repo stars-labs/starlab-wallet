@@ -25,7 +25,7 @@ const id = (n: number) => `0x${n.toString(16).padStart(64, "0")}`;
 describe("discoverNfts", () => {
   it("keeps 4-topic logs only, dedupes, and ownerOf-verifies", async () => {
     const client = {
-      getLogs: async () => [
+      request: async () => [
         // ERC-20 transfer (3 topics) — must be ignored
         { address: "0xerc20", topics: [TRANSFER_TOPIC, id(0), PADDED] },
         // owned NFT, duplicated log
@@ -46,7 +46,7 @@ describe("discoverNfts", () => {
 
   it("ownerOf revert (burned) drops the token, not the scan", async () => {
     const client = {
-      getLogs: async () => [
+      request: async () => [
         { address: NFT, topics: [TRANSFER_TOPIC, id(0), PADDED, id(1)] },
       ],
       readContract: async () => {
@@ -120,7 +120,7 @@ describe("discoverErc1155", () => {
   it("decodes TransferSingle + TransferBatch data, dedupes, verifies balance", async () => {
     const balances: Record<string, bigint> = { "5": 2n, "8": 1n, "9": 0n };
     const client = {
-      getLogs: async () => [
+      request: async () => [
         // single: id=5 value=2 (and a duplicate)
         { address: C, topics: [TRANSFER_SINGLE_TOPIC, id(0), id(0), PADDED], data: `0x${word(5)}${word(2)}` },
         { address: C, topics: [TRANSFER_SINGLE_TOPIC, id(0), id(0), PADDED], data: `0x${word(5)}${word(2)}` },
@@ -146,7 +146,7 @@ describe("discoverErc1155", () => {
 
   it("balanceOf revert drops the token, not the scan", async () => {
     const client = {
-      getLogs: async () => [
+      request: async () => [
         { address: C, topics: [TRANSFER_SINGLE_TOPIC, id(0), id(0), PADDED], data: `0x${word(1)}${word(1)}` },
       ],
       readContract: async () => {

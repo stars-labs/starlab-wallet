@@ -21,7 +21,7 @@
  *
  * Solana/Metaplex lives in solanaNftService.ts (different RPC universe).
  */
-import type { PublicClient } from "viem";
+import { toHex, type PublicClient } from "viem";
 import { TRANSFER_TOPIC } from "./tokenService";
 
 export type NftStandard = "erc721" | "erc1155" | "metaplex";
@@ -76,16 +76,19 @@ export function normalizeUri(uri: string): string {
  * account, deduped by (contract, tokenId), then ownerOf-verified.
  */
 export async function discoverNfts(
-  client: Pick<PublicClient, "getLogs" | "readContract">,
+  client: Pick<PublicClient, "request" | "readContract">,
   account: string,
   opts: { fromBlock: bigint; toBlock?: bigint | "latest" },
 ): Promise<NftRef[]> {
   const padded = `0x${account.toLowerCase().replace(/^0x/, "").padStart(64, "0")}` as `0x${string}`;
-  const logs = (await client.getLogs({
-    fromBlock: opts.fromBlock,
-    toBlock: opts.toBlock ?? "latest",
-    topics: [TRANSFER_TOPIC, null, padded],
-  } as any)) as { address: string; topics: string[] }[];
+  const logs = (await client.request({
+    method: "eth_getLogs",
+    params: [{
+      fromBlock: toHex(opts.fromBlock),
+      toBlock: typeof opts.toBlock === "bigint" ? toHex(opts.toBlock) : "latest",
+      topics: [TRANSFER_TOPIC, null, padded],
+    }],
+  })) as { address: string; topics: string[] }[];
 
   const seen = new Set<string>();
   const refs: NftRef[] = [];
@@ -209,17 +212,20 @@ function dataWords(data: string): bigint[] {
  * then balanceOf-verified (received-then-sent drops out).
  */
 export async function discoverErc1155(
-  client: Pick<PublicClient, "getLogs" | "readContract">,
+  client: Pick<PublicClient, "request" | "readContract">,
   account: string,
   opts: { fromBlock: bigint; toBlock?: bigint | "latest" },
 ): Promise<NftItem[]> {
   const padded = `0x${account.toLowerCase().replace(/^0x/, "").padStart(64, "0")}` as `0x${string}`;
-  const logs = (await client.getLogs({
-    fromBlock: opts.fromBlock,
-    toBlock: opts.toBlock ?? "latest",
-    // topic0 ∈ {TransferSingle, TransferBatch}, topic3 = recipient.
-    topics: [[TRANSFER_SINGLE_TOPIC, TRANSFER_BATCH_TOPIC], null, null, padded],
-  } as any)) as { address: string; topics: string[]; data?: string }[];
+  const logs = (await client.request({
+    method: "eth_getLogs",
+    params: [{
+      fromBlock: toHex(opts.fromBlock),
+      toBlock: typeof opts.toBlock === "bigint" ? toHex(opts.toBlock) : "latest",
+      // topic0 ∈ {TransferSingle, TransferBatch}, topic3 = recipient.
+      topics: [[TRANSFER_SINGLE_TOPIC, TRANSFER_BATCH_TOPIC], null, null, padded],
+    }],
+  })) as { address: string; topics: string[]; data?: string }[];
 
   const seen = new Set<string>();
   const refs: NftRef[] = [];

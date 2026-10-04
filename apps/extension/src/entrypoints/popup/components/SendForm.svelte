@@ -274,7 +274,7 @@
 </div>
 
 <style>
-    .send-form { display: flex; flex-direction: column; gap: 12px; }
+    .send-form { display: flex; flex-direction: column; gap: 10px; }
     .sf-head { font-weight: 600; font-size: 16px; }
     .sf-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
     .sf-field input, .sf-field select { padding: 8px; border-radius: 8px; border: 1px solid rgba(127,127,127,0.3); background: transparent; }

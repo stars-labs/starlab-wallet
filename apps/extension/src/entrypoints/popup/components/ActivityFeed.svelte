@@ -109,8 +109,8 @@
     .activity { display: flex; flex-direction: column; gap: 8px; }
     .af-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; }
     .af-refresh { background: none; border: none; cursor: pointer; font-size: 16px; opacity: 0.7; }
-    .af-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-    .af-row { display: grid; grid-template-columns: auto 1fr auto; grid-template-areas: "kind to status" "time time time"; gap: 4px 10px; padding: 8px 0; border-bottom: 1px solid rgba(127,127,127,0.15); font-size: 13px; }
+    .af-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+    .af-row { display: grid; grid-template-columns: auto 1fr auto; grid-template-areas: "kind to status" "time time time"; gap: 4px 10px; padding: 6px 0; border-bottom: 1px solid rgba(127,127,127,0.15); font-size: 13px; }
     .af-kind { display:flex; align-items:center; gap:8px; grid-area: kind; font-weight: 600; text-transform: capitalize; }
     .af-to { grid-area: to; opacity: 0.8; font-family: monospace; }
     .af-status { grid-area: status; font-size: 11px; text-transform: uppercase; }

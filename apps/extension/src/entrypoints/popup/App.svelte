@@ -2078,7 +2078,7 @@
     }
 </script>
 
-<main class="flex min-h-[600px] flex-col">
+<main class="wallet-main flex flex-col">
     <!-- Header -->
     <header
         class="wallet-header sticky top-0 z-30 flex items-center gap-1.5 border-b border-line bg-surface px-4 py-3"
@@ -2136,7 +2136,7 @@
         </button>
     </header>
 
-    <div class="flex-1 space-y-4 px-4 py-4">
+    <div class="wallet-content flex-1 space-y-4 px-4 py-4">
     {#if appState.showSettings}
         <Settings
             currentAddress={displayAddress}
@@ -2302,8 +2302,9 @@
                 {:else}
                     <div class="relative mt-2 text-2xl font-bold tracking-tight" aria-label="Fiat value unavailable">—</div>
                 {/if}
+                <div class="hero-address">
                 <button
-                    class="relative mt-3 flex items-center gap-2"
+                    class="relative flex items-center gap-2"
                     on:click={() => copyAddress(displayAddress)}
                     title="Copy address"
                 >
@@ -2312,13 +2313,14 @@
                     </span>
                     <Icon name={addrCopied ? "check" : "copy"} size={15} />
                 </button>
-                <div class="relative mt-3 flex gap-2">
+                <div class="relative flex gap-2">
                     <button
                         class="rounded-lg bg-primary-soft px-2.5 py-1.5 text-xs font-semibold text-primary backdrop-blur transition hover:bg-surface-3"
                         on:click={() => copyAddress(displayAddress)}
                     >
                         {addrCopied ? "Copied" : "Copy address"}
                     </button>
+                </div>
                 </div>
             </div>
         {/if}
@@ -2393,13 +2395,13 @@
                 {/if}
                 {#key dataEpoch}
                     {#if isEvmChain(appState.chain)}
-                        <div class="card card-pad">
+                        <div class="card card-pad portfolio-panel">
                             <TokenList address={displayAddress} chain={appState.chain} networkId={currentEvmNetworkId} />
                         </div>
-                        <div class="card card-pad">
+                        <div class="card card-pad activity-panel">
                             <ActivityFeed address={displayAddress} chain={appState.chain} />
                         </div>
-                        <div class="card card-pad">
+                        <div class="card card-pad collectibles-panel">
                             <NftGallery address={displayAddress} chain={appState.chain || "ethereum"} />
                         </div>
                     {:else if appState.chain === "solana"}
@@ -2421,7 +2423,7 @@
         <!-- Secondary wallet tools -->
         <!-- Wallet management actions -->
         {#if canCreate || canSign}
-            <div class="grid grid-cols-2 gap-2.5 wallet-actions">
+            <div class="grid grid-cols-2 gap-2.5 wallet-actions wallet-tools">
                 {#if canCreate}
                     <button
                         class="group flex flex-col items-start gap-2 rounded-xl border border-line bg-surface p-3 text-left transition hover:border-primary disabled:opacity-50 disabled:hover:border-line"

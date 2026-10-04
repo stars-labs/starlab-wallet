@@ -632,7 +632,7 @@
     }
 </script>
 
-<div class="space-y-4">
+<div class="wallet-settings space-y-4">
     <div class="flex items-center justify-between">
         <h2 class="text-base font-bold">Settings</h2>
         <Button

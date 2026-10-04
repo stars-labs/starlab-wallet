@@ -80,7 +80,7 @@
     .tl-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; }
     .tl-refresh { background: none; border: none; cursor: pointer; font-size: 16px; opacity: 0.7; }
     .tl-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-    .tl-row { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 10px; padding: 12px 0; border-bottom: 1px solid rgba(127,127,127,0.15); }
+    .tl-row { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(127,127,127,0.15); }
     .tl-sym { font-weight: 600; }
     .tl-bal { opacity: 0.85; }
     .tl-fiat { min-width: 70px; text-align: right; opacity: 0.7; }

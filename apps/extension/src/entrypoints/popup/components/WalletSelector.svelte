@@ -120,7 +120,7 @@
     
     .wallet-selector-button {
         width: 100%;
-        padding: 12px 16px;
+        padding: 8px 12px;
         background: var(--glass-surface);
         border: 1px solid var(--glass-outline);
         border-radius: 14px;
@@ -241,7 +241,7 @@
     
     .wallet-item {
         width: 100%;
-        padding: 12px 16px;
+        padding: 8px 12px;
         background: none;
         border: none;
         cursor: pointer;
@@ -281,7 +281,7 @@
     }
 
     .dropdown-footer {
-        padding: 12px 16px;
+        padding: 8px 12px;
         border-top: 1px solid var(--c-line);
     }
 

@@ -77,7 +77,7 @@ async function fixture(page, mode, theme) {
 }
 async function capture(name,mode='funded',theme='light',width=380,action){
  if(skippedCases.includes(name)||(selectedCases.length&&!selectedCases.includes(name)))return;
- const page=await browser.newPage({viewport:{width,height:900}});const errors=[];page.on('pageerror',e=>errors.push(e.message));await fixture(page,mode,theme);await page.route('**/*',async route=>{
+ const page=await browser.newPage({viewport:{width,height:Number(process.env.WALLET_VISUAL_HEIGHT || 900)}});const errors=[];page.on('pageerror',e=>errors.push(e.message));await fixture(page,mode,theme);await page.route('**/*',async route=>{
   if(new URL(route.request().url()).origin===new URL(url).origin)return route.continue();
   if(mode==='nft-gallery'){
    const requestUrl=route.request().url();
@@ -109,7 +109,7 @@ async function capture(name,mode='funded',theme='light',width=380,action){
    return route.fulfill({contentType:'application/json',body:JSON.stringify(Array.isArray(body)?body.map(rpc):rpc(body))});
   }
   return route.abort();
- });await page.goto(url);await page.waitForTimeout(900);let presentationEvidence;if(action){try{presentationEvidence=await action(page);}catch(error){errors.push(`Action: ${error.message}; ${await page.locator(".sf-error").allTextContents()}`);}}await page.waitForTimeout(300);await page.screenshot({path:resolve(output,name+'.png'),fullPage:true,timeout:60000});manifest.push({name,mode,theme,width,fixture:true,errors,...(presentationEvidence ? {presentationEvidence} : {})});
+ });await page.goto(url);await page.waitForTimeout(900);let presentationEvidence;if(action){try{presentationEvidence=await action(page);}catch(error){errors.push(`Action: ${error.message}; ${await page.locator(".sf-error").allTextContents()}`);}}await page.waitForTimeout(300);await page.mouse.move(0,0);const layoutEvidence=await page.evaluate(()=>({viewportHeight:innerHeight,bodyWidth:document.body.getBoundingClientRect().width,bodyHeight:document.body.getBoundingClientRect().height,bodyMinHeight:getComputedStyle(document.body).minHeight,overflow:document.documentElement.scrollWidth>innerWidth,primaryHeight:document.querySelector('.primary-actions button')?.getBoundingClientRect().height}));if(process.env.WALLET_VISUAL_HEIGHT)await page.screenshot({path:resolve(output,name+'-viewport.png'),fullPage:false,timeout:60000});await page.screenshot({path:resolve(output,name+'.png'),fullPage:true,timeout:60000});manifest.push({name,mode,theme,width,layoutEvidence,fixture:true,errors,...(presentationEvidence ? {presentationEvidence} : {})});
  if(name===`settings-populated-${theme}`){
   const cards=page.locator('.card');
   for(let index=0;index<await cards.count();index++){

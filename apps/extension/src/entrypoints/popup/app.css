@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "./presentation.css";
+@import "./density.css";
 
 /* Class-based dark mode (driven by src/lib/theme.ts), but the actual
    palette also tracks the system when theme = "system". We toggle the
@@ -495,7 +496,7 @@
 @keyframes wallet-skeleton { to { background-position:-200% 0; } }
 @media (prefers-reduced-motion:reduce) { .skeleton-row { animation:none; } }
 @media (min-width:600px) {
-    body { width:440px; margin:28px auto; min-height:calc(100vh - 56px); border:1px solid var(--c-line); border-radius:20px; box-shadow:var(--shadow-pop); overflow-x:hidden; }
+    body { width:min(900px, calc(100vw - 40px)); margin:20px auto; min-height:0; border:1px solid var(--c-line); border-radius:20px; box-shadow:var(--shadow-pop); overflow-x:hidden; }
     html { background:var(--c-bg); }
 }
 @layer components {

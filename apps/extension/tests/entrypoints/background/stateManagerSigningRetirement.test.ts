@@ -7,6 +7,12 @@ function complete(mgr: StateManager, id: string) {
     mgr.handleOffscreenStateUpdate({type: "signingComplete", sessionId: id, signingId: id, signature: "abcd", messageHex: "42", blockchain: "ethereum"} as any);
 }
 describe("completed signing invite retirement", () => {
+    it("uses distinct standard WebSocket connection states in the shared harness", () => {
+        expect(WebSocket.CONNECTING).toBe(0);
+        expect(WebSocket.OPEN).toBe(1);
+        expect(WebSocket.CLOSING).toBe(2);
+        expect(WebSocket.CLOSED).toBe(3);
+    });
     it("withdraws the proposer invite, resolves the signature and allows another ceremony", () => {
         const mgr = new StateManager({deviceId: "creator"});
         const withdraw = jest.fn(), resolve = jest.fn();

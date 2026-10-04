@@ -101,3 +101,27 @@ home, wide dark home and unlock modal; Send review and populated Settings
 were also inspected. Popup fixture home shrinks from approximately 1636px
 to 1353px while preserving text sizes and materials. This is presentation
 fixture evidence, not a new live transaction or complete 230-case rerun.
+
+## Product closeout verification
+
+The compact presentation is retained in the final product review.
+[Capture and packaging evidence](evidence/product-closeout-2026-10-05.json)
+records 242 unique fixture states, zero page/action errors and zero horizontal
+overflow. Coverage includes narrow/wide layouts, light/dark themes, long asset
+names and balances, keyboard focus, modal focus return and reduced motion.
+The designer reviewed all twelve contact sheets and critical full screens.
+
+This is a collection across three declared presentation versions, not one
+uninterrupted or single-bundle run: 224 captures use cd32ef1, fourteen affected
+modal/locale captures use a0aa53f, and four NFT captures use a4b8ee3. Each row
+records its screenshot hash and bundle provenance. Production packaging and
+a real Chromium provider initialization check are recorded separately.
+
+Normal root build and extension ZIP build pass, with zero Svelte errors or
+warnings. The final manifest registers one content script, and the real
+provider test passes with one initial EIP-6963 announcement. The production
+ZIP SHA-256 is
+`5063189fe454b04824d7ff837ba7403dc05da545e9345f650050d61618fe67d1`.
+Firefox builds, but Firefox cryptographic runtime and physical hardware-card
+signing remain unverified. Remote CI status must be checked against the
+current PR head separately from these local results.

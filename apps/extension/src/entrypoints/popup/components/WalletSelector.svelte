@@ -104,7 +104,7 @@
                 
                 <div class="dropdown-footer">
                     <button class="manage-button" on:click={() => dispatch('manage')}>
-                        Manage Wallets
+                        Wallet settings
                     </button>
                 </div>
             </div>

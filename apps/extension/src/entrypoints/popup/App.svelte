@@ -2220,8 +2220,8 @@
                 wallets={keystoreStatus.wallets}
                 activeWallet={keystoreStatus.activeWallet}
                 on:select={handleWalletSelect}
-                on:add={() => console.log("[UI] Add wallet clicked")}
-                on:manage={() => console.log("[UI] Manage wallets clicked")}
+                on:add={() => (showCreateWallet = true)}
+                on:manage={() => (appState.showSettings = true)}
             />
         {/if}
 
@@ -3031,7 +3031,11 @@
                     </p>
                 {/if}
             </div>
-        {:else if appState.sessionInfo && appState.dkgState !== DkgState.Idle}
+        {:else if appState.sessionInfo?.session_type === "dkg" && appState.dkgState === DkgState.Failed}
+            <div class="alert alert-danger" role="alert">
+                Wallet setup failed. Check your devices and try again.
+            </div>
+        {:else if appState.sessionInfo?.session_type === "dkg" && appState.dkgState !== DkgState.Idle}
             <div class="alert alert-info">
                 Generating keys — your wallet address will appear when complete.
             </div>

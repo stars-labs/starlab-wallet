@@ -1,4 +1,5 @@
 <script lang="ts">
+    import ChainIcon from "../../../lib/ui/ChainIcon.svelte";
     // Account model (BIP-44 mental model): Wallet → Account 0..N → per-chain
     // addresses from PINNED standard paths. Listing is passwordless — public
     // derivation runs in the engine wasm (byte-identical to the CLI).
@@ -124,7 +125,7 @@
     {#if open}
         <div class="acct-menu">
             {#if loading}
-                <div class="acct-hint" style="padding:6px 10px">deriving…</div>
+                <div class="acct-hint" style="padding:6px 10px">Loading accounts…</div>
             {:else if error}
                 <div class="acct-err">{error}</div>
             {:else}
@@ -134,11 +135,11 @@
                         class:active={selected === a.account}
                         on:click={() => pick(a.account)}
                     >
-                        Account {a.account}
+                        <ChainIcon chain={String(chain)} size={24} />Account {a.account}
                         <span class="acct-hint">{addressHint(a.addresses)}</span>
                     </button>
                 {/each}
-                <button class="acct-item acct-add" on:click={addAccount}>＋ Add account</button>
+                <button class="acct-item acct-add" on:click={addAccount}>+ Add account</button>
             {/if}
         </div>
     {/if}
@@ -147,7 +148,7 @@
 <style>
     .acct-picker { position: relative; display: inline-block; }
     .acct-btn { background: rgba(255,255,255,0.2); border: none; border-radius: 8px; padding: 4px 10px; font-size: 12px; font-weight: 600; color: inherit; cursor: pointer; backdrop-filter: blur(4px); }
-    .acct-menu { position: absolute; top: 110%; left: 0; z-index: 30; min-width: 220px; background: var(--surface, #fff); color: var(--text, #111); border: 1px solid rgba(127,127,127,0.3); border-radius: 10px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); }
+    .acct-menu { position: absolute; top: 110%; left: 0; z-index: 30; min-width: 220px; background: var(--c-surface); color: var(--c-text); border: 1px solid rgba(127,127,127,0.3); border-radius: 10px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); }
     .acct-item { display: flex; justify-content: space-between; gap: 8px; width: 100%; text-align: left; background: none; border: none; border-radius: 6px; padding: 7px 10px; font-size: 12px; cursor: pointer; }
     .acct-item:hover { background: rgba(127,127,127,0.12); }
     .acct-item.active { font-weight: 700; }

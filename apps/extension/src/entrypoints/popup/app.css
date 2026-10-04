@@ -475,3 +475,35 @@
         background-color: var(--c-surface-2);
     }
 }
+
+/* Shared product presentation across assets, approvals and settings. */
+@layer components {
+    .asset-identity { display:flex; align-items:center; gap:10px; min-width:0; }
+    .asset-identity > div { min-width:0; }
+    .asset-network { display:block; font-size:11px; color:var(--c-muted); margin-top:2px; }
+    .feature-heading { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+    .sf-review-amount { display:flex; align-items:center; justify-content:center; gap:12px; padding:20px 0; font-size:24px; }
+    .state-panel { display:flex; align-items:center; flex-direction:column; justify-content:center; gap:8px; padding:24px 12px; color:var(--c-muted); text-align:center; font-size:12px; }
+    .state-panel strong { font-size:14px; color:var(--c-text); }
+    .state-error { color:var(--c-danger-fg); background:var(--c-danger-soft); border-radius:12px; }
+    .skeleton-row { width:100%; height:36px; border-radius:10px; background:linear-gradient(100deg,var(--c-surface-2) 25%,var(--c-surface-3) 50%,var(--c-surface-2) 75%); background-size:200% 100%; animation:wallet-skeleton 1.8s ease-in-out infinite; }
+    .sf-field input, .sf-field select { min-height:42px; border-color:var(--c-line-strong); background:var(--c-surface); color:var(--c-text); }
+    .sf-review { background:var(--c-surface-2); border:1px solid var(--c-line); border-radius:14px; }
+    .sf-review code { overflow-wrap:anywhere; }
+}
+@keyframes wallet-skeleton { to { background-position:-200% 0; } }
+@media (prefers-reduced-motion:reduce) { .skeleton-row { animation:none; } }
+@media (min-width:600px) {
+    body { width:440px; margin:28px auto; min-height:calc(100vh - 56px); border:1px solid var(--c-line); border-radius:20px; box-shadow:var(--shadow-pop); overflow-x:hidden; }
+    html { background:var(--c-bg); }
+}
+@layer components {
+    .section-icon { display:inline-flex; align-items:center; color:var(--c-primary); margin-right:8px; vertical-align:middle; }
+    .wallet-actions > button { display:flex; align-items:center; justify-content:center; gap:8px; min-height:44px; }
+    .wallet-actions > button:disabled { opacity:.5; cursor:not-allowed; }
+    .hero { background:var(--c-surface); color:var(--c-text); border:1px solid var(--c-line); }
+    .hero::after { display:none; }
+    .hero .text-white\/80, .hero .text-white\/90, .hero .text-white { color:var(--c-muted); }
+    .hero .bg-white\/20 { background:var(--c-primary-soft); color:var(--c-primary); }
+    .hero .bg-black\/15 { background:var(--c-surface-2); color:var(--c-text); }
+}

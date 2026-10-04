@@ -1,4 +1,6 @@
 <script lang="ts">
+    import TokenIcon from "../lib/ui/TokenIcon.svelte";
+    import ChainIcon from "../lib/ui/ChainIcon.svelte";
     import { onMount } from "svelte";
     import NetworkService from "../services/networkService";
     import type { Chain } from "@stars-labs/types/network";
@@ -634,7 +636,7 @@
 
     <!-- Appearance -->
     <div class="card card-pad">
-        <h3 class="section-title mb-2.5">Appearance</h3>
+        <h3 class="section-title mb-2.5"><span class="section-icon"><Icon name="sun" size={17} /></span>Appearance</h3>
         <div class="grid grid-cols-3 gap-1.5 rounded-xl bg-surface-2 p-1">
             {#each THEME_OPTIONS as opt}
                 <button
@@ -653,7 +655,7 @@
 
     <!-- Signal server / tenant room -->
     <div class="card card-pad space-y-2">
-        <h3 class="section-title">Signal server room</h3>
+        <h3 class="section-title"><span class="section-icon"><Icon name="users" size={17} /></span>Signal server room</h3>
         <p class="text-xs text-muted">
             The hosted server requires a strong room. All co-signers of a wallet
             must use the <strong>same</strong> room. Reconnect after changing it.
@@ -676,7 +678,7 @@
 
     <!-- Connected dApps (#15): review + revoke per-origin permissions -->
     <div class="card card-pad space-y-2">
-        <h3 class="section-title">Connected dApps</h3>
+        <h3 class="section-title"><span class="section-icon"><Icon name="link" size={17} /></span>Connected dApps</h3>
         {#if dappPermissions.length === 0}
             <p class="text-xs text-muted">No dApps connected.</p>
         {:else}
@@ -708,7 +710,7 @@
 
     <!-- Address book (#25) -->
     <div class="card card-pad space-y-2">
-        <h3 class="section-title">Address book</h3>
+        <h3 class="section-title"><span class="section-icon"><Icon name="users" size={17} /></span>Address book</h3>
         {#if contacts.length > 0}
             <ul class="space-y-1">
                 {#each contacts as c (c.chain + ":" + c.address)}
@@ -731,7 +733,7 @@
 
     <!-- Policy (#35): spending limits + auto-lock -->
     <div class="card card-pad space-y-2">
-        <h3 class="section-title">Spending policy</h3>
+        <h3 class="section-title"><span class="section-icon"><Icon name="shield" size={17} /></span>Spending policy</h3>
         <p class="text-xs text-muted">
             Limits are enforced before any signing starts. A blocked send fails
             with the policy reason; loosen the limits here if you really mean it.
@@ -758,7 +760,7 @@
 
     <!-- Backup (#22): export this device's key share -->
     <div class="card card-pad space-y-2">
-        <h3 class="section-title">Backup</h3>
+        <h3 class="section-title"><span class="section-icon"><Icon name="download" size={17} /></span>Backup</h3>
         <p class="text-xs text-muted">
             Exports <strong>this device's key share</strong> as a password-encrypted
             file (CLI-compatible).
@@ -800,12 +802,12 @@
     {#if isEvmChain(chain)}
         <!-- Tokens (#21): tracked list + custom add + auto-discovery -->
         <div class="card card-pad space-y-2">
-            <h3 class="section-title">Tokens</h3>
+            <h3 class="section-title"><span class="section-icon"><Icon name="wallet" size={17} /></span>Tokens</h3>
             {#if trackedTokens.length > 0}
                 <ul class="space-y-1">
                     {#each trackedTokens as t (t.address)}
                         <li class="flex items-center justify-between gap-2 text-xs">
-                            <span class="truncate"><strong>{t.symbol}</strong> · {t.address.slice(0, 8)}…{t.address.slice(-4)}</span>
+                            <div class="asset-identity"><TokenIcon symbol={t.symbol} chain={String(evmChainId() ?? chain)} address={t.address} size={28} /><span class="truncate"><strong>{t.symbol}</strong> · {t.address.slice(0, 8)}…{t.address.slice(-4)}</span></div>
                             <Button size="sm" variant="ghost" on:click={() => removeToken(t.address)}>Remove</Button>
                         </li>
                     {/each}
@@ -830,7 +832,7 @@
 
         <!-- Token approvals (#17): review + revoke ERC-20 allowances -->
         <div class="card card-pad space-y-2">
-            <h3 class="section-title">Token approvals</h3>
+            <h3 class="section-title"><span class="section-icon"><Icon name="shield" size={17} /></span>Token approvals</h3>
             {#if allowances.length === 0}
                 <p class="text-xs text-muted">
                     No active approvals recorded. Approvals signed in this wallet
@@ -840,7 +842,7 @@
                 <ul class="space-y-2">
                     {#each allowances as r (r.chainId + r.token + r.spender)}
                         <li class="flex items-center justify-between gap-2">
-                            <div class="min-w-0 text-xs">
+                            <div class="asset-identity"><TokenIcon symbol="?" chain={String(r.chainId)} address={r.token} size={28} /><div class="min-w-0 text-xs">
                                 <div class="truncate font-semibold">
                                     token {shortHexId(r.token)} → spender {shortHexId(r.spender)}
                                 </div>
@@ -848,7 +850,7 @@
                                     {r.current === -1n ? "current allowance unknown" : `allowance: ${r.current}`}
                                 </div>
                             </div>
-                            <Button size="sm" variant="ghost" on:click={() => revokeAllowance(r)}>
+                            </div><Button size="sm" variant="ghost" on:click={() => revokeAllowance(r)}>
                                 Revoke
                             </Button>
                         </li>
@@ -863,7 +865,7 @@
 
     <!-- Sandbox mode (#31): one-click switch onto local fork nodes -->
     <div class="card card-pad space-y-2">
-        <h3 class="section-title">Sandbox mode</h3>
+        <h3 class="section-title"><span class="section-icon"><Icon name="monitor" size={17} /></span>Sandbox mode</h3>
         <p class="text-xs text-muted">
             Point the wallet at local fork chains (anvil :8545 / surfpool :8899)
             — real signing &amp; broadcast, no real funds. Start the nodes with
@@ -886,7 +888,7 @@
 
     <!-- Network -->
     <div class="card card-pad space-y-3">
-        <h3 class="section-title">Network</h3>
+        <h3 class="section-title flex items-center gap-2"><ChainIcon chain={String(chain)} />Network</h3>
 
         <div>
             <label class="label" for="chain-select">Blockchain</label>
@@ -982,7 +984,7 @@
     <!-- Add Custom Network -->
     {#if showCustomNetworkForm}
         <div class="card card-pad space-y-3">
-            <h3 class="section-title">Add custom network</h3>
+            <h3 class="section-title"><span class="section-icon"><Icon name="plus" size={17} /></span>Add custom network</h3>
 
             {#if customNetworkError}
                 <div class="alert alert-danger text-xs">{customNetworkError}</div>

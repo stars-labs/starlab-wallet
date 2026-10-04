@@ -1,9 +1,12 @@
 <script lang="ts">
+    import TokenIcon from "../../../lib/ui/TokenIcon.svelte";
+    import ChainIcon from "../../../lib/ui/ChainIcon.svelte";
+    import Icon from "../../../lib/ui/Icon.svelte";
     // Receive screen: address + scannable QR. Pure client-side (qrcode lib).
     import { onMount } from "svelte";
 
     export let address: string;
-    export let label: string = "Your address";
+    export let chain: string = "ethereum";
 
     let dataUrl = "";
     let copied = false;
@@ -32,14 +35,14 @@
 </script>
 
 <div class="receive">
-    <div class="rc-label">{label}</div>
+    <ChainIcon {chain} size={48} /><div class="rc-label">Receive crypto</div><span class="badge badge-primary">{chain}</span><p class="text-xs text-muted">Only send assets on this network.</p>
     {#if error}
         <div class="rc-error">{error}</div>
     {:else if dataUrl}
         <img class="rc-qr" src={dataUrl} alt="QR code for {address}" />
     {/if}
     <code class="rc-addr">{address}</code>
-    <button class="rc-copy" on:click={copy}>{copied ? "Copied ✓" : "Copy address"}</button>
+    <button class="btn btn-primary rc-copy" on:click={copy}><Icon name={copied ? "check" : "copy"} size={16} />{copied ? "Copied" : "Copy address"}</button>
 </div>
 
 <style>

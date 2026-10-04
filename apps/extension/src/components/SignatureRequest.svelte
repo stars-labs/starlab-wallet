@@ -1,6 +1,7 @@
 <script lang="ts">
     import { createEventDispatcher } from 'svelte';
     import Button from "../lib/ui/Button.svelte";
+    import ChainIcon from "../lib/ui/ChainIcon.svelte";
     import Icon from "../lib/ui/Icon.svelte";
 
     export let signingId: string;
@@ -84,7 +85,7 @@
 <div class="card card-pad">
     <div class="mb-3 flex items-center justify-between">
         <h3 class="flex items-center gap-1.5 text-sm font-bold">
-            <Icon name="edit" size={15} /> Signature request
+            <Icon name="shield" size={24} /> Review signature
         </h3>
         <span class="badge badge-warning">Pending</span>
     </div>

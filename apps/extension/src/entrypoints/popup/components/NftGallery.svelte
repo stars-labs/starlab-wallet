@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Icon from "../../../lib/ui/Icon.svelte";
     // NFT gallery (#20): lazy-loaded grid across ERC-721, ERC-1155 and
     // Solana/Metaplex. Scanning logs + metadata is network-heavy, so nothing
     // runs until the user asks.
@@ -13,6 +14,7 @@
     import { makeSolanaRpc, loadSolanaNfts } from "../../../services/solanaNftService";
     import { isEvmChain, type SupportedChain } from "@stars-labs/types/appstate";
 
+    let failedImages = new Set<string>();
     export let address: string;
     /** EVM chains scan ERC-721/1155; Solana scans Metaplex. */
     export let chain: SupportedChain = "ethereum";
@@ -72,25 +74,25 @@
 
 <div class="nft-gallery">
     <div class="ng-head">
-        <span>NFTs</span>
+        <span>Collectibles</span>
         <button class="ng-btn" on:click={load} disabled={loading}>
-            {loading ? "Scanning…" : loaded ? "⟳" : "Load NFTs"}
+            {#if loading}Scanning…{:else if loaded}<Icon name="refresh" size={16} />{:else}Load collectibles{/if}
         </button>
     </div>
 
     {#if error}
-        <div class="ng-error">{error}</div>
+        <div class="state-panel state-error"><Icon name="alert" /><span>{error}</span><button class="btn btn-secondary btn-sm" on:click={load}>Try again</button></div>
     {:else if loaded && items.length === 0}
-        <div class="ng-muted">No NFTs found in the recent window.</div>
+        <div class="state-panel"><Icon name="image" size={32} /><strong>No collectibles found</strong><span>Collectibles on this account appear here.</span></div>
     {:else if items.length > 0}
         <div class="ng-grid">
             {#each items as nft (nft.contract + nft.tokenId)}
                 <figure class="ng-card" title={nft.collection ?? nft.contract}>
                     <div class="ng-media">
-                        {#if nft.image}
-                            <img src={nft.image} alt={nft.name ?? `#${nft.tokenId}`} loading="lazy" />
+                        {#if nft.image && !failedImages.has(nft.image)}
+                            <img src={nft.image} alt={nft.name ?? `#${nft.tokenId}`} loading="lazy" on:error={() => { failedImages = new Set([...failedImages, nft.image!]); }} />
                         {:else}
-                            <div class="ng-placeholder">#{nft.tokenId}</div>
+                            <div class="ng-placeholder"><Icon name="image" size={32} /><span>#{nft.tokenId}</span></div>
                         {/if}
                         {#if nft.standard}
                             <span class="ng-badge">{BADGE[nft.standard] ?? nft.standard}</span>
@@ -120,6 +122,4 @@
     .ng-card img, .ng-placeholder { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: rgba(127,127,127,0.15); display: block; }
     .ng-placeholder { display: flex; align-items: center; justify-content: center; font-size: 12px; opacity: 0.7; }
     .ng-card figcaption { font-size: 11px; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .ng-muted { opacity: 0.6; font-size: 13px; }
-    .ng-error { color: #c0392b; font-size: 13px; }
 </style>

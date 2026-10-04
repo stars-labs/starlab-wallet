@@ -1,9 +1,10 @@
 <script lang="ts">
     import { createEventDispatcher } from 'svelte';
+    import FeatureHeader from "../../../lib/ui/FeatureHeader.svelte";
     import Button from "../../../lib/ui/Button.svelte";
 
-    export let title: string = "Enter Password";
-    export let message: string = "Please enter your keystore password";
+    export let title: string = "Unlock your wallet";
+    export let message: string = "Use your password to unlock this device";
     export let confirmMode: boolean = false;
     export let minLength: number = 8;
     

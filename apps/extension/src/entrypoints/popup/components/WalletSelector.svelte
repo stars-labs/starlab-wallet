@@ -1,4 +1,7 @@
 <script lang="ts">
+    import TokenIcon from "../../../lib/ui/TokenIcon.svelte";
+    import ChainIcon from "../../../lib/ui/ChainIcon.svelte";
+    import Icon from "../../../lib/ui/Icon.svelte";
     import { createEventDispatcher } from 'svelte';
     import type { ExtensionWalletMetadata } from "@stars-labs/types/keystore";
     import { getChainLabel } from "@stars-labs/types/appstate";
@@ -23,29 +26,6 @@
         return `${address.slice(0, 6)}...${address.slice(-4)}`;
     }
     
-    function getWalletIcon(blockchain: string): string {
-        switch (blockchain) {
-            case 'ethereum':
-                return '⟠';
-            case 'solana':
-                return '◎';
-            case 'bitcoin':
-                return '₿';
-            case 'sui':
-                return 'S';
-            case 'polygon':
-                return '⬡';
-            case 'arbitrum':
-                return 'A';
-            case 'optimism':
-                return 'O';
-            case 'base':
-                return 'B';
-            default:
-                return '●';
-        }
-    }
-    
     // Close dropdown when clicking outside
     function handleClickOutside(event: MouseEvent) {
         const target = event.target as HTMLElement;
@@ -67,7 +47,7 @@
         >
             <div class="wallet-info">
                 {#if activeWallet}
-                    <span class="wallet-icon">{getWalletIcon(activeWallet.blockchain)}</span>
+                    <ChainIcon chain={activeWallet.blockchain} size={30} />
                     <span class="wallet-name">{activeWallet.name}</span>
                     <span class="wallet-chain">{getChainLabel(activeWallet.blockchain)}</span>
                     <span class="wallet-address">{formatAddress(activeWallet.address)}</span>
@@ -109,7 +89,7 @@
                             class:active={wallet.id === activeWallet?.id}
                             on:click={() => selectWallet(wallet)}
                         >
-                            <span class="wallet-icon">{getWalletIcon(wallet.blockchain)}</span>
+                            <ChainIcon chain={wallet.blockchain} size={32} />
                             <div class="wallet-details">
                                 <span class="wallet-name">{wallet.name}</span>
                                 <span class="wallet-chain">{getChainLabel(wallet.blockchain)}</span>
@@ -163,15 +143,6 @@
         gap: 8px;
         flex: 1;
         text-align: left;
-    }
-    
-    .wallet-icon {
-        font-size: 18px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 24px;
-        height: 24px;
     }
     
     .wallet-name {

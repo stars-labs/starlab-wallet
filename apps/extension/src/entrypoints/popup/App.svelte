@@ -1,4 +1,6 @@
 <script lang="ts">
+    import FeatureHeader from "../../lib/ui/FeatureHeader.svelte";
+    import ChainIcon from "../../lib/ui/ChainIcon.svelte";
     import { openInvites } from "../../utils/wallet-id";
     import { signingInviteChain, signingInviteDecision, signingInviteKey } from "./signingInvite";
     // Removed single-party WASM functions - this is now an MPC-only wallet
@@ -2255,7 +2257,7 @@
                         <span
                             class="text-xs font-semibold uppercase tracking-wide text-white/80"
                         >
-                            {chainLabel(appState.chain)}
+                            <ChainIcon chain={String(appState.chain)} size={22} /> {chainLabel(appState.chain)}
                         </span>
                         <AccountPicker
                             groupPublicKey={appState.dkgGroupPublicKey || ""}
@@ -2343,7 +2345,10 @@
             <div class="alert alert-info text-xs">{accountSetupStatus}</div>
         {/if}
 
-        <!-- Primary actions -->
+        <!-- Wallet assets + activity + send/receive (shown once a wallet exists).
+             Gate on the account address the header already shows: the
+             post-DKG `dkgAddress` fetch is one-shot and racy, and a saved
+             wallet reloaded from the keystore never sets it. -->
         {@const canCreate =
             !appState.sessionInfo ||
             appState.dkgState === DkgState.Complete}
@@ -2352,8 +2357,72 @@
             !keystoreStatus.locked &&
             (keystoreStatus.wallets?.length ?? 0) > 0 &&
             !appState.sessionInfo}
+        {#if canSign && displayAddress}
+            {#if showSend && isEvmChain(appState.chain)}
+                <div class="card card-pad">
+                    <SendForm
+                        from={displayAddress}
+                        chain={appState.chain}
+                        on:submit={handleSendSubmit}
+                        on:cancel={() => (showSend = false)}
+                    />
+                </div>
+            {:else if showReceive}
+                <div class="card card-pad">
+                    <ReceiveCard address={displayAddress} chain={String(appState.chain)} />
+                    <button class="btn-ghost mt-2 w-full" on:click={() => (showReceive = false)}>Close</button>
+                </div>
+            {:else}
+                <div class="grid grid-cols-2 gap-2.5 wallet-actions">
+                    <button
+                        class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
+                        on:click={() => { showSend = true; sendStatus = ""; }}
+                        disabled={selectedAccount !== 0 || !isEvmChain(appState.chain)}
+                        title={selectedAccount !== 0
+                            ? "Signing currently pins to Account 0 — per-session account selection ships next"
+                            : isEvmChain(appState.chain)
+                              ? "Send"
+                              : "Transaction sending is not wired for this chain yet"}
+                    ><Icon name="send" size={20} /> Send</button>
+                    <button
+                        class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
+                        on:click={() => (showReceive = true)}
+                    ><Icon name="qr" size={20} /> Receive</button>
+                </div>
+                {#if sendStatus}
+                    <p class="text-xs text-muted">{sendStatus}</p>
+                {/if}
+                {#key dataEpoch}
+                    {#if isEvmChain(appState.chain)}
+                        <div class="card card-pad">
+                            <TokenList address={displayAddress} chain={appState.chain} />
+                        </div>
+                        <div class="card card-pad">
+                            <ActivityFeed address={displayAddress} chain={appState.chain} />
+                        </div>
+                        <div class="card card-pad">
+                            <NftGallery address={displayAddress} chain={appState.chain || "ethereum"} />
+                        </div>
+                    {:else if appState.chain === "solana"}
+                        <div class="card card-pad">
+                            <NftGallery address={displayAddress} chain="solana" />
+                        </div>
+                    {:else if isSupportedChain(appState.chain)}
+                        <div class="alert alert-info text-xs">
+                            {CHAIN_METADATA[appState.chain].note ??
+                                "Address and threshold signing are available. Transaction tools for this chain are not wired yet."}
+                        </div>
+                    {/if}
+                {/key}
+            {/if}
+        {/if}
+
+        <!-- Sign message: inline form (opened from the action above) -->
+        <div class="section-title">Wallet tools</div>
+        <!-- Secondary wallet tools -->
+        <!-- Primary actions -->
         {#if canCreate || canSign}
-            <div class="grid grid-cols-2 gap-2.5">
+            <div class="grid grid-cols-2 gap-2.5 wallet-actions">
                 {#if canCreate}
                     <button
                         class="group flex flex-col items-start gap-2 rounded-xl border border-line bg-surface p-3 text-left transition hover:border-primary disabled:opacity-50 disabled:hover:border-line"
@@ -2400,77 +2469,12 @@
             </div>
         {/if}
 
-        <!-- Wallet assets + activity + send/receive (shown once a wallet exists).
-             Gate on the account address the header already shows: the
-             post-DKG `dkgAddress` fetch is one-shot and racy, and a saved
-             wallet reloaded from the keystore never sets it. -->
-        {#if canSign && displayAddress}
-            {#if showSend && isEvmChain(appState.chain)}
-                <div class="card card-pad">
-                    <SendForm
-                        from={displayAddress}
-                        chain={appState.chain}
-                        on:submit={handleSendSubmit}
-                        on:cancel={() => (showSend = false)}
-                    />
-                </div>
-            {:else if showReceive}
-                <div class="card card-pad">
-                    <ReceiveCard address={displayAddress} />
-                    <button class="btn-ghost mt-2 w-full" on:click={() => (showReceive = false)}>Close</button>
-                </div>
-            {:else}
-                <div class="grid grid-cols-2 gap-2.5">
-                    <button
-                        class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
-                        on:click={() => { showSend = true; sendStatus = ""; }}
-                        disabled={selectedAccount !== 0 || !isEvmChain(appState.chain)}
-                        title={selectedAccount !== 0
-                            ? "Signing currently pins to Account 0 — per-session account selection ships next"
-                            : isEvmChain(appState.chain)
-                              ? "Send"
-                              : "Transaction sending is not wired for this chain yet"}
-                    >Send</button>
-                    <button
-                        class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
-                        on:click={() => (showReceive = true)}
-                    >Receive</button>
-                </div>
-                {#if sendStatus}
-                    <p class="text-xs text-muted">{sendStatus}</p>
-                {/if}
-                {#key dataEpoch}
-                    {#if isEvmChain(appState.chain)}
-                        <div class="card card-pad">
-                            <TokenList address={displayAddress} chain={appState.chain} />
-                        </div>
-                        <div class="card card-pad">
-                            <ActivityFeed address={displayAddress} chain={appState.chain} />
-                        </div>
-                        <div class="card card-pad">
-                            <NftGallery address={displayAddress} chain={appState.chain || "ethereum"} />
-                        </div>
-                    {:else if appState.chain === "solana"}
-                        <div class="card card-pad">
-                            <NftGallery address={displayAddress} chain="solana" />
-                        </div>
-                    {:else if isSupportedChain(appState.chain)}
-                        <div class="alert alert-info text-xs">
-                            {CHAIN_METADATA[appState.chain].note ??
-                                "Address and threshold signing are available. Transaction tools for this chain are not wired yet."}
-                        </div>
-                    {/if}
-                {/key}
-            {/if}
-        {/if}
-
-        <!-- Sign message: inline form (opened from the action above) -->
         {#if canSign && showSignForm}
             <form
                 class="card card-pad space-y-3"
                 on:submit|preventDefault={buildSignPreview}
             >
-                <p class="text-sm font-semibold">Sign a message</p>
+                <FeatureHeader title="Sign a message" subtitle="Review what your devices will approve" icon="edit" />
                 <div>
                     <label class="label" for="sign-wallet">Wallet</label>
                     <select

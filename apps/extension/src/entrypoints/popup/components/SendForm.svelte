@@ -1,4 +1,7 @@
 <script lang="ts">
+    import TokenIcon from "../../../lib/ui/TokenIcon.svelte";
+    import ChainIcon from "../../../lib/ui/ChainIcon.svelte";
+    import Icon from "../../../lib/ui/Icon.svelte";
     // Send form: pick asset (native or ERC-20), recipient, amount → build the
     // eth_sendTransaction params with the pure sendService and emit `submit`.
     // The parent routes the tx through the existing MPC sign+broadcast flow, so
@@ -169,23 +172,23 @@
 </script>
 
 <div class="send-form">
-    <div class="sf-head">Send</div>
+    <div class="feature-heading"><ChainIcon chain={String(chain)} size={32} /><div><div class="sf-head">Send crypto</div><span class="text-xs text-muted">{chain} · Review before confirming</span></div></div>
 
     <label class="sf-field">
         <span>Asset</span>
         {#if loadingAssets}
-            <span class="sf-muted">loading…</span>
+            <span class="sf-muted" aria-busy="true">Loading assets…</span>
         {:else}
-            <select bind:value={selected}>
+            <div class="asset-identity"><TokenIcon symbol={assets[selected]?.symbol ?? "ETH"} chain={String(chain)} address={assets[selected]?.address} size={28} /><select bind:value={selected}>
                 {#each assets as a, i}
                     <option value={i}>{a.symbol} — {Number(a.balance).toLocaleString(undefined, { maximumFractionDigits: 6 })}</option>
                 {/each}
-            </select>
+            </select></div>
         {/if}
     </label>
 
     <label class="sf-field">
-        <span>To</span>
+        <span>Recipient</span>
         <input
             placeholder="0x… or name.eth"
             bind:value={recipient}
@@ -209,10 +212,10 @@
     {#if review}
         <!-- Review step (#12): everything the user is about to authorize. -->
         <div class="sf-review">
-            <div class="sf-row"><span>Send</span><strong>{amount} {assets[selected]?.symbol}</strong></div>
+            <div class="sf-review-amount"><TokenIcon symbol={assets[selected]?.symbol ?? "ETH"} chain={String(chain)} address={assets[selected]?.address} size={44} /><strong>{amount} {assets[selected]?.symbol}</strong></div>
             <div class="sf-row">
-                <span>To</span>
-                <code>
+                <span>Recipient</span>
+                <code title={review.resolvedTo}>
                     {#if review.ens}{review.ens} → {/if}{review.resolvedTo.slice(0, 10)}…{review.resolvedTo.slice(-6)}
                 </code>
             </div>

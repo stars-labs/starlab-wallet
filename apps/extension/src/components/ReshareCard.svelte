@@ -1,4 +1,5 @@
 <script lang="ts">
+    import FeatureHeader from "../lib/ui/FeatureHeader.svelte";
     /**
      * M3 reshare: "Devices / Reshare" card for Settings.
      *
@@ -220,7 +221,7 @@
 </script>
 
 <div class="card card-pad space-y-2" data-testid="reshare-card">
-    <h3 class="section-title">Devices / Reshare</h3>
+    <FeatureHeader title="Manage wallet devices" subtitle="Refresh shares or replace a device" icon="users" />
     <p class="text-xs text-muted">
         Rotate this wallet's key shares or retire a lost device. The group key
         — and every address — stays the same; only the shares change.

@@ -1,4 +1,7 @@
 <script lang="ts">
+    import TokenIcon from "../../../lib/ui/TokenIcon.svelte";
+    import ChainIcon from "../../../lib/ui/ChainIcon.svelte";
+    import Icon from "../../../lib/ui/Icon.svelte";
     // Transaction activity feed, fetched from the background (getActivity →
     // ActivityService). Newest first; status badge per tx.
     //
@@ -72,20 +75,20 @@
 <div class="activity">
     <div class="af-head">
         <span>Activity</span>
-        <button class="af-refresh" on:click={load} title="Refresh">⟳</button>
+        <button class="af-refresh" on:click={load} title="Refresh activity" aria-label="Refresh activity"><Icon name="refresh" size={18} /></button>
     </div>
 
     {#if loading}
-        <div class="af-muted">Loading…</div>
+        <div class="state-panel" aria-busy="true"><div class="skeleton-row"></div><span>Loading activity…</span></div>
     {:else if error}
-        <div class="af-error">{error}</div>
+        <div class="state-panel state-error"><Icon name="alert" /><span>{error}</span><button class="btn btn-secondary btn-sm" on:click={load}>Try again</button></div>
     {:else if items.length === 0}
-        <div class="af-muted">No transactions yet.</div>
+        <div class="state-panel"><Icon name="clock" size={32} /><strong>Your activity appears here</strong><span>Send or receive crypto to see transaction updates.</span></div>
     {:else}
         <ul class="af-rows">
             {#each items as a (a.hash)}
                 <li class="af-row">
-                    <span class="af-kind">{a.kind}</span>
+                    <span class="af-kind"><ChainIcon chain={String(chain)} size={28} /> {a.kind}</span>
                     <span class="af-to">→ {short(a.to)}</span>
                     <span class="af-status af-{a.status}">{a.status}</span>
                     <span class="af-time">{when(a.timestamp)}</span>
@@ -101,13 +104,13 @@
     .af-refresh { background: none; border: none; cursor: pointer; font-size: 16px; opacity: 0.7; }
     .af-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
     .af-row { display: grid; grid-template-columns: auto 1fr auto; grid-template-areas: "kind to status" "time time time"; gap: 4px 10px; padding: 8px 0; border-bottom: 1px solid rgba(127,127,127,0.15); font-size: 13px; }
-    .af-kind { grid-area: kind; font-weight: 600; text-transform: capitalize; }
+    .af-kind { display:flex; align-items:center; gap:8px; grid-area: kind; font-weight: 600; text-transform: capitalize; }
     .af-to { grid-area: to; opacity: 0.8; font-family: monospace; }
     .af-status { grid-area: status; font-size: 11px; text-transform: uppercase; }
     .af-time { grid-area: time; opacity: 0.5; font-size: 11px; }
-    .af-pending { color: #e0a800; }
-    .af-confirmed { color: #27ae60; }
-    .af-failed { color: #c0392b; }
+    .af-pending { color: var(--c-warning-fg); }
+    .af-confirmed { color: var(--c-success-fg); }
+    .af-failed { color: var(--c-danger-fg); }
     .af-muted { opacity: 0.6; }
-    .af-error { color: #c0392b; font-size: 13px; }
+    .af-error { color: var(--c-danger-fg); font-size: 13px; }
 </style>

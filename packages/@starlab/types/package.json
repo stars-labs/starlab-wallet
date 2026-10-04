@@ -29,8 +29,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
+    "build": "bun ./node_modules/typescript/bin/tsc",
+    "dev": "bun ./node_modules/typescript/bin/tsc --watch",
     "clean": "rm -rf dist"
   },
   "devDependencies": {

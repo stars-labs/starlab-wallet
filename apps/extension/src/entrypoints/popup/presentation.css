@@ -114,6 +114,8 @@ body {
     .icon-btn:hover:not(:disabled) { background: var(--c-primary-soft); color: var(--c-primary); }
 }
 .btn:active:not(:disabled), .wallet-actions > button:active:not(:disabled),
+.primary-actions > button:first-child:active:not(:disabled),
+.sf-actions .sf-submit:active:not(:disabled),
 .sf-actions button:active:not(:disabled), button.card:active:not(:disabled) {
     transform: translateY(1px) scale(.985);
 }

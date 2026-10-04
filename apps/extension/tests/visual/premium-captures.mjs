@@ -37,8 +37,8 @@ export async function capturePremium(capture) {
   });
   await capture(`premium-pressed-${theme}`,'premium-funded',theme,380,async p=>{
    await send(p).hover();await p.mouse.down();await p.waitForTimeout(180);
-   const transform=await send(p).evaluate(el=>getComputedStyle(el).transform);
-   if(transform==='none')throw Error('Press feedback missing');return {transform};
+   const pressed=await send(p).evaluate(el=>{const matrix=new DOMMatrix(getComputedStyle(el).transform);return {transform:getComputedStyle(el).transform,scale:matrix.a,translateY:matrix.f,active:el.matches(':active')};});
+   if(!pressed.active||pressed.scale>=1||pressed.translateY<=0)throw Error('Pressed feedback did not differ from hover');return pressed;
   });
   await capture(`premium-focus-${theme}`,'premium-funded',theme,380,async p=>{
    await p.keyboard.press('Tab');await send(p).focus();

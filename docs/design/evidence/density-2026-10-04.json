@@ -1,0 +1,567 @@
+{
+  "source_commit": "78351504cc9a6ea0d0f3c129e2a5f15990673232",
+  "scope": "Presentation only; 16 representative fixture states, 32 full-page and 600px viewport images",
+  "captures": [
+    {
+      "name": "premium-home-popup-light",
+      "mode": "premium-funded",
+      "theme": "light",
+      "width": 380,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "bodyWidth": 380,
+        "bodyHeight": 1353.265625,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": 10,
+        "sendDisplay": null,
+        "overflow": false,
+        "primaryHeight": 44
+      },
+      "fixture": true,
+      "errors": [],
+      "presentationEvidence": {
+        "body": {
+          "background": "radial-gradient(430px 380px at 95% 2%, rgba(137, 105, 255, 0.17), rgba(0, 0, 0, 0) 72%) repeat fixed 0% 0% / auto padding-box border-box, radial-gradient(360px 440px at -5% 38%, rgba(107, 163, 255, 0.13), rgba(0, 0, 0, 0) 75%) repeat fixed 0% 0% / auto padding-box border-box, rgb(244, 243, 249) radial-gradient(390px 400px at 100% 85%, rgba(231, 179, 237, 0.15), rgba(0, 0, 0, 0) 75%) repeat fixed 0% 0% / auto padding-box border-box",
+          "backdropFilter": "none",
+          "boxShadow": "none"
+        },
+        "hero": {
+          "background": "radial-gradient(at 100% 0%, rgba(137, 105, 255, 0.17), rgba(0, 0, 0, 0) 66%) repeat scroll 0% 0% / auto padding-box border-box, rgba(255, 255, 255, 0.76) none repeat scroll 0% 0% / auto padding-box border-box",
+          "backdropFilter": "blur(14px) saturate(1.25)",
+          "boxShadow": "rgba(255, 255, 255, 0.95) 0px 1px 0px 0px inset, rgba(103, 83, 255, 0.2) 0px 12px 36px -18px, rgba(32, 23, 68, 0.035) 0px 3px 6px 0px"
+        },
+        "header": {
+          "background": "color(srgb 1 1 1 / 0.66949) none repeat scroll 0% 0% / auto padding-box border-box",
+          "backdropFilter": "blur(20px) saturate(1.35)",
+          "boxShadow": "rgba(255, 255, 255, 0.95) 0px 1px 0px 0px inset, rgba(45, 30, 87, 0.25) 0px 4px 18px -12px"
+        },
+        "card": {
+          "background": "rgba(255, 255, 255, 0.76) none repeat scroll 0% 0% / auto padding-box border-box",
+          "backdropFilter": "none",
+          "boxShadow": "rgba(255, 255, 255, 0.95) 0px 1px 0px 0px inset, rgba(48, 32, 93, 0.024) 0px 3px 5px 0px, rgba(48, 32, 93, 0.22) 0px 12px 28px -16px"
+        }
+      },
+      "sourceRevision": "78351504cc9a6ea0d0f3c129e2a5f15990673232",
+      "images": [
+        {
+          "file": "premium-home-popup-light.png",
+          "sha256": "67517bc639f244cebe8e4ba4c52dcc5a93c2eea7607406f43f106697e3a7b3e1"
+        },
+        {
+          "file": "premium-home-popup-light-viewport.png",
+          "sha256": "c325b75659e480529b6e900f897d8e8782a4a8d068c798afb338dcd08acbd77e"
+        }
+      ]
+    },
+    {
+      "name": "premium-send-review-popup-light",
+      "mode": "fee-review",
+      "theme": "light",
+      "width": 380,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "bodyWidth": 380,
+        "bodyHeight": 1153.765625,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": null,
+        "sendDisplay": "flex",
+        "overflow": false
+      },
+      "fixture": true,
+      "errors": [],
+      "sourceRevision": "78351504cc9a6ea0d0f3c129e2a5f15990673232",
+      "images": [
+        {
+          "file": "premium-send-review-popup-light.png",
+          "sha256": "297db4e718867ce7d45a4f4dd098e2a662d20b8eab9834426c52ed40b8b5f6d8"
+        },
+        {
+          "file": "premium-send-review-popup-light-viewport.png",
+          "sha256": "e628ae059048492e2a8db10e2cb133d0f4e606e7f4cdd67395bbdafdd0cfb272"
+        }
+      ]
+    },
+    {
+      "name": "premium-settings-popup-light",
+      "mode": "settings-populated",
+      "theme": "light",
+      "width": 380,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "bodyWidth": 380,
+        "bodyHeight": 2351.046875,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": null,
+        "sendDisplay": null,
+        "overflow": false
+      },
+      "fixture": true,
+      "errors": [],
+      "sourceRevision": "78351504cc9a6ea0d0f3c129e2a5f15990673232",
+      "images": [
+        {
+          "file": "premium-settings-popup-light.png",
+          "sha256": "17c356e8e0fcaf2c58999fb07a35320ef1ba36619b4e54d72dc282d1c9034817"
+        },
+        {
+          "file": "premium-settings-popup-light-viewport.png",
+          "sha256": "0bdcbf879a0e958002343187d2d4b1759a637c29298c32b4c2878bd4aa4680b5"
+        }
+      ]
+    },
+    {
+      "name": "premium-modal-popup-light",
+      "mode": "locked",
+      "theme": "light",
+      "width": 380,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "bodyWidth": 380,
+        "bodyHeight": 525.265625,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": null,
+        "sendDisplay": null,
+        "overflow": false
+      },
+      "fixture": true,
+      "errors": [],
+      "presentationEvidence": {
+        "animationName": "wallet-panel-in",
+        "background": "rgba(255, 255, 255, 0.94) none repeat scroll 0% 0% / auto padding-box border-box"
+      },
+      "sourceRevision": "78351504cc9a6ea0d0f3c129e2a5f15990673232",
+      "images": [
+        {
+          "file": "premium-modal-popup-light.png",
+          "sha256": "af606cdbb981b17737b7c79cdb62e1923f33bd306811a639c0d77c2d09aedef4"
+        },
+        {
+          "file": "premium-modal-popup-light-viewport.png",
+          "sha256": "af606cdbb981b17737b7c79cdb62e1923f33bd306811a639c0d77c2d09aedef4"
+        }
+      ]
+    },
+    {
+      "name": "premium-home-wide-light",
+      "mode": "premium-funded",
+      "theme": "light",
+      "width": 1280,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "bodyWidth": 900,
+        "bodyHeight": 985.265625,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": 12,
+        "sendDisplay": null,
+        "overflow": false,
+        "primaryHeight": 44
+      },
+      "fixture": true,
+      "errors": [],
+      "presentationEvidence": {
+        "body": {
+          "background": "radial-gradient(430px 380px at 95% 2%, rgba(137, 105, 255, 0.17), rgba(0, 0, 0, 0) 72%) repeat fixed 0% 0% / auto padding-box border-box, radial-gradient(360px 440px at -5% 38%, rgba(107, 163, 255, 0.13), rgba(0, 0, 0, 0) 75%) repeat fixed 0% 0% / auto padding-box border-box, rgb(244, 243, 249) radial-gradient(390px 400px at 100% 85%, rgba(231, 179, 237, 0.15), rgba(0, 0, 0, 0) 75%) repeat fixed 0% 0% / auto padding-box border-box",
+          "backdropFilter": "none",
+          "boxShadow": "rgba(255, 255, 255, 0.95) 0px 1px 0px 0px inset, rgba(26, 18, 54, 0.3) 0px 24px 64px -16px"
+        },
+        "hero": {
+          "background": "radial-gradient(at 100% 0%, rgba(137, 105, 255, 0.17), rgba(0, 0, 0, 0) 66%) repeat scroll 0% 0% / auto padding-box border-box, rgba(255, 255, 255, 0.76) none repeat scroll 0% 0% / auto padding-box border-box",
+          "backdropFilter": "blur(14px) saturate(1.25)",
+          "boxShadow": "rgba(255, 255, 255, 0.95) 0px 1px 0px 0px inset, rgba(103, 83, 255, 0.2) 0px 12px 36px -18px, rgba(32, 23, 68, 0.035) 0px 3px 6px 0px"
+        },
+        "header": {
+          "background": "color(srgb 1 1 1 / 0.66949) none repeat scroll 0% 0% / auto padding-box border-box",
+          "backdropFilter": "blur(20px) saturate(1.35)",
+          "boxShadow": "rgba(255, 255, 255, 0.95) 0px 1px 0px 0px inset, rgba(45, 30, 87, 0.25) 0px 4px 18px -12px"
+        },
+        "card": {
+          "background": "rgba(255, 255, 255, 0.76) none repeat scroll 0% 0% / auto padding-box border-box",
+          "backdropFilter": "none",
+          "boxShadow": "rgba(255, 255, 255, 0.95) 0px 1px 0px 0px inset, rgba(48, 32, 93, 0.024) 0px 3px 5px 0px, rgba(48, 32, 93, 0.22) 0px 12px 28px -16px"
+        }
+      },
+      "sourceRevision": "78351504cc9a6ea0d0f3c129e2a5f15990673232",
+      "images": [
+        {
+          "file": "premium-home-wide-light.png",
+          "sha256": "ba3a093e0aad4df32a89b1b1f996c54027fd5757a4f7e2f44d317f4ebe1525a5"
+        },
+        {
+          "file": "premium-home-wide-light-viewport.png",
+          "sha256": "d2d38a22e98afe9e5bb8d720a9ced3e15d6dc14e7b5e33291594e45b6692a0e2"
+        }
+      ]
+    },
+    {
+      "name": "premium-send-review-wide-light",
+      "mode": "fee-review",
+      "theme": "light",
+      "width": 1280,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "bodyWidth": 900,
+        "bodyHeight": 1026.265625,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": null,
+        "sendDisplay": "grid",
+        "overflow": false
+      },
+      "fixture": true,
+      "errors": [],
+      "sourceRevision": "78351504cc9a6ea0d0f3c129e2a5f15990673232",
+      "images": [
+        {
+          "file": "premium-send-review-wide-light.png",
+          "sha256": "b92c7194d85444d3c4c54fe5085ed3e75f48ba280dbad86530aaf0d9c911b14e"
+        },
+        {
+          "file": "premium-send-review-wide-light-viewport.png",
+          "sha256": "e18dfe3796fdc7c11fbcdd3bc93260029bfcf87a754571414ce5dbd891c4a7de"
+        }
+      ]
+    },
+    {
+      "name": "premium-settings-wide-light",
+      "mode": "settings-populated",
+      "theme": "light",
+      "width": 1280,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "bodyWidth": 900,
+        "bodyHeight": 1536.453125,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": null,
+        "sendDisplay": null,
+        "overflow": false
+      },
+      "fixture": true,
+      "errors": [],
+      "sourceRevision": "78351504cc9a6ea0d0f3c129e2a5f15990673232",
+      "images": [
+        {
+          "file": "premium-settings-wide-light.png",
+          "sha256": "10a1c5caba2cc47a0920ccdb49b80f9b0957b7ca66aed4820328df57b7260ad3"
+        },
+        {
+          "file": "premium-settings-wide-light-viewport.png",
+          "sha256": "7f8bddaf04bd1448bf55abe22af06e617a1ba59ee59956d7968a5eef21dce110"
+        }
+      ]
+    },
+    {
+      "name": "premium-modal-wide-light",
+      "mode": "locked",
+      "theme": "light",
+      "width": 1280,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "bodyWidth": 900,
+        "bodyHeight": 491.265625,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": null,
+        "sendDisplay": null,
+        "overflow": false
+      },
+      "fixture": true,
+      "errors": [],
+      "presentationEvidence": {
+        "animationName": "wallet-panel-in",
+        "background": "rgba(255, 255, 255, 0.94) none repeat scroll 0% 0% / auto padding-box border-box"
+      },
+      "sourceRevision": "78351504cc9a6ea0d0f3c129e2a5f15990673232",
+      "images": [
+        {
+          "file": "premium-modal-wide-light.png",
+          "sha256": "f1f4ed8f510953f954672cfdf9a3a4f306ed31bb4cabfb81bf0932db586cf697"
+        },
+        {
+          "file": "premium-modal-wide-light-viewport.png",
+          "sha256": "f1f4ed8f510953f954672cfdf9a3a4f306ed31bb4cabfb81bf0932db586cf697"
+        }
+      ]
+    },
+    {
+      "name": "premium-home-popup-dark",
+      "mode": "premium-funded",
+      "theme": "dark",
+      "width": 380,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "bodyWidth": 380,
+        "bodyHeight": 1353.265625,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": 10,
+        "sendDisplay": null,
+        "overflow": false,
+        "primaryHeight": 44
+      },
+      "fixture": true,
+      "errors": [],
+      "presentationEvidence": {
+        "body": {
+          "background": "radial-gradient(430px 380px at 95% 2%, rgba(115, 80, 210, 0.22), rgba(0, 0, 0, 0) 72%) repeat fixed 0% 0% / auto padding-box border-box, radial-gradient(360px 440px at -5% 38%, rgba(65, 110, 173, 0.13), rgba(0, 0, 0, 0) 75%) repeat fixed 0% 0% / auto padding-box border-box, rgb(16, 16, 25) radial-gradient(390px 400px at 100% 85%, rgba(151, 74, 147, 0.09), rgba(0, 0, 0, 0) 75%) repeat fixed 0% 0% / auto padding-box border-box",
+          "backdropFilter": "none",
+          "boxShadow": "none"
+        },
+        "hero": {
+          "background": "radial-gradient(at 100% 0%, rgba(115, 80, 210, 0.22), rgba(0, 0, 0, 0) 66%) repeat scroll 0% 0% / auto padding-box border-box, rgba(28, 29, 43, 0.78) none repeat scroll 0% 0% / auto padding-box border-box",
+          "backdropFilter": "blur(14px) saturate(1.25)",
+          "boxShadow": "rgba(234, 227, 255, 0.075) 0px 1px 0px 0px inset, rgba(115, 83, 255, 0.28) 0px 12px 36px -18px, rgba(32, 23, 68, 0.035) 0px 3px 6px 0px"
+        },
+        "header": {
+          "background": "color(srgb 0.109804 0.113725 0.168627 / 0.686745) none repeat scroll 0% 0% / auto padding-box border-box",
+          "backdropFilter": "blur(20px) saturate(1.35)",
+          "boxShadow": "rgba(234, 227, 255, 0.075) 0px 1px 0px 0px inset, rgba(45, 30, 87, 0.25) 0px 4px 18px -12px"
+        },
+        "card": {
+          "background": "rgba(28, 29, 43, 0.78) none repeat scroll 0% 0% / auto padding-box border-box",
+          "backdropFilter": "none",
+          "boxShadow": "rgba(234, 227, 255, 0.075) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.55) 0px 12px 30px -16px"
+        }
+      },
+      "sourceRevision": "78351504cc9a6ea0d0f3c129e2a5f15990673232",
+      "images": [
+        {
+          "file": "premium-home-popup-dark.png",
+          "sha256": "ca134d1138c55a4e9832350398d00f85d4b341e91645bfd28220216c6ecaaf0a"
+        },
+        {
+          "file": "premium-home-popup-dark-viewport.png",
+          "sha256": "10a3ac9fa96dea5778a84cabc76f32a5d96ed1e35a96d4eea13543bf9b4d950e"
+        }
+      ]
+    },
+    {
+      "name": "premium-send-review-popup-dark",
+      "mode": "fee-review",
+      "theme": "dark",
+      "width": 380,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "bodyWidth": 380,
+        "bodyHeight": 1153.765625,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": null,
+        "sendDisplay": "flex",
+        "overflow": false
+      },
+      "fixture": true,
+      "errors": [],
+      "sourceRevision": "78351504cc9a6ea0d0f3c129e2a5f15990673232",
+      "images": [
+        {
+          "file": "premium-send-review-popup-dark.png",
+          "sha256": "c4260dfee796bb63b6ad0f08d20c3c41e526a3252408d7834d23da5042d95f75"
+        },
+        {
+          "file": "premium-send-review-popup-dark-viewport.png",
+          "sha256": "97f19daa629cd9e9bc1d018d55368119ae32a37faf6648b7ef9634d9736b5491"
+        }
+      ]
+    },
+    {
+      "name": "premium-settings-popup-dark",
+      "mode": "settings-populated",
+      "theme": "dark",
+      "width": 380,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "bodyWidth": 380,
+        "bodyHeight": 2351.046875,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": null,
+        "sendDisplay": null,
+        "overflow": false
+      },
+      "fixture": true,
+      "errors": [],
+      "sourceRevision": "78351504cc9a6ea0d0f3c129e2a5f15990673232",
+      "images": [
+        {
+          "file": "premium-settings-popup-dark.png",
+          "sha256": "93db5c33f4f54071f00d453d201640a5a4e8e39dbbef90fbb771f4561aeb2186"
+        },
+        {
+          "file": "premium-settings-popup-dark-viewport.png",
+          "sha256": "0f56b44fcfb72943314289744272d95aab55b2d19546e148ed607dbef1565686"
+        }
+      ]
+    },
+    {
+      "name": "premium-modal-popup-dark",
+      "mode": "locked",
+      "theme": "dark",
+      "width": 380,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "bodyWidth": 380,
+        "bodyHeight": 525.265625,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": null,
+        "sendDisplay": null,
+        "overflow": false
+      },
+      "fixture": true,
+      "errors": [],
+      "presentationEvidence": {
+        "animationName": "wallet-panel-in",
+        "background": "rgba(30, 31, 46, 0.96) none repeat scroll 0% 0% / auto padding-box border-box"
+      },
+      "sourceRevision": "78351504cc9a6ea0d0f3c129e2a5f15990673232",
+      "images": [
+        {
+          "file": "premium-modal-popup-dark.png",
+          "sha256": "33cc99926887bb6f21dfa5c62cb4f3788c3fcfc0420a2888dbce2ab8d9733e03"
+        },
+        {
+          "file": "premium-modal-popup-dark-viewport.png",
+          "sha256": "33cc99926887bb6f21dfa5c62cb4f3788c3fcfc0420a2888dbce2ab8d9733e03"
+        }
+      ]
+    },
+    {
+      "name": "premium-home-wide-dark",
+      "mode": "premium-funded",
+      "theme": "dark",
+      "width": 1280,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "bodyWidth": 900,
+        "bodyHeight": 985.265625,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": 12,
+        "sendDisplay": null,
+        "overflow": false,
+        "primaryHeight": 44
+      },
+      "fixture": true,
+      "errors": [],
+      "presentationEvidence": {
+        "body": {
+          "background": "radial-gradient(430px 380px at 95% 2%, rgba(115, 80, 210, 0.22), rgba(0, 0, 0, 0) 72%) repeat fixed 0% 0% / auto padding-box border-box, radial-gradient(360px 440px at -5% 38%, rgba(65, 110, 173, 0.13), rgba(0, 0, 0, 0) 75%) repeat fixed 0% 0% / auto padding-box border-box, rgb(16, 16, 25) radial-gradient(390px 400px at 100% 85%, rgba(151, 74, 147, 0.09), rgba(0, 0, 0, 0) 75%) repeat fixed 0% 0% / auto padding-box border-box",
+          "backdropFilter": "none",
+          "boxShadow": "rgba(234, 227, 255, 0.075) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.65) 0px 26px 70px -12px"
+        },
+        "hero": {
+          "background": "radial-gradient(at 100% 0%, rgba(115, 80, 210, 0.22), rgba(0, 0, 0, 0) 66%) repeat scroll 0% 0% / auto padding-box border-box, rgba(28, 29, 43, 0.78) none repeat scroll 0% 0% / auto padding-box border-box",
+          "backdropFilter": "blur(14px) saturate(1.25)",
+          "boxShadow": "rgba(234, 227, 255, 0.075) 0px 1px 0px 0px inset, rgba(115, 83, 255, 0.28) 0px 12px 36px -18px, rgba(32, 23, 68, 0.035) 0px 3px 6px 0px"
+        },
+        "header": {
+          "background": "color(srgb 0.109804 0.113725 0.168627 / 0.686745) none repeat scroll 0% 0% / auto padding-box border-box",
+          "backdropFilter": "blur(20px) saturate(1.35)",
+          "boxShadow": "rgba(234, 227, 255, 0.075) 0px 1px 0px 0px inset, rgba(45, 30, 87, 0.25) 0px 4px 18px -12px"
+        },
+        "card": {
+          "background": "rgba(28, 29, 43, 0.78) none repeat scroll 0% 0% / auto padding-box border-box",
+          "backdropFilter": "none",
+          "boxShadow": "rgba(234, 227, 255, 0.075) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.55) 0px 12px 30px -16px"
+        }
+      },
+      "sourceRevision": "78351504cc9a6ea0d0f3c129e2a5f15990673232",
+      "images": [
+        {
+          "file": "premium-home-wide-dark.png",
+          "sha256": "00f86242f7511f27c92669648c3c212fd4e8ac83e422ede91696da2bf56ce015"
+        },
+        {
+          "file": "premium-home-wide-dark-viewport.png",
+          "sha256": "53ca0bd52be67c3ab4c6a108d3125822370764548f0a9e152217f6aa5c7df93d"
+        }
+      ]
+    },
+    {
+      "name": "premium-send-review-wide-dark",
+      "mode": "fee-review",
+      "theme": "dark",
+      "width": 1280,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "bodyWidth": 900,
+        "bodyHeight": 1026.265625,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": null,
+        "sendDisplay": "grid",
+        "overflow": false
+      },
+      "fixture": true,
+      "errors": [],
+      "sourceRevision": "78351504cc9a6ea0d0f3c129e2a5f15990673232",
+      "images": [
+        {
+          "file": "premium-send-review-wide-dark.png",
+          "sha256": "5cd8890c4f01c9b516d449d52c029ac5324944ea40d1f00c4f9767c9a052ed23"
+        },
+        {
+          "file": "premium-send-review-wide-dark-viewport.png",
+          "sha256": "361e4beda9d14dc464d773649d7b82e26fd44d6ba7bdd479f22a3acfe75f0545"
+        }
+      ]
+    },
+    {
+      "name": "premium-settings-wide-dark",
+      "mode": "settings-populated",
+      "theme": "dark",
+      "width": 1280,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "bodyWidth": 900,
+        "bodyHeight": 1536.453125,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": null,
+        "sendDisplay": null,
+        "overflow": false
+      },
+      "fixture": true,
+      "errors": [],
+      "sourceRevision": "78351504cc9a6ea0d0f3c129e2a5f15990673232",
+      "images": [
+        {
+          "file": "premium-settings-wide-dark.png",
+          "sha256": "ef1c6f5ea33355570451ddbc4ea3721a60f61fa087dc8fe6eb5b29e354deab41"
+        },
+        {
+          "file": "premium-settings-wide-dark-viewport.png",
+          "sha256": "18d0993533750966d2c6fcf4028d4d742e1d0330500b1fad46a825d154c8030e"
+        }
+      ]
+    },
+    {
+      "name": "premium-modal-wide-dark",
+      "mode": "locked",
+      "theme": "dark",
+      "width": 1280,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "bodyWidth": 900,
+        "bodyHeight": 491.265625,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": null,
+        "sendDisplay": null,
+        "overflow": false
+      },
+      "fixture": true,
+      "errors": [],
+      "presentationEvidence": {
+        "animationName": "wallet-panel-in",
+        "background": "rgba(30, 31, 46, 0.96) none repeat scroll 0% 0% / auto padding-box border-box"
+      },
+      "sourceRevision": "78351504cc9a6ea0d0f3c129e2a5f15990673232",
+      "images": [
+        {
+          "file": "premium-modal-wide-dark.png",
+          "sha256": "40b2adf721b82814f128474729e1196e87f6c2caa416644b531768cd1b649863"
+        },
+        {
+          "file": "premium-modal-wide-dark-viewport.png",
+          "sha256": "40b2adf721b82814f128474729e1196e87f6c2caa416644b531768cd1b649863"
+        }
+      ]
+    }
+  ],
+  "checks": {
+    "svelte": "0 errors, 0 warnings",
+    "production_build": "pass"
+  },
+  "review": "Density review\n\n16 production-component fixture captures, light/dark \u00d7 380/1280 \u00d7 home/send-review/settings/unlock modal; 32 PNGs include full-page and actual 600px viewport. All 16 zero render/action errors and no horizontal overflow. Wide computed body width 900px, min-height 0px; popup width 380px. Primary actions measured 44px. Home body height popup1353px / wide985px. Screenshot review confirms readable fonts unchanged, address/copy in one row, fourth asset starts within600px popup, asset/activity columns ~440px, no token amount overlap, modal controls entirely inside600px. Send asset/recipient natural DOM order renders two columns on wide; settings row-major grid preserves keyboard DOM order. Cards retain glass material. No crypto/business handlers changed. Svelte check0errors0warnings; isolated production build passed.\n\nArtifacts: /tmp/starlab-density-final-shots/manifest.json; bundle /tmp/starlab-density-final-build/chrome-mv3.\n\nFinal source 78351504cc9a6ea0d0f3c129e2a5f15990673232. Full representative16 rerun exit0 after right-column correction; measured activity\u2192collectibles gap12px, wide Send computed grid. Local commits72007f5 +7835150; clean worktree, no push.\n"
+}

@@ -81,3 +81,23 @@ Desktop source 9bbb52d passes 49 tests, strict Clippy, formatting and release.
 All 58 final native screenshots across 29 states pass; actual hover, press,
 keyboard focus, repeated navigation and resize remain free of redraw trails.
 Native evidence is committed in starlab-desktop `docs/design/glass-and-light.md`.
+
+## Compact layout follow-up
+
+Reduce popup gutters from 16 to 12px, card padding from 16 to 12px,
+section gaps from 16 to 10px, and asset-row vertical padding from 12 to 8px.
+Combine address/copy in one row and use horizontal wallet tool cards. Keep
+font sizes and 44px Send/Receive targets. Remove forced minimum page height.
+Wide pages use a content-sized 900px shell, parallel assets/activity columns,
+and two-column settings and Send fields. Activity and collectibles form one
+vertical stack with a measured 12px gap.
+
+Final source `7835150`: Svelte reports zero errors/warnings and the production
+build passes. [Acceptance](evidence/density-2026-10-04.json) records all 16
+representative light/dark popup/wide states and 32 image hashes. Every state
+has a full-page and actual 600px viewport image, with zero action/page errors
+and no horizontal overflow. Root independently reviewed the final narrow
+home, wide dark home and unlock modal; Send review and populated Settings
+were also inspected. Popup fixture home shrinks from approximately 1636px
+to 1353px while preserving text sizes and materials. This is presentation
+fixture evidence, not a new live transaction or complete 230-case rerun.

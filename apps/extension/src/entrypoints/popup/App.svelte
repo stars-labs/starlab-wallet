@@ -199,6 +199,7 @@
     let accountAddresses: { chain: string; path: string; address: string }[] = [];
     function onAccountSelect(e: CustomEvent) {
         selectedAccount = e.detail.account;
+        if (selectedAccount !== 0) showSend = false;
         accountAddresses = e.detail.addresses;
         refreshWalletData(); // remount balance/activity panels for the new address
     }

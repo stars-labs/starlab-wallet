@@ -2839,7 +2839,7 @@
                     <dd>
                         {#if signatureBanner.blockchain === "ethereum"}
                             <span class="badge badge-info"
-                                >EIP-191 · threshold ECDSA</span
+                                >Ethereum · threshold ECDSA</span
                             >
                         {:else}
                             <span class="badge badge-info">ed25519 · Solana</span>

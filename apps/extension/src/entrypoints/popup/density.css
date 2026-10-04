@@ -31,8 +31,10 @@ body, .wallet-main { min-height: 0; }
     .hero { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:24px; align-items:center; }
     .hero > div:first-child { grid-column:1 / -1; }
     .hero-address { margin-top:4px; }
-    .wallet-settings { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; align-items:start; }
-    .wallet-settings > div:first-child { grid-column:1 / -1; }
+    /* Columns follow DOM order down each natural-height stack. Keep cards intact. */
+    .wallet-settings { display:block; column-count:2; column-gap:12px; }
+    .wallet-settings > * { break-inside:avoid; margin-bottom:12px; }
+    .wallet-settings > div:first-child { column-span:all; }
     .wallet-content .send-form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px 14px; }
     .send-form > :not(.sf-field) { grid-column:1 / -1; }
    

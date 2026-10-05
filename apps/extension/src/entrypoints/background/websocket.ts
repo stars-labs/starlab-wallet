@@ -150,6 +150,10 @@ export class WebSocketClient {
         } as any);
     }
 
+    public sendLeaveSession(sessionId: string): void {
+        this.sendMessage({ type: "leave_session", session_id: sessionId } as any);
+    }
+
     private sendMessage(message: WebSocketClientMsg): void {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
             console.error("WebSocket is not connected. Cannot send message:", message);

@@ -15,6 +15,7 @@
         isValidRoom,
     } from "../../../config/signal-server";
     import { onMount } from "svelte";
+    import FeatureHeader from "../../../lib/ui/FeatureHeader.svelte";
     import CopyButton from "../../../lib/ui/CopyButton.svelte";
     import {
         CHAIN_METADATA,
@@ -86,8 +87,8 @@
 
 <div class="card card-pad space-y-3" data-testid="onboarding">
     <div class="flex items-center justify-between">
-        <span class="text-sm font-semibold">Set up your shared wallet</span>
-        <span class="text-xs text-muted">step {step} / 3</span>
+        <FeatureHeader title="Your wallet, shared securely" subtitle="Choose the account that works for you" icon="shield" />
+        <span class="text-xs text-muted">Step {step} of 3</span>
     </div>
 
     {#if step === 1}

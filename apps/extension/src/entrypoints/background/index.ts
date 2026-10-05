@@ -15,6 +15,7 @@
 // ===================================================================
 
 import { defineBackground } from '#imports';
+import { isInternalSender } from './rpcOrigin';
 import AccountService from '../../services/accountService';
 import NetworkService from '../../services/networkService';
 import WalletClientService from '../../services/walletClient';
@@ -33,6 +34,7 @@ import { PopupMessageHandler, OffscreenMessageHandler } from './messageHandlers'
 import { KeepaliveController } from './keepaliveController';
 import { YubiKeyManager } from './yubikeyManager';
 import { restoreActiveWallet } from './walletRestore';
+import { EcdsaPrimeCache, installInsecureTestPrimesHook, syncEcdsaPrimes } from './ecdsaPrimes';
 
 // Import types
 import { INITIAL_APP_STATE } from "@stars-labs/types/appstate";
@@ -96,6 +98,23 @@ function initializeComponents(): void {
 
     // Initialize offscreen manager (needs app state)
     offscreenManager = new OffscreenManager(stateManager.getState());
+
+    // Threshold-ECDSA safe primes: generated in offscreen workers, cached
+    // encrypted with the keystore password (see ecdsaPrimes.ts).
+    EcdsaPrimeCache.instance = new EcdsaPrimeCache({
+        keystore: KeystoreManager.getInstance(),
+        storage: {
+            get: (key) => chrome.storage.local.get(key),
+            set: (items) => chrome.storage.local.set(items),
+            remove: (key) => chrome.storage.local.remove(key),
+        },
+        sendToOffscreen: async (message) => {
+            await offscreenManager.createOffscreenDocument();
+            return offscreenManager.sendToOffscreen(message as any, "ECDSA primes");
+        },
+        updateState: (patch) => stateManager.updateState(patch),
+    });
+    installInsecureTestPrimesHook(EcdsaPrimeCache.instance);
 
     // Initialize session manager
     sessionManager = new SessionManager(
@@ -256,20 +275,24 @@ function setupMessageHandlers(): void {
         // dApp RPC relayed by a content script: permissions are keyed by the
         // sending frame's origin as Chrome reports it — never by a value the
         // message carries, and never empty (empty means "internal caller").
-        if (sender.tab && isRpcMessage(message as PopupToBackgroundMessage)) {
-            let origin = sender.origin ?? "";
-            if (!origin && sender.url) {
-                try {
-                    origin = new URL(sender.url).origin;
-                } catch {
-                    origin = "";
+        if (isRpcMessage(message as PopupToBackgroundMessage)) {
+            if (isInternalSender(sender, chrome.runtime.id)) {
+                (message as { origin?: string }).origin = "";
+            } else {
+                let origin = sender.origin ?? "";
+                if (!origin && sender.url) {
+                    try {
+                        origin = new URL(sender.url).origin;
+                    } catch {
+                        origin = "";
+                    }
                 }
+                if (!origin || origin === "null") {
+                    sendResponse({ success: false, error: "Unknown request origin" });
+                    return true;
+                }
+                (message as { origin?: string }).origin = origin;
             }
-            if (!origin || origin === "null") {
-                sendResponse({ success: false, error: "Unknown request origin" });
-                return true;
-            }
-            (message as { origin?: string }).origin = origin;
         }
 
         // Handle async operations
@@ -309,6 +332,8 @@ function setupMessageHandlers(): void {
                         const initResult = await offscreenManager.sendInitData(currentState.deviceId);
                         if (initResult.success) {
                             console.log("✅ [Background] Successfully sent init data to offscreen");
+                            // A fresh offscreen document has an empty prime pool.
+                            syncEcdsaPrimes();
                         } else {
                             console.warn("❌ [Background] Failed to send init data to offscreen:", initResult.error);
                         }

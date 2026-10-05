@@ -1,9 +1,10 @@
 <script lang="ts">
     import { createEventDispatcher } from 'svelte';
+    import FeatureHeader from "../../../lib/ui/FeatureHeader.svelte";
     import Button from "../../../lib/ui/Button.svelte";
 
-    export let title: string = "Enter Password";
-    export let message: string = "Please enter your keystore password";
+    export let title: string = "Unlock your wallet";
+    export let message: string = "Use your password to unlock this device";
     export let confirmMode: boolean = false;
     export let minLength: number = 8;
     
@@ -13,7 +14,8 @@
     let confirmPassword: string = '';
     let showPassword: boolean = false;
     let showConfirmPassword: boolean = false;
-    let error: string = '';
+    export let error: string = '';
+    $: if (error) loading = false;
     let loading: boolean = false;
     
     function validatePassword(): boolean {
@@ -46,7 +48,16 @@
     }
     
     function handleKeydown(event: KeyboardEvent) {
-        if (event.key === 'Enter' && !confirmMode) {
+        if (event.key === 'Tab') {
+            const controls = Array.from((event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('input:not(:disabled), button:not(:disabled), [tabindex="0"]')).filter(node => node.tabIndex >= 0);
+            const first = controls[0];
+            const last = controls[controls.length - 1];
+            if (first && last && ((event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last))) {
+                event.preventDefault();
+                (event.shiftKey ? last : first).focus();
+            }
+        } else if (event.key === 'Enter' && !confirmMode && event.target instanceof HTMLInputElement) {
+            event.preventDefault();
             handleSubmit();
         } else if (event.key === 'Escape') {
             handleCancel();
@@ -59,7 +70,11 @@
     // just appeared the focus landing on the password field is the
     // expected UX, not a surprise.
     function autofocus(node: HTMLElement) {
+        const previous = document.activeElement;
         node.focus();
+        return { destroy() {
+            if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+        } };
     }
 </script>
 
@@ -72,7 +87,7 @@
     on:keydown={handleKeydown}
 >
     <div class="modal-panel">
-        <h2 id="password-prompt-title" class="text-base font-bold">{title}</h2>
+        <div id="password-prompt-title"><FeatureHeader {title} icon="lock" /></div>
         <p class="mt-1 text-xs text-muted">{message}</p>
 
         <div class="mt-4">
@@ -94,7 +109,6 @@
                     type="button"
                     class="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted hover:text-content"
                     on:click={() => (showPassword = !showPassword)}
-                    tabindex="-1"
                 >
                     {showPassword ? "Hide" : "Show"}
                 </button>
@@ -120,8 +134,7 @@
                         class="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted hover:text-content"
                         on:click={() =>
                             (showConfirmPassword = !showConfirmPassword)}
-                        tabindex="-1"
-                    >
+                        >
                         {showConfirmPassword ? "Hide" : "Show"}
                     </button>
                 </div>

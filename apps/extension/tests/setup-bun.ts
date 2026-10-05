@@ -96,13 +96,18 @@ export const REAL_WEBCRYPTO = (globalThis as any).crypto;
 };
 
 // Mock WebSocket
-(global as any).WebSocket = jest.fn(() => ({
+(global as any).WebSocket = Object.assign(jest.fn(() => ({
     send: jest.fn(),
     close: jest.fn(),
     addEventListener: jest.fn(),
     removeEventListener: jest.fn(),
     readyState: 1
-}));
+})), {
+    CONNECTING: 0,
+    OPEN: 1,
+    CLOSING: 2,
+    CLOSED: 3,
+});
 
 // Mock RTCPeerConnection
 (global as any).RTCPeerConnection = jest.fn(() => ({

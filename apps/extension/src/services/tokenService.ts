@@ -12,10 +12,11 @@
  *   3. **Registry** — the per-network list of tokens the user tracks
  *      (curated defaults + custom additions), persisted in chrome.storage.
  *
- * Signing a token transfer still goes through the normal FROST/EVM path: build
+ * Signing a token transfer still goes through the normal threshold-ECDSA path: build
  * an `eth_sendTransaction` to the token contract with `data = encodeErc20Transfer(...)`.
  */
 import {
+  toHex,
   encodeFunctionData,
   formatUnits,
   parseUnits,
@@ -133,18 +134,21 @@ export const TRANSFER_TOPIC =
  *   metadata call so discovery stays cheap.
  */
 export async function discoverTokens(
-  client: Pick<PublicClient, "getLogs" | "readContract">,
+  client: Pick<PublicClient, "request" | "readContract">,
   account: string,
   opts: { fromBlock: bigint; toBlock?: bigint | "latest"; exclude?: string[] },
 ): Promise<TokenInfo[]> {
   const paddedAccount = `0x${account.toLowerCase().replace(/^0x/, "").padStart(64, "0")}` as `0x${string}`;
-  const logs = (await client.getLogs({
-    fromBlock: opts.fromBlock,
-    toBlock: opts.toBlock ?? "latest",
-    // Raw topic filter (not an ABI event object) so fakes stay trivial:
-    // topic0 = Transfer, topic2 = recipient (our account).
-    topics: [TRANSFER_TOPIC, null, paddedAccount],
-  } as any)) as { address: string }[];
+  const logs = (await client.request({
+    method: "eth_getLogs",
+    params: [{
+      fromBlock: toHex(opts.fromBlock),
+      toBlock: typeof opts.toBlock === "bigint" ? toHex(opts.toBlock) : "latest",
+      // Use raw RPC so the indexed recipient topic is preserved by viem:
+      // topic0 = Transfer, topic2 = recipient (our account).
+      topics: [TRANSFER_TOPIC, null, paddedAccount],
+    }],
+  })) as { address: string }[];
 
   const excluded = new Set((opts.exclude ?? []).map((a) => a.toLowerCase()));
   const candidates = [...new Set(logs.map((l) => l.address.toLowerCase()))].filter(

@@ -3,7 +3,7 @@
  * (passwords, key shares, keystores, mnemonics) are masked at any depth.
  * The background logs every message it routes.
  */
-const SECRET_KEY = /password|mnemonic|secret|private_?key|key_?package|keystore/i;
+const SECRET_KEY = /password|mnemonic|secret|private_?key|key_?package|keystore|share_?json|ecdsa_?share|primes/i;
 
 export function redactForLog(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(redactForLog);

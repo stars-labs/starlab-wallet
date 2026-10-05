@@ -23,7 +23,7 @@ import { WebSocketClient } from "./websocket";
 import { validateSessionProposal, validateSessionAcceptance } from "@stars-labs/types/messages";
 import type { BackgroundToPopupMessage, OffscreenMessage } from "@stars-labs/types/messages";
 import { buildWireSessionInfo } from "../../utils/session-parse";
-import { accountWalletId } from "../../utils/wallet-id";
+import { accountWalletId, ECDSA_CURVE, isEcdsaChain } from "../../utils/wallet-id";
 import type { StateManager } from "./stateManager";
 import type { KeyShareData } from "@stars-labs/types/keystore";
 
@@ -698,20 +698,36 @@ export class SessionManager {
                 error: `The wallet's share lists ${participants.length} of its ${keyShare.total_participants} devices (${participants.join(", ")}) — re-import it from a backup that carries the full cohort`,
             };
         }
-        // Everyone signs with the account child, so the announce names its
-        // key (as the engine does), not the root key.
         const account = { chain: config.blockchain, account: 0 };
-        const derived = (await this.sendToOffscreen(
-            { type: "deriveAccountGroupKey", keyShare, ...account } as any,
-            "deriveAccountGroupKey",
-        )) as { success: boolean; groupPublicKey?: string; error?: string };
-        if (!derived?.success || !derived.groupPublicKey) {
-            return { success: false, error: `Deriving the account key failed: ${derived?.error ?? "unknown"}` };
+        let groupPublicKey: string;
+        let curveType: string;
+        if (isEcdsaChain(config.blockchain)) {
+            // Ethereum signs with the wallet's threshold-ECDSA key; like the
+            // engine, the announce carries that key's ROOT group key and the
+            // payload is the 32-byte hash (EIP-191 digest or tx sighash).
+            if (!keyShare.ecdsa_group_public_key) {
+                return { success: false, error: "This wallet has no Ethereum (ECDSA) key — create a new wallet" };
+            }
+            if (config.signingMessageHex.length !== 64) {
+                return { success: false, error: "An Ethereum signing takes a 32-byte hash" };
+            }
+            groupPublicKey = keyShare.ecdsa_group_public_key;
+            curveType = ECDSA_CURVE;
+        } else {
+            // FROST: everyone signs with the account child, so the announce
+            // names its key (as the engine does), not the root key.
+            const derived = (await this.sendToOffscreen(
+                { type: "deriveAccountGroupKey", keyShare, ...account } as any,
+                "deriveAccountGroupKey",
+            )) as { success: boolean; groupPublicKey?: string; error?: string };
+            if (!derived?.success || !derived.groupPublicKey) {
+                return { success: false, error: `Deriving the account key failed: ${derived?.error ?? "unknown"}` };
+            }
+            groupPublicKey = derived.groupPublicKey;
+            curveType = config.blockchain === "ethereum" ? "secp256k1" : "ed25519";
         }
 
         const sessionId = `sign_${cryptoHex(12)}`;
-        const curveType =
-            config.blockchain === "ethereum" ? "secp256k1" : "ed25519";
 
         const sessionInfo: SessionInfo = {
             session_id: sessionId,
@@ -726,7 +742,7 @@ export class SessionManager {
             // these at the top level (not nested). `wallet_name` is the
             // account-0 child wallet id — the key everyone signs with.
             wallet_name: accountWalletId(config.walletId, account.chain, account.account),
-            group_public_key: derived.groupPublicKey,
+            group_public_key: groupPublicKey,
             blockchain: config.blockchain,
             signing_message_hex: config.signingMessageHex,
             accepted_devices: [currentDeviceId],

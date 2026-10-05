@@ -1,7 +1,7 @@
 {
   "name": "@stars-labs/core-wasm",
   "version": "0.1.0",
-  "description": "FROST MPC WASM bindings (vendored build artifact from stars-labs/starlab-mpc)",
+  "description": "FROST and threshold ECDSA WASM bindings (vendored build artifact from stars-labs/starlab-mpc)",
   "type": "module",
   "main": "./pkg/starlab_core_wasm.js",
   "types": "./pkg/starlab_core_wasm.d.ts",

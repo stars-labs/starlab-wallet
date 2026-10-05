@@ -81,7 +81,7 @@ describe("discoverTokens", () => {
     const calls: any[] = [];
     return {
       calls,
-      getLogs: async (args: any) => {
+      request: async (args: any) => {
         calls.push(args);
         return [
           { address: NEW_TOKEN },
@@ -114,10 +114,11 @@ describe("discoverTokens", () => {
       name: "New Token",
     });
     // topic filter: Transfer topic + our padded account as topic2
-    const logArgs = client.calls[0];
+    const logArgs = client.calls[0].params[0];
     expect(logArgs.topics[0]).toBe(TRANSFER_TOPIC);
     expect(logArgs.topics[2]).toBe(`0x${ACCT.slice(2).padStart(64, "0")}`);
-    expect(logArgs.fromBlock).toBe(100n);
+    expect(client.calls[0].method).toBe("eth_getLogs");
+    expect(logArgs.fromBlock).toBe("0x64");
   });
 
   it("excluded addresses never trigger metadata reads", async () => {

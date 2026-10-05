@@ -1,0 +1,659 @@
+{
+  "sourceRevision": "1ae6d4318659e213b5f4a732fe0e48d8211cca01",
+  "buildFiles": {
+    "assets/arbitrum-Z8VMulXH.png": "a12644f04d8b8099dd5f0427a8189abcf1a60707efe68feee354587ec23ae403",
+    "assets/ceremony.worker-CdQV1yXK.js": "821e5e34fce985e2543dee86c3b39aa6379c46721461531c2a3be3a735f8ef9c",
+    "assets/icon-128.png": "33c277217c9a59447b4ba616931eeb5b311351a7a80193341429c1fcfd568fb1",
+    "assets/icon-16.png": "64fa3b8562bd75613d5432071fc50450c01d2df76a0b9475a33454ca9bfbf6ef",
+    "assets/icon-32.png": "4973f05ea41aa8cb50575969889dae9276772acdd975738b787a7bc82f5e84df",
+    "assets/icon-48.png": "976d35b132b898d28aab0ed88efc04316592d1f6bdd8907cb401f8f9402e7812",
+    "assets/icon.svg": "4b04aa480184045d72d4df21407acc22fa2e3e9a1585bc1513d42b71b162904e",
+    "assets/popup-DIv8BmCi.css": "9fbe4fa355db19fa3630bb98165ec38a1eafb9f1c1f1366d2c6af360783b3105",
+    "assets/starlab_core_wasm_bg-CWbfQCqE.wasm": "7dd20b0da9c6a09236b53fd7441d84c82c18566a510a98b8f2101cff19b3d389",
+    "assets/sui-E_uVhACf.png": "4f8bdce8c8effcc5fb8402578051f3800eab3ac590b100de4e0f4da35dd0dc93",
+    "background.js": "314e8788d4e7b1da18b4bbddeda2f6d652ce8626f2ec63cd0d98752efe785ddb",
+    "chunks/browser-NM0WNCww.js": "587bc2b2d333eadb46c14109032fc3899cf1104036ee328c8a1b964a8c2fcf0e",
+    "chunks/ccip-c5sTQCvv.js": "d401a4b7baff59c0474ac7fbcdcb0bc2f9a732238f7bb20ceca8478a497f610c",
+    "chunks/index.browser.esm-DE64cETb.js": "dcf4c0981d2ed954d629e3d5273fbd64f71e8b17781a9cff5d249106af323e0c",
+    "chunks/offscreen-B9EpeKLN.js": "98d0792aa275c6881bc46d2a53309a0201e1f4672da970ad953c0257a11354b9",
+    "chunks/popup-CBEBO5wP.js": "18a08f026595c2fab46e9be74daec75ae62345fec396c91cd0cd63d3740b97f6",
+    "chunks/rolldown-runtime-C0FnF6B9.js": "e0a79ad36c6ca1ffbc796c80aa5661803a9d1bc684e29d1587f48b4ba9a82714",
+    "chunks/utils-De7E53Fk.js": "6a357355c6ce095d695ee399955d28610a2db4dd51e440f76b7c387e55db3a60",
+    "chunks/wallet-id-C3mXTrXv.js": "2a1dfa8392d17ad3d4ed3ec2e21190f27b0764dcd5d7c41d0b55c6e104efbfc9",
+    "content-scripts/content.js": "b47602b3e5fb15bcacfa1dd59747efb5a88a4f120d96bf886c6e4ce909497efb",
+    "icon/128.png": "9a51ba4154a72f2d6f3c36a1e018a6c1f3932d2748ba6b63339ce93b0ae870b2",
+    "icon/16.png": "58eddff80c85c1aaf6b6d0b4b65e99e3debacabe93c7083fb3ba2fa67d315236",
+    "icon/32.png": "df3d956fea6bd2a615515c31067cec039e707badb83a9501737572e45bc5e8dd",
+    "icon/48.png": "3c09dff4ead132afcbb2c6de4ad96d07e02ba4a09a4a7f3bdaa7a69736b638d8",
+    "icon/96.png": "209c124e64afca9f22663c53ebd16c438abae7ef020e65c989daf9b618b37452",
+    "injected.js": "5009a305554f3762d89fb883b83e0c7f37b04469c786aa75d3a3a835517f9d54",
+    "manifest.json": "f13de8f9ad1732abd82452ecc6594479cf73b2150625e84afdde438114240bb8",
+    "offscreen.html": "44c809c1d9efd2fb660f37c60333c7c7fd47725d8805cd3ce3819331c7881f73",
+    "popup.html": "85effe2149101f82c4321275721f450d7cadb91c93485363f364b841e32f1123",
+    "wxt.svg": "e8b659fcd30b4f55427597cbcdcac33c9946d2e5f9e27ed78d6c5697a1d058e8"
+  },
+  "manifest": {
+    "manifest_version": 3,
+    "name": "Starlab Wallet",
+    "description": "A shared wallet for Ethereum, Bitcoin, Solana and Sui.",
+    "version": "1.0.0",
+    "icons": {
+      "16": "assets/icon-16.png",
+      "32": "assets/icon-32.png",
+      "48": "assets/icon-48.png",
+      "96": "icon/96.png",
+      "128": "assets/icon-128.png"
+    },
+    "permissions": [
+      "storage",
+      "tabs",
+      "activeTab",
+      "offscreen",
+      "notifications",
+      "nativeMessaging",
+      "alarms"
+    ],
+    "host_permissions": [
+      "https://*/*",
+      "wss://panda.qzz.io/*"
+    ],
+    "action": {
+      "default_popup": "popup.html",
+      "default_icon": {
+        "16": "assets/icon-16.png",
+        "32": "assets/icon-32.png"
+      },
+      "default_title": "MPC Wallet"
+    },
+    "background": {
+      "service_worker": "background.js"
+    },
+    "content_security_policy": {
+      "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+    },
+    "web_accessible_resources": [
+      {
+        "resources": [
+          "injected.js"
+        ],
+        "matches": [
+          "<all_urls>"
+        ]
+      }
+    ],
+    "content_scripts": [
+      {
+        "matches": [
+          "<all_urls>"
+        ],
+        "run_at": "document_start",
+        "js": [
+          "content-scripts/content.js"
+        ]
+      }
+    ]
+  },
+  "noInsecureHook": true,
+  "archiveSha256": "0887e59fbb960a73767cc4ff8e37c1dfb1518961de79ce282c0a0af23f5d8e59",
+  "captureManifest": "/tmp/starlab-settings-natural-shots/manifest.json",
+  "captureCount": 4,
+  "errors": 0,
+  "scope": "Affected Settings follow-up: four actual public-fixture states, with full-page and600pxviewport captures. Previous242cases retain earlier presentation provenance; no claim all242were regenerated.",
+  "captures": [
+    {
+      "name": "premium-settings-popup-light",
+      "mode": "settings-populated",
+      "theme": "light",
+      "width": 380,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "actionScrollY": 0,
+        "browserLanguage": "en-US",
+        "bodyWidth": 380,
+        "bodyHeight": 2351.046875,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": null,
+        "sendDisplay": null,
+        "overflow": false,
+        "fullPageScrollY": 0
+      },
+      "fixture": true,
+      "errors": [],
+      "presentationEvidence": {
+        "settingsLayout": {
+          "columnCount": "auto",
+          "cards": [
+            {
+              "x": 12,
+              "y": 98.578125,
+              "bottom": 212.953125
+            },
+            {
+              "x": 12,
+              "y": 222.953125,
+              "bottom": 368.515625
+            },
+            {
+              "x": 12,
+              "y": 378.515625,
+              "bottom": 522.890625
+            },
+            {
+              "x": 12,
+              "y": 532.890625,
+              "bottom": 658.03125
+            },
+            {
+              "x": 12,
+              "y": 668.03125,
+              "bottom": 869.171875
+            },
+            {
+              "x": 12,
+              "y": 879.171875,
+              "bottom": 1206
+            },
+            {
+              "x": 12,
+              "y": 1216,
+              "bottom": 1530.578125
+            },
+            {
+              "x": 12,
+              "y": 1540.578125,
+              "bottom": 1730.140625
+            },
+            {
+              "x": 12,
+              "y": 1740.140625,
+              "bottom": 1824.515625
+            },
+            {
+              "x": 12,
+              "y": 1834.515625,
+              "bottom": 1954.46875
+            },
+            {
+              "x": 12,
+              "y": 1964.46875,
+              "bottom": 2339.046875
+            }
+          ]
+        },
+        "naturalDomTabOrder": true,
+        "cardGaps": [
+          10.0,
+          10.0,
+          10.0,
+          10.0,
+          10.0,
+          10,
+          10.0,
+          10.0,
+          10.0,
+          10.0
+        ]
+      },
+      "sourceRevision": "1ae6d4318659e213b5f4a732fe0e48d8211cca01",
+      "buildFiles": {
+        "assets/arbitrum-Z8VMulXH.png": "a12644f04d8b8099dd5f0427a8189abcf1a60707efe68feee354587ec23ae403",
+        "assets/ceremony.worker-CdQV1yXK.js": "821e5e34fce985e2543dee86c3b39aa6379c46721461531c2a3be3a735f8ef9c",
+        "assets/icon-128.png": "33c277217c9a59447b4ba616931eeb5b311351a7a80193341429c1fcfd568fb1",
+        "assets/icon-16.png": "64fa3b8562bd75613d5432071fc50450c01d2df76a0b9475a33454ca9bfbf6ef",
+        "assets/icon-32.png": "4973f05ea41aa8cb50575969889dae9276772acdd975738b787a7bc82f5e84df",
+        "assets/icon-48.png": "976d35b132b898d28aab0ed88efc04316592d1f6bdd8907cb401f8f9402e7812",
+        "assets/icon.svg": "4b04aa480184045d72d4df21407acc22fa2e3e9a1585bc1513d42b71b162904e",
+        "assets/popup-DIv8BmCi.css": "9fbe4fa355db19fa3630bb98165ec38a1eafb9f1c1f1366d2c6af360783b3105",
+        "assets/starlab_core_wasm_bg-CWbfQCqE.wasm": "7dd20b0da9c6a09236b53fd7441d84c82c18566a510a98b8f2101cff19b3d389",
+        "assets/sui-E_uVhACf.png": "4f8bdce8c8effcc5fb8402578051f3800eab3ac590b100de4e0f4da35dd0dc93",
+        "background.js": "314e8788d4e7b1da18b4bbddeda2f6d652ce8626f2ec63cd0d98752efe785ddb",
+        "chunks/browser-NM0WNCww.js": "587bc2b2d333eadb46c14109032fc3899cf1104036ee328c8a1b964a8c2fcf0e",
+        "chunks/ccip-c5sTQCvv.js": "d401a4b7baff59c0474ac7fbcdcb0bc2f9a732238f7bb20ceca8478a497f610c",
+        "chunks/index.browser.esm-DE64cETb.js": "dcf4c0981d2ed954d629e3d5273fbd64f71e8b17781a9cff5d249106af323e0c",
+        "chunks/offscreen-B9EpeKLN.js": "98d0792aa275c6881bc46d2a53309a0201e1f4672da970ad953c0257a11354b9",
+        "chunks/popup-CBEBO5wP.js": "18a08f026595c2fab46e9be74daec75ae62345fec396c91cd0cd63d3740b97f6",
+        "chunks/rolldown-runtime-C0FnF6B9.js": "e0a79ad36c6ca1ffbc796c80aa5661803a9d1bc684e29d1587f48b4ba9a82714",
+        "chunks/utils-De7E53Fk.js": "6a357355c6ce095d695ee399955d28610a2db4dd51e440f76b7c387e55db3a60",
+        "chunks/wallet-id-C3mXTrXv.js": "2a1dfa8392d17ad3d4ed3ec2e21190f27b0764dcd5d7c41d0b55c6e104efbfc9",
+        "content-scripts/content.js": "b47602b3e5fb15bcacfa1dd59747efb5a88a4f120d96bf886c6e4ce909497efb",
+        "icon/128.png": "9a51ba4154a72f2d6f3c36a1e018a6c1f3932d2748ba6b63339ce93b0ae870b2",
+        "icon/16.png": "58eddff80c85c1aaf6b6d0b4b65e99e3debacabe93c7083fb3ba2fa67d315236",
+        "icon/32.png": "df3d956fea6bd2a615515c31067cec039e707badb83a9501737572e45bc5e8dd",
+        "icon/48.png": "3c09dff4ead132afcbb2c6de4ad96d07e02ba4a09a4a7f3bdaa7a69736b638d8",
+        "icon/96.png": "209c124e64afca9f22663c53ebd16c438abae7ef020e65c989daf9b618b37452",
+        "injected.js": "5009a305554f3762d89fb883b83e0c7f37b04469c786aa75d3a3a835517f9d54",
+        "manifest.json": "f13de8f9ad1732abd82452ecc6594479cf73b2150625e84afdde438114240bb8",
+        "offscreen.html": "44c809c1d9efd2fb660f37c60333c7c7fd47725d8805cd3ce3819331c7881f73",
+        "popup.html": "85effe2149101f82c4321275721f450d7cadb91c93485363f364b841e32f1123",
+        "wxt.svg": "e8b659fcd30b4f55427597cbcdcac33c9946d2e5f9e27ed78d6c5697a1d058e8"
+      },
+      "pngSha256": "e702a47121e44caf37bfad56f57c449f2175ba7acc54e9d85f698fbb7fc7fd3c",
+      "fullPageScreenshot": {
+        "file": "/tmp/starlab-settings-natural-shots/premium-settings-popup-light.png",
+        "sha256": "e702a47121e44caf37bfad56f57c449f2175ba7acc54e9d85f698fbb7fc7fd3c"
+      },
+      "viewportScreenshot": {
+        "file": "/tmp/starlab-settings-natural-shots/premium-settings-popup-light-viewport.png",
+        "sha256": "0bdcbf879a0e958002343187d2d4b1759a637c29298c32b4c2878bd4aa4680b5"
+      }
+    },
+    {
+      "name": "premium-settings-wide-light",
+      "mode": "settings-populated",
+      "theme": "light",
+      "width": 1280,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "actionScrollY": 0,
+        "browserLanguage": "en-US",
+        "bodyWidth": 900,
+        "bodyHeight": 1229.625,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": null,
+        "sendDisplay": null,
+        "overflow": false,
+        "fullPageScrollY": 0
+      },
+      "fixture": true,
+      "errors": [],
+      "presentationEvidence": {
+        "settingsLayout": {
+          "columnCount": "2",
+          "cards": [
+            {
+              "x": 203,
+              "y": 121.578125,
+              "bottom": 235.953125
+            },
+            {
+              "x": 203,
+              "y": 247.953125,
+              "bottom": 377.515625
+            },
+            {
+              "x": 203,
+              "y": 389.515625,
+              "bottom": 517.890625
+            },
+            {
+              "x": 203,
+              "y": 529.890625,
+              "bottom": 655.03125
+            },
+            {
+              "x": 203,
+              "y": 667.03125,
+              "bottom": 852.171875
+            },
+            {
+              "x": 203,
+              "y": 864.171875,
+              "bottom": 1175
+            },
+            {
+              "x": 646,
+              "y": 121.578125,
+              "bottom": 420.15625
+            },
+            {
+              "x": 646,
+              "y": 432.15625,
+              "bottom": 621.71875
+            },
+            {
+              "x": 646,
+              "y": 633.71875,
+              "bottom": 718.09375
+            },
+            {
+              "x": 646,
+              "y": 730.09375,
+              "bottom": 850.046875
+            },
+            {
+              "x": 646,
+              "y": 862.046875,
+              "bottom": 1236.625
+            }
+          ]
+        },
+        "naturalDomTabOrder": true,
+        "cardGaps": [
+          12.0,
+          12.0,
+          12.0,
+          12.0,
+          12.0,
+          12.0,
+          12.0,
+          12.0,
+          12.0
+        ]
+      },
+      "sourceRevision": "1ae6d4318659e213b5f4a732fe0e48d8211cca01",
+      "buildFiles": {
+        "assets/arbitrum-Z8VMulXH.png": "a12644f04d8b8099dd5f0427a8189abcf1a60707efe68feee354587ec23ae403",
+        "assets/ceremony.worker-CdQV1yXK.js": "821e5e34fce985e2543dee86c3b39aa6379c46721461531c2a3be3a735f8ef9c",
+        "assets/icon-128.png": "33c277217c9a59447b4ba616931eeb5b311351a7a80193341429c1fcfd568fb1",
+        "assets/icon-16.png": "64fa3b8562bd75613d5432071fc50450c01d2df76a0b9475a33454ca9bfbf6ef",
+        "assets/icon-32.png": "4973f05ea41aa8cb50575969889dae9276772acdd975738b787a7bc82f5e84df",
+        "assets/icon-48.png": "976d35b132b898d28aab0ed88efc04316592d1f6bdd8907cb401f8f9402e7812",
+        "assets/icon.svg": "4b04aa480184045d72d4df21407acc22fa2e3e9a1585bc1513d42b71b162904e",
+        "assets/popup-DIv8BmCi.css": "9fbe4fa355db19fa3630bb98165ec38a1eafb9f1c1f1366d2c6af360783b3105",
+        "assets/starlab_core_wasm_bg-CWbfQCqE.wasm": "7dd20b0da9c6a09236b53fd7441d84c82c18566a510a98b8f2101cff19b3d389",
+        "assets/sui-E_uVhACf.png": "4f8bdce8c8effcc5fb8402578051f3800eab3ac590b100de4e0f4da35dd0dc93",
+        "background.js": "314e8788d4e7b1da18b4bbddeda2f6d652ce8626f2ec63cd0d98752efe785ddb",
+        "chunks/browser-NM0WNCww.js": "587bc2b2d333eadb46c14109032fc3899cf1104036ee328c8a1b964a8c2fcf0e",
+        "chunks/ccip-c5sTQCvv.js": "d401a4b7baff59c0474ac7fbcdcb0bc2f9a732238f7bb20ceca8478a497f610c",
+        "chunks/index.browser.esm-DE64cETb.js": "dcf4c0981d2ed954d629e3d5273fbd64f71e8b17781a9cff5d249106af323e0c",
+        "chunks/offscreen-B9EpeKLN.js": "98d0792aa275c6881bc46d2a53309a0201e1f4672da970ad953c0257a11354b9",
+        "chunks/popup-CBEBO5wP.js": "18a08f026595c2fab46e9be74daec75ae62345fec396c91cd0cd63d3740b97f6",
+        "chunks/rolldown-runtime-C0FnF6B9.js": "e0a79ad36c6ca1ffbc796c80aa5661803a9d1bc684e29d1587f48b4ba9a82714",
+        "chunks/utils-De7E53Fk.js": "6a357355c6ce095d695ee399955d28610a2db4dd51e440f76b7c387e55db3a60",
+        "chunks/wallet-id-C3mXTrXv.js": "2a1dfa8392d17ad3d4ed3ec2e21190f27b0764dcd5d7c41d0b55c6e104efbfc9",
+        "content-scripts/content.js": "b47602b3e5fb15bcacfa1dd59747efb5a88a4f120d96bf886c6e4ce909497efb",
+        "icon/128.png": "9a51ba4154a72f2d6f3c36a1e018a6c1f3932d2748ba6b63339ce93b0ae870b2",
+        "icon/16.png": "58eddff80c85c1aaf6b6d0b4b65e99e3debacabe93c7083fb3ba2fa67d315236",
+        "icon/32.png": "df3d956fea6bd2a615515c31067cec039e707badb83a9501737572e45bc5e8dd",
+        "icon/48.png": "3c09dff4ead132afcbb2c6de4ad96d07e02ba4a09a4a7f3bdaa7a69736b638d8",
+        "icon/96.png": "209c124e64afca9f22663c53ebd16c438abae7ef020e65c989daf9b618b37452",
+        "injected.js": "5009a305554f3762d89fb883b83e0c7f37b04469c786aa75d3a3a835517f9d54",
+        "manifest.json": "f13de8f9ad1732abd82452ecc6594479cf73b2150625e84afdde438114240bb8",
+        "offscreen.html": "44c809c1d9efd2fb660f37c60333c7c7fd47725d8805cd3ce3819331c7881f73",
+        "popup.html": "85effe2149101f82c4321275721f450d7cadb91c93485363f364b841e32f1123",
+        "wxt.svg": "e8b659fcd30b4f55427597cbcdcac33c9946d2e5f9e27ed78d6c5697a1d058e8"
+      },
+      "pngSha256": "f70201e434efcc2955542252ef34aeec7ec02bb56378c12d9795a51ae6db2c7a",
+      "fullPageScreenshot": {
+        "file": "/tmp/starlab-settings-natural-shots/premium-settings-wide-light.png",
+        "sha256": "f70201e434efcc2955542252ef34aeec7ec02bb56378c12d9795a51ae6db2c7a"
+      },
+      "viewportScreenshot": {
+        "file": "/tmp/starlab-settings-natural-shots/premium-settings-wide-light-viewport.png",
+        "sha256": "4afc0c56e035a6f709c29af4fc240f30d237f1789453fcb3f2e3585388e72aa3"
+      }
+    },
+    {
+      "name": "premium-settings-popup-dark",
+      "mode": "settings-populated",
+      "theme": "dark",
+      "width": 380,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "actionScrollY": 0,
+        "browserLanguage": "en-US",
+        "bodyWidth": 380,
+        "bodyHeight": 2351.046875,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": null,
+        "sendDisplay": null,
+        "overflow": false,
+        "fullPageScrollY": 0
+      },
+      "fixture": true,
+      "errors": [],
+      "presentationEvidence": {
+        "settingsLayout": {
+          "columnCount": "auto",
+          "cards": [
+            {
+              "x": 12,
+              "y": 98.578125,
+              "bottom": 212.953125
+            },
+            {
+              "x": 12,
+              "y": 222.953125,
+              "bottom": 368.515625
+            },
+            {
+              "x": 12,
+              "y": 378.515625,
+              "bottom": 522.890625
+            },
+            {
+              "x": 12,
+              "y": 532.890625,
+              "bottom": 658.03125
+            },
+            {
+              "x": 12,
+              "y": 668.03125,
+              "bottom": 869.171875
+            },
+            {
+              "x": 12,
+              "y": 879.171875,
+              "bottom": 1206
+            },
+            {
+              "x": 12,
+              "y": 1216,
+              "bottom": 1530.578125
+            },
+            {
+              "x": 12,
+              "y": 1540.578125,
+              "bottom": 1730.140625
+            },
+            {
+              "x": 12,
+              "y": 1740.140625,
+              "bottom": 1824.515625
+            },
+            {
+              "x": 12,
+              "y": 1834.515625,
+              "bottom": 1954.46875
+            },
+            {
+              "x": 12,
+              "y": 1964.46875,
+              "bottom": 2339.046875
+            }
+          ]
+        },
+        "naturalDomTabOrder": true,
+        "cardGaps": [
+          10.0,
+          10.0,
+          10.0,
+          10.0,
+          10.0,
+          10,
+          10.0,
+          10.0,
+          10.0,
+          10.0
+        ]
+      },
+      "sourceRevision": "1ae6d4318659e213b5f4a732fe0e48d8211cca01",
+      "buildFiles": {
+        "assets/arbitrum-Z8VMulXH.png": "a12644f04d8b8099dd5f0427a8189abcf1a60707efe68feee354587ec23ae403",
+        "assets/ceremony.worker-CdQV1yXK.js": "821e5e34fce985e2543dee86c3b39aa6379c46721461531c2a3be3a735f8ef9c",
+        "assets/icon-128.png": "33c277217c9a59447b4ba616931eeb5b311351a7a80193341429c1fcfd568fb1",
+        "assets/icon-16.png": "64fa3b8562bd75613d5432071fc50450c01d2df76a0b9475a33454ca9bfbf6ef",
+        "assets/icon-32.png": "4973f05ea41aa8cb50575969889dae9276772acdd975738b787a7bc82f5e84df",
+        "assets/icon-48.png": "976d35b132b898d28aab0ed88efc04316592d1f6bdd8907cb401f8f9402e7812",
+        "assets/icon.svg": "4b04aa480184045d72d4df21407acc22fa2e3e9a1585bc1513d42b71b162904e",
+        "assets/popup-DIv8BmCi.css": "9fbe4fa355db19fa3630bb98165ec38a1eafb9f1c1f1366d2c6af360783b3105",
+        "assets/starlab_core_wasm_bg-CWbfQCqE.wasm": "7dd20b0da9c6a09236b53fd7441d84c82c18566a510a98b8f2101cff19b3d389",
+        "assets/sui-E_uVhACf.png": "4f8bdce8c8effcc5fb8402578051f3800eab3ac590b100de4e0f4da35dd0dc93",
+        "background.js": "314e8788d4e7b1da18b4bbddeda2f6d652ce8626f2ec63cd0d98752efe785ddb",
+        "chunks/browser-NM0WNCww.js": "587bc2b2d333eadb46c14109032fc3899cf1104036ee328c8a1b964a8c2fcf0e",
+        "chunks/ccip-c5sTQCvv.js": "d401a4b7baff59c0474ac7fbcdcb0bc2f9a732238f7bb20ceca8478a497f610c",
+        "chunks/index.browser.esm-DE64cETb.js": "dcf4c0981d2ed954d629e3d5273fbd64f71e8b17781a9cff5d249106af323e0c",
+        "chunks/offscreen-B9EpeKLN.js": "98d0792aa275c6881bc46d2a53309a0201e1f4672da970ad953c0257a11354b9",
+        "chunks/popup-CBEBO5wP.js": "18a08f026595c2fab46e9be74daec75ae62345fec396c91cd0cd63d3740b97f6",
+        "chunks/rolldown-runtime-C0FnF6B9.js": "e0a79ad36c6ca1ffbc796c80aa5661803a9d1bc684e29d1587f48b4ba9a82714",
+        "chunks/utils-De7E53Fk.js": "6a357355c6ce095d695ee399955d28610a2db4dd51e440f76b7c387e55db3a60",
+        "chunks/wallet-id-C3mXTrXv.js": "2a1dfa8392d17ad3d4ed3ec2e21190f27b0764dcd5d7c41d0b55c6e104efbfc9",
+        "content-scripts/content.js": "b47602b3e5fb15bcacfa1dd59747efb5a88a4f120d96bf886c6e4ce909497efb",
+        "icon/128.png": "9a51ba4154a72f2d6f3c36a1e018a6c1f3932d2748ba6b63339ce93b0ae870b2",
+        "icon/16.png": "58eddff80c85c1aaf6b6d0b4b65e99e3debacabe93c7083fb3ba2fa67d315236",
+        "icon/32.png": "df3d956fea6bd2a615515c31067cec039e707badb83a9501737572e45bc5e8dd",
+        "icon/48.png": "3c09dff4ead132afcbb2c6de4ad96d07e02ba4a09a4a7f3bdaa7a69736b638d8",
+        "icon/96.png": "209c124e64afca9f22663c53ebd16c438abae7ef020e65c989daf9b618b37452",
+        "injected.js": "5009a305554f3762d89fb883b83e0c7f37b04469c786aa75d3a3a835517f9d54",
+        "manifest.json": "f13de8f9ad1732abd82452ecc6594479cf73b2150625e84afdde438114240bb8",
+        "offscreen.html": "44c809c1d9efd2fb660f37c60333c7c7fd47725d8805cd3ce3819331c7881f73",
+        "popup.html": "85effe2149101f82c4321275721f450d7cadb91c93485363f364b841e32f1123",
+        "wxt.svg": "e8b659fcd30b4f55427597cbcdcac33c9946d2e5f9e27ed78d6c5697a1d058e8"
+      },
+      "pngSha256": "b448d02f9dbb13d3cf7c3146d85aed7e4d74565ed871d202ff7059e0a6928d57",
+      "fullPageScreenshot": {
+        "file": "/tmp/starlab-settings-natural-shots/premium-settings-popup-dark.png",
+        "sha256": "b448d02f9dbb13d3cf7c3146d85aed7e4d74565ed871d202ff7059e0a6928d57"
+      },
+      "viewportScreenshot": {
+        "file": "/tmp/starlab-settings-natural-shots/premium-settings-popup-dark-viewport.png",
+        "sha256": "0f56b44fcfb72943314289744272d95aab55b2d19546e148ed607dbef1565686"
+      }
+    },
+    {
+      "name": "premium-settings-wide-dark",
+      "mode": "settings-populated",
+      "theme": "dark",
+      "width": 1280,
+      "layoutEvidence": {
+        "viewportHeight": 600,
+        "actionScrollY": 0,
+        "browserLanguage": "en-US",
+        "bodyWidth": 900,
+        "bodyHeight": 1229.625,
+        "bodyMinHeight": "0px",
+        "activityCollectiblesGap": null,
+        "sendDisplay": null,
+        "overflow": false,
+        "fullPageScrollY": 0
+      },
+      "fixture": true,
+      "errors": [],
+      "presentationEvidence": {
+        "settingsLayout": {
+          "columnCount": "2",
+          "cards": [
+            {
+              "x": 203,
+              "y": 121.578125,
+              "bottom": 235.953125
+            },
+            {
+              "x": 203,
+              "y": 247.953125,
+              "bottom": 377.515625
+            },
+            {
+              "x": 203,
+              "y": 389.515625,
+              "bottom": 517.890625
+            },
+            {
+              "x": 203,
+              "y": 529.890625,
+              "bottom": 655.03125
+            },
+            {
+              "x": 203,
+              "y": 667.03125,
+              "bottom": 852.171875
+            },
+            {
+              "x": 203,
+              "y": 864.171875,
+              "bottom": 1175
+            },
+            {
+              "x": 646,
+              "y": 121.578125,
+              "bottom": 420.15625
+            },
+            {
+              "x": 646,
+              "y": 432.15625,
+              "bottom": 621.71875
+            },
+            {
+              "x": 646,
+              "y": 633.71875,
+              "bottom": 718.09375
+            },
+            {
+              "x": 646,
+              "y": 730.09375,
+              "bottom": 850.046875
+            },
+            {
+              "x": 646,
+              "y": 862.046875,
+              "bottom": 1236.625
+            }
+          ]
+        },
+        "naturalDomTabOrder": true,
+        "cardGaps": [
+          12.0,
+          12.0,
+          12.0,
+          12.0,
+          12.0,
+          12.0,
+          12.0,
+          12.0,
+          12.0
+        ]
+      },
+      "sourceRevision": "1ae6d4318659e213b5f4a732fe0e48d8211cca01",
+      "buildFiles": {
+        "assets/arbitrum-Z8VMulXH.png": "a12644f04d8b8099dd5f0427a8189abcf1a60707efe68feee354587ec23ae403",
+        "assets/ceremony.worker-CdQV1yXK.js": "821e5e34fce985e2543dee86c3b39aa6379c46721461531c2a3be3a735f8ef9c",
+        "assets/icon-128.png": "33c277217c9a59447b4ba616931eeb5b311351a7a80193341429c1fcfd568fb1",
+        "assets/icon-16.png": "64fa3b8562bd75613d5432071fc50450c01d2df76a0b9475a33454ca9bfbf6ef",
+        "assets/icon-32.png": "4973f05ea41aa8cb50575969889dae9276772acdd975738b787a7bc82f5e84df",
+        "assets/icon-48.png": "976d35b132b898d28aab0ed88efc04316592d1f6bdd8907cb401f8f9402e7812",
+        "assets/icon.svg": "4b04aa480184045d72d4df21407acc22fa2e3e9a1585bc1513d42b71b162904e",
+        "assets/popup-DIv8BmCi.css": "9fbe4fa355db19fa3630bb98165ec38a1eafb9f1c1f1366d2c6af360783b3105",
+        "assets/starlab_core_wasm_bg-CWbfQCqE.wasm": "7dd20b0da9c6a09236b53fd7441d84c82c18566a510a98b8f2101cff19b3d389",
+        "assets/sui-E_uVhACf.png": "4f8bdce8c8effcc5fb8402578051f3800eab3ac590b100de4e0f4da35dd0dc93",
+        "background.js": "314e8788d4e7b1da18b4bbddeda2f6d652ce8626f2ec63cd0d98752efe785ddb",
+        "chunks/browser-NM0WNCww.js": "587bc2b2d333eadb46c14109032fc3899cf1104036ee328c8a1b964a8c2fcf0e",
+        "chunks/ccip-c5sTQCvv.js": "d401a4b7baff59c0474ac7fbcdcb0bc2f9a732238f7bb20ceca8478a497f610c",
+        "chunks/index.browser.esm-DE64cETb.js": "dcf4c0981d2ed954d629e3d5273fbd64f71e8b17781a9cff5d249106af323e0c",
+        "chunks/offscreen-B9EpeKLN.js": "98d0792aa275c6881bc46d2a53309a0201e1f4672da970ad953c0257a11354b9",
+        "chunks/popup-CBEBO5wP.js": "18a08f026595c2fab46e9be74daec75ae62345fec396c91cd0cd63d3740b97f6",
+        "chunks/rolldown-runtime-C0FnF6B9.js": "e0a79ad36c6ca1ffbc796c80aa5661803a9d1bc684e29d1587f48b4ba9a82714",
+        "chunks/utils-De7E53Fk.js": "6a357355c6ce095d695ee399955d28610a2db4dd51e440f76b7c387e55db3a60",
+        "chunks/wallet-id-C3mXTrXv.js": "2a1dfa8392d17ad3d4ed3ec2e21190f27b0764dcd5d7c41d0b55c6e104efbfc9",
+        "content-scripts/content.js": "b47602b3e5fb15bcacfa1dd59747efb5a88a4f120d96bf886c6e4ce909497efb",
+        "icon/128.png": "9a51ba4154a72f2d6f3c36a1e018a6c1f3932d2748ba6b63339ce93b0ae870b2",
+        "icon/16.png": "58eddff80c85c1aaf6b6d0b4b65e99e3debacabe93c7083fb3ba2fa67d315236",
+        "icon/32.png": "df3d956fea6bd2a615515c31067cec039e707badb83a9501737572e45bc5e8dd",
+        "icon/48.png": "3c09dff4ead132afcbb2c6de4ad96d07e02ba4a09a4a7f3bdaa7a69736b638d8",
+        "icon/96.png": "209c124e64afca9f22663c53ebd16c438abae7ef020e65c989daf9b618b37452",
+        "injected.js": "5009a305554f3762d89fb883b83e0c7f37b04469c786aa75d3a3a835517f9d54",
+        "manifest.json": "f13de8f9ad1732abd82452ecc6594479cf73b2150625e84afdde438114240bb8",
+        "offscreen.html": "44c809c1d9efd2fb660f37c60333c7c7fd47725d8805cd3ce3819331c7881f73",
+        "popup.html": "85effe2149101f82c4321275721f450d7cadb91c93485363f364b841e32f1123",
+        "wxt.svg": "e8b659fcd30b4f55427597cbcdcac33c9946d2e5f9e27ed78d6c5697a1d058e8"
+      },
+      "pngSha256": "4cb6536ced93db1ed8afd10764cd0762940b644b29b568e7f9b9408a51c9db97",
+      "fullPageScreenshot": {
+        "file": "/tmp/starlab-settings-natural-shots/premium-settings-wide-dark.png",
+        "sha256": "4cb6536ced93db1ed8afd10764cd0762940b644b29b568e7f9b9408a51c9db97"
+      },
+      "viewportScreenshot": {
+        "file": "/tmp/starlab-settings-natural-shots/premium-settings-wide-dark-viewport.png",
+        "sha256": "c683f94f147d7573e0fe5f5946a596af6fec3136e40cec33dd3678d41ca1d16c"
+      }
+    }
+  ],
+  "immutableArchive": "/tmp/starlab-wallet-versioned-releases/1ae6d43/chrome.zip",
+  "buildPath": "/tmp/starlab-settings-natural-build",
+  "providerRegression": {
+    "passed": 1,
+    "seconds": 2.4,
+    "log": "/tmp/starlab-settings-natural-provider-system.log",
+    "browser": "system Chromium; DISPLAY0",
+    "previousAttempt": "missing bundled Playwright browser; preserved environment-failure log; no test failure skipped"
+  }
+}

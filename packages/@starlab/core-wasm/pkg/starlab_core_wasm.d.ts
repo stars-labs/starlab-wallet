@@ -1,6 +1,131 @@
 /* tslint:disable */
 /* eslint-disable */
 
+/**
+ * Aux-info ceremony (Paillier moduli + ZK proofs) — the slow one.
+ */
+export class EcdsaAuxInfo {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Hex execution id (also bytes 3..35 of every payload).
+     */
+    execution_id(): string;
+    /**
+     * Our keygen index.
+     */
+    index(): number;
+    is_finished(): boolean;
+    /**
+     * `participants`: sorted device ids (position = keygen index);
+     * `index`: ours; `primes_json`: from [`ecdsa_primes_from_parts`].
+     */
+    constructor(session_id: string, participants: string[], index: number, primes_json: string);
+    /**
+     * Keygen indices of all parties (us included).
+     */
+    parties(): Uint16Array;
+    /**
+     * Advance; returns the aux-info JSON (secret) once finished, else
+     * undefined. Throws if the protocol aborts.
+     */
+    proceed(): string | undefined;
+    /**
+     * Queue a payload from party `sender` (keygen index). Throws on a
+     * payload of another execution, from a non-party, or
+     * undecodable — the ceremony's state is unchanged then, so a
+     * caller may log and drop it. Exact duplicates are ignored.
+     */
+    receive(sender: number, payload: Uint8Array): void;
+    /**
+     * Drain the messages to send (production order).
+     */
+    take_outgoing(): Array<any>;
+}
+
+/**
+ * Threshold keygen ceremony.
+ */
+export class EcdsaKeygen {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Hex execution id (also bytes 3..35 of every payload).
+     */
+    execution_id(): string;
+    /**
+     * Our keygen index.
+     */
+    index(): number;
+    is_finished(): boolean;
+    constructor(session_id: string, participants: string[], index: number, threshold: number);
+    /**
+     * Keygen indices of all parties (us included).
+     */
+    parties(): Uint16Array;
+    /**
+     * Advance; returns the keygen output JSON (secret; join it with the
+     * aux info via [`ecdsa_key_share_from_parts`]) once finished.
+     */
+    proceed(): string | undefined;
+    /**
+     * Queue a payload from party `sender` (keygen index). Throws on a
+     * payload of another execution, from a non-party, or
+     * undecodable — the ceremony's state is unchanged then, so a
+     * caller may log and drop it. Exact duplicates are ignored.
+     */
+    receive(sender: number, payload: Uint8Array): void;
+    /**
+     * Drain the messages to send (production order).
+     */
+    take_outgoing(): Array<any>;
+}
+
+/**
+ * One signing (full interactive protocol — no presignatures).
+ */
+export class EcdsaSigning {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Hex execution id (also bytes 3..35 of every payload).
+     */
+    execution_id(): string;
+    /**
+     * Our keygen index.
+     */
+    index(): number;
+    is_finished(): boolean;
+    /**
+     * Sign the 32-byte `prehash` with the HD child at `path` (e.g.
+     * "m/44'/60'/0'/0/0") together with `signers` (keygen indices, exactly
+     * the share's threshold, us included). `session_id` must be fresh per
+     * signing (`sign_<uuid>`).
+     */
+    constructor(session_id: string, share_json: string, signers: Uint16Array, path: string, prehash: Uint8Array);
+    /**
+     * Keygen indices of all parties (us included).
+     */
+    parties(): Uint16Array;
+    /**
+     * Advance; once finished returns hex of the 65-byte `r ‖ s ‖ v`
+     * (low-s, `v = 27 + recovery_id` — personal_sign's convention; a typed
+     * transaction takes `y_parity = v - 27`), else undefined.
+     */
+    proceed(): string | undefined;
+    /**
+     * Queue a payload from party `sender` (keygen index). Throws on a
+     * payload of another execution, from a non-party, or
+     * undecodable — the ceremony's state is unchanged then, so a
+     * caller may log and drop it. Exact duplicates are ignored.
+     */
+    receive(sender: number, payload: Uint8Array): void;
+    /**
+     * Drain the messages to send (production order).
+     */
+    take_outgoing(): Array<any>;
+}
+
 export class FrostDkgEd25519 {
     free(): void;
     [Symbol.dispose](): void;
@@ -43,7 +168,6 @@ export class FrostDkgSecp256k1 {
     generate_round1(): string;
     generate_round2(): string;
     get_address(): string;
-    get_eth_address(): string;
     get_group_public_key(): string;
     has_signing_nonces(): boolean;
     import_keystore(keystore_json: string): void;
@@ -107,10 +231,6 @@ export class FrostDkgUnified {
      * Get ed25519 group public key (hex).
      */
     get_ed25519_public_key(): string;
-    /**
-     * Get Ethereum address (secp256k1 keccak256).
-     */
-    get_eth_address(): string;
     /**
      * Get the root secret as hex (for backup/storage).
      */
@@ -243,6 +363,66 @@ export function derive_child_keystore_ed25519(keystore_json: string, path: strin
  */
 export function derive_child_keystore_secp256k1(keystore_json: string, path: string): string;
 
+/**
+ * Curve tag of the ECDSA key (keystore / accounts / signing announce).
+ */
+export function ecdsa_curve(): string;
+
+/**
+ * Ethereum address of `account` for an ECDSA group key (hex SEC1) —
+ * public-only, the same as `derive_account_addresses("secp256k1-ecdsa", …)`.
+ */
+export function ecdsa_ethereum_address(group_public_key_hex: string, account: number): string;
+
+/**
+ * Execution id (hex) of a ceremony — `protocol` is "aux-info" | "keygen" |
+ * "signing"; `participants` are device ids in any order. Lets a caller
+ * route a payload that arrives before its ceremony exists.
+ */
+export function ecdsa_execution_id(session_id: string, protocol_tag: string, participants: string[]): string;
+
+/**
+ * Generate ONE Paillier safe prime (JSON `{"radix":16,"value":…}`). Slow
+ * (minutes in wasm): a set needs four — run them in parallel workers and
+ * join with [`ecdsa_primes_from_parts`].
+ */
+export function ecdsa_generate_safe_prime(): string;
+
+/**
+ * Join a keygen output and an aux-info output (both from `proceed()`) into
+ * the persistable key share JSON (secret: encrypt before storing).
+ * `participants` = the sorted device ids the ceremonies ran with.
+ */
+export function ecdsa_key_share_from_parts(participants: string[], keygen_json: string, aux_info_json: string): string;
+
+/**
+ * Execution id (hex) in a driver payload's header, or undefined.
+ */
+export function ecdsa_payload_execution_id(payload: Uint8Array): string | undefined;
+
+/**
+ * Number of safe primes per set (4).
+ */
+export function ecdsa_prime_count(): number;
+
+/**
+ * Join four primes from [`ecdsa_generate_safe_prime`] (JSON array of
+ * them) into the primes JSON an aux-info ceremony takes. Secret.
+ */
+export function ecdsa_primes_from_parts(parts_json: string): string;
+
+/**
+ * `ecrecover`: the address a 65-byte `r ‖ s ‖ v` signature (v ∈ {0,1,27,28})
+ * over the 32-byte `prehash` recovers to (lowercase 0x hex).
+ */
+export function ecdsa_recover_ethereum_address(prehash: Uint8Array, signature: Uint8Array): string;
+
+/**
+ * Public facts of a key share JSON: `{"participants":[…],"index":i,
+ * "threshold":t,"n":n,"group_public_key":"<33-byte SEC1 hex>"}`.
+ */
+export function ecdsa_share_info(share_json: string): string;
+
 export function main(): void;
 
 /**
@@ -269,6 +449,9 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_ecdsaauxinfo_free: (a: number, b: number) => void;
+    readonly __wbg_ecdsakeygen_free: (a: number, b: number) => void;
+    readonly __wbg_ecdsasigning_free: (a: number, b: number) => void;
     readonly __wbg_frostdkged25519_free: (a: number, b: number) => void;
     readonly __wbg_frostdkgsecp256k1_free: (a: number, b: number) => void;
     readonly __wbg_frostdkgunified_free: (a: number, b: number) => void;
@@ -278,6 +461,40 @@ export interface InitOutput {
     readonly derive_account_addresses: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly derive_child_keystore_ed25519: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly derive_child_keystore_secp256k1: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly ecdsa_curve: () => [number, number];
+    readonly ecdsa_ethereum_address: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly ecdsa_execution_id: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly ecdsa_generate_safe_prime: () => [number, number];
+    readonly ecdsa_key_share_from_parts: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly ecdsa_payload_execution_id: (a: number, b: number) => [number, number];
+    readonly ecdsa_prime_count: () => number;
+    readonly ecdsa_primes_from_parts: (a: number, b: number) => [number, number, number, number];
+    readonly ecdsa_recover_ethereum_address: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly ecdsa_share_info: (a: number, b: number) => [number, number, number, number];
+    readonly ecdsaauxinfo_execution_id: (a: number) => [number, number];
+    readonly ecdsaauxinfo_index: (a: number) => number;
+    readonly ecdsaauxinfo_is_finished: (a: number) => number;
+    readonly ecdsaauxinfo_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
+    readonly ecdsaauxinfo_parties: (a: number) => [number, number];
+    readonly ecdsaauxinfo_proceed: (a: number) => [number, number, number, number];
+    readonly ecdsaauxinfo_receive: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly ecdsaauxinfo_take_outgoing: (a: number) => any;
+    readonly ecdsakeygen_execution_id: (a: number) => [number, number];
+    readonly ecdsakeygen_index: (a: number) => number;
+    readonly ecdsakeygen_is_finished: (a: number) => number;
+    readonly ecdsakeygen_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecdsakeygen_parties: (a: number) => [number, number];
+    readonly ecdsakeygen_proceed: (a: number) => [number, number, number, number];
+    readonly ecdsakeygen_receive: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly ecdsakeygen_take_outgoing: (a: number) => any;
+    readonly ecdsasigning_execution_id: (a: number) => [number, number];
+    readonly ecdsasigning_index: (a: number) => number;
+    readonly ecdsasigning_is_finished: (a: number) => number;
+    readonly ecdsasigning_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number];
+    readonly ecdsasigning_parties: (a: number) => [number, number];
+    readonly ecdsasigning_proceed: (a: number) => [number, number, number, number];
+    readonly ecdsasigning_receive: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly ecdsasigning_take_outgoing: (a: number) => any;
     readonly frostdkged25519_add_round1_package: (a: number, b: number, c: number, d: number) => [number, number];
     readonly frostdkged25519_add_round2_package: (a: number, b: number, c: number, d: number) => [number, number];
     readonly frostdkged25519_add_signature_share: (a: number, b: number, c: number, d: number) => [number, number];
@@ -312,7 +529,6 @@ export interface InitOutput {
     readonly frostdkgsecp256k1_generate_round1: (a: number) => [number, number, number, number];
     readonly frostdkgsecp256k1_generate_round2: (a: number) => [number, number, number, number];
     readonly frostdkgsecp256k1_get_address: (a: number) => [number, number, number, number];
-    readonly frostdkgsecp256k1_get_eth_address: (a: number) => [number, number, number, number];
     readonly frostdkgsecp256k1_get_group_public_key: (a: number) => [number, number, number, number];
     readonly frostdkgsecp256k1_has_signing_nonces: (a: number) => number;
     readonly frostdkgsecp256k1_import_keystore: (a: number, b: number, c: number) => [number, number];
@@ -332,7 +548,6 @@ export interface InitOutput {
     readonly frostdkgunified_generate_round1: (a: number) => [number, number, number, number];
     readonly frostdkgunified_generate_round2: (a: number) => [number, number, number, number];
     readonly frostdkgunified_get_ed25519_public_key: (a: number) => [number, number, number, number];
-    readonly frostdkgunified_get_eth_address: (a: number) => [number, number, number, number];
     readonly frostdkgunified_get_root_secret_hex: (a: number) => [number, number];
     readonly frostdkgunified_get_secp256k1_public_key: (a: number) => [number, number, number, number];
     readonly frostdkgunified_get_solana_address: (a: number) => [number, number, number, number];
@@ -365,12 +580,12 @@ export interface InitOutput {
     readonly to_frost_wire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly wasmerror_message: (a: number) => [number, number];
     readonly wasmerror_new: (a: number, b: number) => number;
+    readonly __wbindgen_malloc: (a: number, b: number) => number;
+    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
-    readonly __wbindgen_malloc: (a: number, b: number) => number;
-    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_start: () => void;
 }

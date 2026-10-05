@@ -1,6 +1,7 @@
 <script lang="ts">
     import { createEventDispatcher } from 'svelte';
     import Button from "../lib/ui/Button.svelte";
+    import ChainIcon from "../lib/ui/ChainIcon.svelte";
     import Icon from "../lib/ui/Icon.svelte";
 
     export let signingId: string;
@@ -36,55 +37,35 @@
         return addr;
     }
     
-    async function handleApprove() {
-        approving = true;
+    let approvalError = "";
+    async function respond(approved: boolean) {
+        approving = approved;
+        rejecting = !approved;
+        approvalError = "";
         try {
-            chrome.runtime.sendMessage({
-                type: 'approveMessageSignature',
-                requestId: signingId,
-                approved: true
-            }, (response) => {
-                if (chrome.runtime.lastError) {
-                    console.error('[SignatureRequest] Error approving signature:', chrome.runtime.lastError.message);
-                    return;
-                }
-                console.log('[SignatureRequest] Signature approved');
-                dispatch('complete');
+            const response = await chrome.runtime.sendMessage({
+                type: 'approveMessageSignature', requestId: signingId, approved,
             });
-        } catch (error) {
-            console.error('[SignatureRequest] Error approving signature:', error);
+            if (response?.success === false || response?.error) {
+                approvalError = response.error ?? "Could not complete this request. Try again.";
+                return;
+            }
+            dispatch('complete', signingId);
+        } catch {
+            approvalError = "Could not complete this request. Try again.";
         } finally {
             approving = false;
-        }
-    }
-    
-    async function handleReject() {
-        rejecting = true;
-        try {
-            chrome.runtime.sendMessage({
-                type: 'approveMessageSignature',
-                requestId: signingId,
-                approved: false
-            }, (response) => {
-                if (chrome.runtime.lastError) {
-                    console.error('[SignatureRequest] Error rejecting signature:', chrome.runtime.lastError.message);
-                    return;
-                }
-                console.log('[SignatureRequest] Signature rejected');
-                dispatch('complete');
-            });
-        } catch (error) {
-            console.error('[SignatureRequest] Error rejecting signature:', error);
-        } finally {
             rejecting = false;
         }
     }
+    function handleApprove() { void respond(true); }
+    function handleReject() { void respond(false); }
 </script>
 
 <div class="card card-pad">
     <div class="mb-3 flex items-center justify-between">
         <h3 class="flex items-center gap-1.5 text-sm font-bold">
-            <Icon name="edit" size={15} /> Signature request
+            <Icon name="shield" size={24} /> Review signature
         </h3>
         <span class="badge badge-warning">Pending</span>
     </div>
@@ -105,6 +86,7 @@
             <dd class="mono break-all rounded-lg bg-surface-2 p-2">
                 {formatMessage(message)}
             </dd>
+            {#if message.startsWith("0x") && message.length > 66}<details class="mt-2"><summary class="cursor-pointer text-xs text-muted">View full message</summary><code class="mono mt-2 block max-h-40 overflow-auto break-all text-xs">{message}</code></details>{/if}
         </div>
     </dl>
 
@@ -113,6 +95,7 @@
         this message with your wallet.
     </p>
 
+    {#if approvalError}<p class="mt-3 text-xs text-danger-fg">{approvalError}</p>{/if}
     <div class="mt-3 flex gap-2">
         <Button
             variant="secondary"

@@ -1,0 +1,36 @@
+{
+  "sourceRevision": "b2507f2032cc94a424ed22636e0524f86c395a61",
+  "sourceHashes": {
+    "apps/extension/src/entrypoints/popup/App.svelte": "b7cdf94f908117fa93559a6444dfaebc0dee6a0fcacac0b8c40322b75eb6370b",
+    "apps/extension/src/entrypoints/popup/app.css": "199bfe010fe32fe625cfdf9aab69226bdfeff2d568cbf63d0ed65300dd878d6b",
+    "apps/extension/src/entrypoints/popup/presentation.css": "d919c2fd2ca65eacc58c4ff3e3830a72d243fba41adbed81e29c3b731a1bb01b"
+  },
+  "captures": 230,
+  "unique": 230,
+  "actionOrPageErrors": 0,
+  "premiumCaptures": 24,
+  "allPrior206Covered": true,
+  "metadataRecoveryRows": 142,
+  "productionBuild": "/tmp/starlab-glass-interaction-build/chrome-mv3",
+  "check": "0 errors, 0 warnings",
+  "productionFixedPrimeInjectionHook": "absent",
+  "captureLogs": [
+    "/tmp/starlab-glass-final-capture.log",
+    "/tmp/starlab-glass-remaining-capture.log",
+    "/tmp/starlab-glass-last-capture.log",
+    "/tmp/starlab-glass-interaction-capture.log",
+    "/tmp/starlab-glass-reduced-final.log"
+  ],
+  "baseSourceRevision": "b59bcee",
+  "reusedBaseCaptures": 226,
+  "finalInteractionCaptures": 4,
+  "pressedProof": {
+    "scale": 0.985,
+    "translateY": 1,
+    "active": true
+  },
+  "reducedMotionProof": {
+    "animation": "none",
+    "transition": "0s"
+  }
+}

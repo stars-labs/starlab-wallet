@@ -22,34 +22,31 @@ jobs:
       # The offscreen document (WebRTC + FROST) must not load the popup
       # chunk: its top-level mount() throws there and kills the document.
       - run: "! grep -q 'from\"./popup-' apps/extension/.output/chrome-mv3/chunks/offscreen-*.js"
+      # The INSECURE fixed-ECDSA-primes test hook must not ship.
+      - run: "! grep -rq '__starlabInsecureTestPrimes' apps/extension/.output/chrome-mv3"
 
   # Extension <-> CLI interop (apps/extension/tests/interop): the built
   # extension in headed Chromium (xvfb) runs DKG, signing and reshare with
   # real starlab-cli peers over a private signal server. The CLI comes from
-  # starlab-mpc: the branch with this PR's name when one exists (a paired
-  # protocol change), otherwise main.
+  # the same pinned starlab-mpc revision used by the desktop, so the CI
+  # oracle tests the integrated engine represented by the vendored WASM.
   interop:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # secp256k1 DKGs also create the threshold-ECDSA key (aux info is ~2 min
+    # of wasm in the extension; one-shot CLI creators generate safe primes).
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         curve: [secp256k1, ed25519]
     steps:
       - uses: actions/checkout@v4
-      - name: Pick the starlab-mpc ref
-        id: mpc
-        run: |
-          branch="${{ github.head_ref || github.ref_name }}"
-          if git ls-remote --exit-code --heads https://github.com/stars-labs/starlab-mpc "$branch" >/dev/null; then
-            echo "ref=$branch" >> "$GITHUB_OUTPUT"
-          else
-            echo "ref=main" >> "$GITHUB_OUTPUT"
-          fi
+      # Match the desktop client fixes and integrated cache/deletion/control
+      # tests. Core/core-wasm are unchanged; the vendored WASM still matches.
       - uses: actions/checkout@v4
         with:
           repository: stars-labs/starlab-mpc
-          ref: ${{ steps.mpc.outputs.ref }}
+          ref: 18328a1b8f6d04c769818036b2a0b835c58d22bb
           path: starlab-mpc
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -62,7 +59,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run build:types
-      - run: cd apps/extension && bun run postinstall && bun run build
+      # Test build: carries the INSECURE fixed-ECDSA-primes hook the specs use
+      # (the check job above builds the production bundle without it).
+      - run: cd apps/extension && bun run postinstall && WXT_INSECURE_TEST_PRIMES=1 bun run build
       - run: cd apps/extension && bunx playwright install --with-deps chromium
 
       - name: Interop specs

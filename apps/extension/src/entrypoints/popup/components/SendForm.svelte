@@ -1,4 +1,7 @@
 <script lang="ts">
+    import TokenIcon from "../../../lib/ui/TokenIcon.svelte";
+    import ChainIcon from "../../../lib/ui/ChainIcon.svelte";
+    import Icon from "../../../lib/ui/Icon.svelte";
     // Send form: pick asset (native or ERC-20), recipient, amount → build the
     // eth_sendTransaction params with the pure sendService and emit `submit`.
     // The parent routes the tx through the existing MPC sign+broadcast flow, so
@@ -27,6 +30,7 @@
     import type { SupportedChain } from "@stars-labs/types/appstate";
 
     export let from: string;
+    export let networkId: number | undefined = undefined;
     export let chain: SupportedChain = "ethereum";
 
     const dispatch = createEventDispatcher();
@@ -169,23 +173,23 @@
 </script>
 
 <div class="send-form">
-    <div class="sf-head">Send</div>
+    <div class="feature-heading"><ChainIcon chain={String(chain)} size={32} /><div><div class="sf-head">Send crypto</div><span class="text-xs text-muted">{chain.charAt(0).toUpperCase() + chain.slice(1)} · Review before confirming</span></div></div>
 
     <label class="sf-field">
         <span>Asset</span>
         {#if loadingAssets}
-            <span class="sf-muted">loading…</span>
+            <span class="sf-muted" aria-busy="true">Loading assets…</span>
         {:else}
-            <select bind:value={selected}>
+            <div class="asset-identity"><TokenIcon {networkId} symbol={assets[selected]?.symbol ?? "ETH"} chain={String(chain)} address={assets[selected]?.address} size={28} /><select bind:value={selected}>
                 {#each assets as a, i}
                     <option value={i}>{a.symbol} — {Number(a.balance).toLocaleString(undefined, { maximumFractionDigits: 6 })}</option>
                 {/each}
-            </select>
+            </select></div>
         {/if}
     </label>
 
     <label class="sf-field">
-        <span>To</span>
+        <span>Recipient</span>
         <input
             placeholder="0x… or name.eth"
             bind:value={recipient}
@@ -209,10 +213,10 @@
     {#if review}
         <!-- Review step (#12): everything the user is about to authorize. -->
         <div class="sf-review">
-            <div class="sf-row"><span>Send</span><strong>{amount} {assets[selected]?.symbol}</strong></div>
+            <div class="sf-review-amount"><TokenIcon {networkId} symbol={assets[selected]?.symbol ?? "ETH"} chain={String(chain)} address={assets[selected]?.address} size={44} /><strong>{amount} {assets[selected]?.symbol}</strong></div>
             <div class="sf-row">
-                <span>To</span>
-                <code>
+                <span>Recipient</span>
+                <code title={review.resolvedTo}>
                     {#if review.ens}{review.ens} → {/if}{review.resolvedTo.slice(0, 10)}…{review.resolvedTo.slice(-6)}
                 </code>
             </div>
@@ -230,7 +234,7 @@
                 {#if preflightRunning}
                     <span class="sf-muted">Simulating on local fork…</span>
                 {:else if preflight && !preflight.available}
-                    <span class="sf-muted">Preflight unavailable — start a fork node with scripts/sandbox.sh for a dry-run.</span>
+                    <span class="sf-muted">Transaction preview is unavailable. Review the recipient and amount carefully.</span>
                 {:else if preflight && preflight.success === false}
                     <span class="sf-pf-bad">⛔ Would REVERT{preflight.revertReason ? `: ${preflight.revertReason}` : ""}</span>
                 {:else if preflight && preflight.success}
@@ -256,36 +260,36 @@
         </div>
         <div class="sf-actions">
             <button class="sf-cancel" on:click={() => (review = null)}>Back</button>
-            <button class="sf-submit" on:click={confirm}>Confirm &amp; sign</button>
+            <button class="sf-submit" on:click={confirm}>Confirm send</button>
         </div>
     {:else}
         <div class="sf-actions">
             <button class="sf-cancel" on:click={() => dispatch("cancel")}>Cancel</button>
             <button class="sf-submit" on:click={toReview} disabled={loadingAssets || estimating}>
-                {estimating ? "Estimating…" : "Review & sign"}
+                {estimating ? "Estimating…" : "Review transfer"}
             </button>
         </div>
     {/if}
-    <p class="sf-note">Signing runs the FROST threshold ceremony across your devices.</p>
+    <p class="sf-note">Your trusted devices co-sign before the transaction is sent.</p>
 </div>
 
 <style>
-    .send-form { display: flex; flex-direction: column; gap: 12px; }
+    .send-form { display: flex; flex-direction: column; gap: 10px; }
     .sf-head { font-weight: 600; font-size: 16px; }
     .sf-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
     .sf-field input, .sf-field select { padding: 8px; border-radius: 8px; border: 1px solid rgba(127,127,127,0.3); background: transparent; }
     .sf-actions { display: flex; gap: 8px; justify-content: flex-end; }
     .sf-actions button { padding: 8px 16px; border-radius: 8px; cursor: pointer; border: 1px solid rgba(127,127,127,0.3); background: transparent; }
-    .sf-submit { background: #6366f1; color: #fff; border-color: #6366f1; }
+    .sf-actions .sf-submit { background: var(--grad-brand); color: var(--c-primary-fg); border-color: var(--c-primary); }
     .sf-submit:disabled { opacity: 0.5; cursor: default; }
-    .sf-error { color: #c0392b; font-size: 13px; }
-    .sf-muted { opacity: 0.6; }
-    .sf-note { font-size: 11px; opacity: 0.55; margin: 0; }
-    .sf-review { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid rgba(127,127,127,0.25); border-radius: 8px; font-size: 13px; }
+    .sf-error { color: var(--c-danger-fg); font-size: 13px; }
+    .sf-muted { color: var(--c-muted); }
+    .sf-note { font-size: 11px; color: var(--c-muted); margin: 0; }
+    .sf-review { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--glass-outline); border-radius: 14px; font-size: 13px; }
     .sf-preflight { display: flex; flex-direction: column; gap: 2px; border-top: 1px dashed rgba(127,127,127,0.25); padding-top: 6px; font-size: 12px; }
-    .sf-pf-ok { color: #27ae60; font-weight: 600; }
-    .sf-pf-bad { color: #c0392b; font-weight: 600; }
-    .sf-pf-warn { color: #d68910; font-weight: 600; }
+    .sf-pf-ok { color: var(--c-success-fg); font-weight: 600; }
+    .sf-pf-bad { color: var(--c-danger-fg); font-weight: 600; }
+    .sf-pf-warn { color: var(--c-warning-fg); font-weight: 600; }
     .sf-row { display: flex; justify-content: space-between; gap: 8px; }
     .sf-row code { font-size: 12px; }
 </style>

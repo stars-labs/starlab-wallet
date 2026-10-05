@@ -1,4 +1,5 @@
 <script lang="ts">
+    import ChainIcon from "../lib/ui/ChainIcon.svelte";
     import { onMount } from 'svelte';
     import type { Account } from "@stars-labs/types/account";
     import { isEvmChain, type SupportedChain } from "@stars-labs/types/appstate";
@@ -114,7 +115,7 @@
         on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleAccountSelector()}
     >
         {#if currentAccount}
-            <div class="account-info">
+            <ChainIcon chain={String(blockchain)} size={32} /><div class="account-info">
                 <div class="account-name">
                     {currentAccount.name}
                     {#if accountBadge(currentAccount)}

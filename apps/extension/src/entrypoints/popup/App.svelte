@@ -1,4 +1,6 @@
 <script lang="ts">
+    import FeatureHeader from "../../lib/ui/FeatureHeader.svelte";
+    import ChainIcon from "../../lib/ui/ChainIcon.svelte";
     import { openInvites } from "../../utils/wallet-id";
     import { signingInviteChain, signingInviteDecision, signingInviteKey } from "./signingInvite";
     // Removed single-party WASM functions - this is now an MPC-only wallet
@@ -47,6 +49,9 @@
     import TokenList from "./components/TokenList.svelte";
     import ActivityFeed from "./components/ActivityFeed.svelte";
     import NftGallery from "./components/NftGallery.svelte";
+    import { observeKeystoreSession } from "../../utils/keystoreSession";
+    import { verifyEthereumSignature } from "../../utils/signatureVerification";
+    import { addressForChain, publicWalletState } from "../../utils/walletAccount";
     import AccountPicker from "./components/AccountPicker.svelte";
     import Onboarding from "./components/Onboarding.svelte";
     import SendForm from "./components/SendForm.svelte";
@@ -133,15 +138,12 @@
     // session proposal, import/export, test actions). Collapsed by
     // default so the main surface stays product-focused.
     let showDeveloper = false;
+    let showAccountSetup = false;
 
     onMount(() => initTheme());
     onDestroy(() => unsubTheme());
 
-    // Hero card: reveal the raw group public key on demand + a tiny
-    // copy-confirmation flag for the address (CopyButton's surface
-    // styling is wrong on the gradient, so the hero copies inline).
-    let showGroupKey = false;
-    // Wallet views: token/activity feed + send/receive (added incrementally).
+    // Address copy feedback; protocol details live under Advanced.
     let showSend = false;
     let showReceive = false;
     let sendStatus = "";
@@ -197,16 +199,12 @@
     let accountAddresses: { chain: string; path: string; address: string }[] = [];
     function onAccountSelect(e: CustomEvent) {
         selectedAccount = e.detail.account;
+        if (selectedAccount !== 0) showSend = false;
         accountAddresses = e.detail.addresses;
         refreshWalletData(); // remount balance/activity panels for the new address
     }
-    // The address every panel shows: the selected account's address on the
-    // current chain. Falls back to the group-key address ONLY while the
-    // first derivation is still in flight (never user-selectable).
-    $: displayAddress =
-        addressForChain(accountAddresses, appState.chain) ??
-        accountAddresses[0]?.address ??
-        appState.dkgAddress;
+    // Panels always use the selected account on the selected chain.
+    $: displayAddress = addressForChain(accountAddresses, appState.chain) ?? "";
 
     // Onboarding wizard dismissal (#26) — session-scoped; the wizard also
     // disappears permanently once a wallet exists.
@@ -214,21 +212,28 @@
 
     // Hero-card portfolio fiat total (#13). null = not loaded / unavailable.
     let heroFiat: number | null = null;
-    let heroFiatFor = ""; // chain:address the current value belongs to
-    async function loadHeroFiat(address: string, chain: SupportedChain) {
+    let heroFiatFor = "";
+    async function loadHeroFiat(address: string, chain: SupportedChain, requestKey: string) {
+        heroFiatFor = requestKey;
+        heroFiat = null;
         try {
             const res = await chrome.runtime.sendMessage({ type: "getPortfolio", address, chain });
-            if (res?.success && typeof res.portfolio?.totalFiat === "number") {
-                heroFiat = res.portfolio.totalFiat;
-                heroFiatFor = `${chain}:${address}`;
+            if (heroFiatFor !== requestKey) return;
+            const portfolio = res?.portfolio;
+            const assets = portfolio ? [portfolio.native, ...(portfolio.tokens ?? [])].filter(Boolean) : [];
+            const hasPrices = assets.some((asset) => typeof asset.fiat === "number" && Number.isFinite(asset.fiat));
+            const fullyPriced = assets.every((asset) => Number(asset.balance) === 0 || (typeof asset.fiat === "number" && Number.isFinite(asset.fiat)));
+            if (res?.success && hasPrices && fullyPriced && typeof portfolio.totalFiat === "number" && Number.isFinite(portfolio.totalFiat)) {
+                heroFiat = portfolio.totalFiat;
             }
         } catch {
-            /* price feed down — keep whatever we had */
+            /* Unavailable pricing remains unavailable. */
         }
     }
-    // Refresh whenever the displayed address changes (wallet switch / DKG done).
-    $: if (isEvmChain(appState.chain) && displayAddress && `${appState.chain}:${displayAddress}` !== heroFiatFor) {
-        loadHeroFiat(displayAddress, appState.chain);
+    $: heroFiatKey = isEvmChain(appState.chain) && displayAddress ? `${appState.chain}:${displayAddress}:${currentEvmNetworkId ?? ""}` : "";
+    $: if (heroFiatKey !== heroFiatFor) {
+        if (heroFiatKey && appState.chain) loadHeroFiat(displayAddress, appState.chain, heroFiatKey);
+        else { heroFiatFor = ""; heroFiat = null; }
     }
     async function handleSendSubmit(e: CustomEvent) {
         const { tx, asset, amount, to, tokenAddress } = e.detail;
@@ -297,6 +302,14 @@
     }
 
     // Productized labels for the active blockchain/curve.
+    /** Safe-prime pre-generation for the next wallet's Ethereum key: real
+     *  progress (primes finished of the set), never a guess. */
+    function ecdsaPrimesLabel(p: AppState["ecdsaPrimes"]): string {
+        if (!p || p.state === "idle") return "Preparing secure signing";
+        if (p.state === "ready") return "Secure signing ready";
+        return `Preparing secure signing (${Math.round((100 * p.done) / p.total)}%)`;
+    }
+
     function chainLabel(chain: string | undefined): string {
         return getChainLabel(chain);
     }
@@ -313,22 +326,6 @@
             : chain === "solana"
               ? "solana"
               : "ethereum";
-    }
-    function addressForChain(
-        addresses: { chain: string; path: string; address: string }[],
-        chain: string | undefined,
-    ): string | undefined {
-        const desired = isSupportedChain(chain) ? chain : "ethereum";
-        const normalized = addresses.map((addr) => ({
-            ...addr,
-            chain:
-                normalizeDerivedAddressChain(addr.chain) ??
-                addr.chain.toLowerCase(),
-        }));
-        return (
-            normalized.find((addr) => addr.chain === desired)?.address ??
-            normalized.find((addr) => addr.chain === protocolChainFor(desired))?.address
-        );
     }
     function shortAddr(addr: string | undefined): string {
         if (!addr) return "";
@@ -510,9 +507,8 @@
     // Ext-2e: populated when the offscreen FROST ceremony finalizes
     // (via the `signingCompleted` message from background). Renders
     // a dismissable banner with the aggregated signature hex + a
-    // copy-to-clipboard button. secp256k1 FROST signs BIP-340 Schnorr:
-    // the EIP-191 hash is what was signed, but the signature is NOT
-    // ecrecover-compatible.
+    // copy-to-clipboard button. Ethereum signs the EIP-191 hash with
+    // the threshold-ECDSA key, yielding an ecrecover-compatible signature.
     type SignatureBanner = {
         signingId: string;
         signature: string;
@@ -521,6 +517,7 @@
         sessionId: string;
     };
     let signatureBanner: SignatureBanner | null = null;
+    let signatureVerification = "";
     let signatureCopied = false;
 
     // Ext-3b: TUI Stage 1 parity (a4c52ca). When a signing-session
@@ -866,9 +863,9 @@
                     // Other state fields. The background owns the DKG
                     // result: a popup opened after the ceremony only learns
                     // the group key / address from this snapshot.
-                    dkgAddress: message.dkgAddress || appState.dkgAddress || "",
-                    dkgGroupPublicKey:
-                        message.dkgGroupPublicKey || appState.dkgGroupPublicKey || "",
+                    ...publicWalletState(message),
+                    ecdsaDkgStatus: message.ecdsaDkgStatus ?? null,
+                    ecdsaPrimes: message.ecdsaPrimes,
                     dkgError: appState.dkgError || "",
                     sessionAcceptanceStatus:
                         message.sessionAcceptanceStatus ||
@@ -883,6 +880,10 @@
                     "[UI] App state updated from initialState:",
                     appState,
                 );
+                if (!initialStateLoaded && message.lastSignature) {
+                    signatureBanner = message.lastSignature;
+                    void verifySignatureBanner(signatureBanner!);
+                }
                 initialStateLoaded = true; // Enable reactive saving after state is loaded
 
                 // Save the current UI preferences immediately after loading to ensure persistence
@@ -1126,6 +1127,19 @@
                 }
                 break;
 
+            case "signingSessionCreated":
+                appState = { ...appState, sessionInfo: message.sessionInfo };
+                signatureBanner = null;
+                signatureVerification = "";
+                signingProgress = {
+                    signingId: `sign_${message.sessionInfo.session_id}`,
+                    state: "Waiting for co-signers",
+                    selectedSigners: message.sessionInfo.participants ?? [],
+                    commitmentsReceived: [],
+                    sharesReceived: [],
+                };
+                break;
+
             case "signingCompleted":
                 // Ext-2e: FROST threshold signing ceremony finalized.
                 // Different from `signatureComplete` (legacy dApp-bridge
@@ -1143,6 +1157,7 @@
                     sessionId: message.sessionId,
                 };
                 signatureCopied = false;
+                void verifySignatureBanner(signatureBanner);
                 // Success banner replaces the in-progress roster.
                 signingProgress = null;
                 break;
@@ -1314,6 +1329,18 @@
         // Note: signMessage intentionally preserved so user can edit
         // and re-preview without retyping. TUI parity with Stage 3
         // CancelSigningRequest behavior.
+    }
+
+    async function verifySignatureBanner(banner: SignatureBanner) {
+        signatureVerification = "";
+        if (banner.blockchain !== "ethereum") return;
+        const expected = keystoreStatus.activeWallet?.address || appState.dkgAddress || "";
+        signatureVerification = "Verifying signature…";
+        const result = await verifyEthereumSignature(banner.messageHex, banner.signature, expected);
+        if (signatureBanner !== banner) return;
+        signatureVerification = result.verified
+            ? "Verified against the wallet's Ethereum address"
+            : "Signature could not be verified against the wallet's Ethereum address";
     }
 
     async function copySignatureToClipboard() {
@@ -1890,6 +1917,10 @@
             }
             if (response && response.success) {
                 keystoreStatus = response.status;
+                if (keystoreStatus.locked) {
+                    showSignForm = false;
+                    signPreview = null;
+                }
                 console.log("[UI] Keystore status:", keystoreStatus);
                 
                 // Do NOT auto-pop the Unlock modal on popup open — it was
@@ -1904,6 +1935,8 @@
         });
     }
     
+    onMount(() => observeKeystoreSession(checkKeystoreStatus));
+
     function showUnlockPrompt() {
         passwordPromptConfig = {
             title: "Unlock Wallet",
@@ -1912,6 +1945,7 @@
             onSubmit: handleUnlockPassword,
             onCancel: () => { showPasswordPrompt = false; }
         };
+        passwordPromptError = "";
         showPasswordPrompt = true;
     }
     
@@ -1923,12 +1957,14 @@
             onSubmit: handleCreateKeystore,
             onCancel: () => { showPasswordPrompt = false; }
         };
+        passwordPromptError = "";
         showPasswordPrompt = true;
     }
     
+    let passwordPromptError = "";
     async function handleUnlockPassword(event: CustomEvent) {
         const password = event.detail.password;
-        showPasswordPrompt = false;
+        passwordPromptError = "";
         
         chrome.runtime.sendMessage({ 
             type: MESSAGE_TYPES.UNLOCK_KEYSTORE,
@@ -1936,10 +1972,11 @@
             rememberDuration: 15 * 60 * 1000 // 15 minutes
         }, (response) => {
             if (chrome.runtime.lastError) {
-                console.error("[UI] Error unlocking keystore:", chrome.runtime.lastError.message);
+                passwordPromptError = "Could not unlock this device. Try again.";
                 return;
             }
             if (response && response.success) {
+                showPasswordPrompt = false;
                 keystoreStatus.locked = false;
                 keystoreStatus.wallets = response.wallets;
                 keystoreStatus.activeWallet = response.activeWallet;
@@ -1948,32 +1985,32 @@
                 // Check for pending imports after unlock
                 checkPendingImports();
             } else {
-                console.error("[UI] Failed to unlock keystore:", response?.error);
-                // Don't auto-re-pop the modal (it created an inescapable loop on
-                // a wrong password). The user can retry via the header 🔓 button.
+                passwordPromptError = response?.error ?? "Incorrect password. Try again.";
+                // Keep the modal open so the password can be corrected.
             }
         });
     }
     
     async function handleCreateKeystore(event: CustomEvent) {
         const password = event.detail.password;
-        showPasswordPrompt = false;
+        passwordPromptError = "";
         
         chrome.runtime.sendMessage({ 
             type: MESSAGE_TYPES.CREATE_KEYSTORE,
             password
         }, (response) => {
             if (chrome.runtime.lastError) {
-                console.error("[UI] Error creating keystore:", chrome.runtime.lastError.message);
+                passwordPromptError = "Could not create this wallet. Try again.";
                 return;
             }
             if (response && response.success) {
+                showPasswordPrompt = false;
                 keystoreStatus.initialized = true;
                 keystoreStatus.locked = false;
                 console.log("[UI] Keystore created successfully");
                 checkKeystoreStatus();
             } else {
-                console.error("[UI] Failed to create keystore:", response?.error);
+                passwordPromptError = response?.error ?? "Could not create this wallet. Try again.";
             }
         });
     }
@@ -2041,10 +2078,10 @@
     }
 </script>
 
-<main class="flex min-h-[600px] flex-col">
+<main class="wallet-main flex flex-col">
     <!-- Header -->
     <header
-        class="sticky top-0 z-30 flex items-center gap-1.5 border-b border-line bg-surface px-4 py-3"
+        class="wallet-header sticky top-0 z-30 flex items-center gap-1.5 border-b border-line bg-surface px-4 py-3"
     >
         <div
             class="flex h-8 w-8 items-center justify-center rounded-xl text-sm font-black text-white"
@@ -2099,10 +2136,10 @@
         </button>
     </header>
 
-    <div class="flex-1 space-y-4 px-4 py-4">
+    <div class="wallet-content flex-1 space-y-4 px-4 py-4">
     {#if appState.showSettings}
         <Settings
-            currentAddress={appState.dkgAddress || ""}
+            currentAddress={displayAddress}
             on:backToWallet={({ detail }) => {
                 if (isSupportedChain(detail.chain)) {
                     appState.chain = detail.chain;
@@ -2124,6 +2161,12 @@
              flip back to the main view; the session_available
              broadcast will populate appState.sessionInfo and the
              existing wallet-status banner will reflect the new state. -->
+        {#if appState.ecdsaPrimes && appState.ecdsaPrimes.state !== "ready"}
+            <p class="mb-2 text-xs text-faint" data-testid="ecdsa-primes-status">
+                {ecdsaPrimesLabel(appState.ecdsaPrimes)} — runs in the background; an Ethereum
+                wallet waits for it.
+            </p>
+        {/if}
         <CreateWalletForm
             deviceId={appState.deviceId}
             wsConnected={appState.wsConnected}
@@ -2184,8 +2227,8 @@
                 wallets={keystoreStatus.wallets}
                 activeWallet={keystoreStatus.activeWallet}
                 on:select={handleWalletSelect}
-                on:add={() => console.log("[UI] Add wallet clicked")}
-                on:manage={() => console.log("[UI] Manage wallets clicked")}
+                on:add={() => (showCreateWallet = true)}
+                on:manage={() => (appState.showSettings = true)}
             />
         {/if}
 
@@ -2221,12 +2264,13 @@
                 <div class="relative flex items-center justify-between">
                     <span class="flex items-center gap-2">
                         <span
-                            class="text-xs font-semibold uppercase tracking-wide text-white/80"
+                            class="text-xs font-semibold uppercase tracking-wide text-muted"
                         >
-                            {chainLabel(appState.chain)}
+                            <ChainIcon chain={String(appState.chain)} size={22} /> {chainLabel(appState.chain)}
                         </span>
                         <AccountPicker
                             groupPublicKey={appState.dkgGroupPublicKey || ""}
+                            ecdsaGroupPublicKey={appState.ecdsaGroupPublicKey || ""}
                             curve={appState.curve ??
                                 getRequiredCurve(isSupportedChain(appState.chain) ? appState.chain : "ethereum")}
                             chain={isSupportedChain(appState.chain) ? appState.chain : "ethereum"}
@@ -2236,14 +2280,14 @@
                     </span>
                     {#if appState.sessionInfo}
                         <span
-                            class="rounded-full bg-white/20 px-2 py-0.5 text-xs font-semibold"
+                            class="rounded-full bg-primary-soft px-2 py-0.5 text-xs font-semibold"
                         >
                             {appState.sessionInfo.threshold}-of-{appState
                                 .sessionInfo.total}
                         </span>
                     {:else if appState.dkgLastResult}
                         <span
-                            class="rounded-full bg-white/20 px-2 py-0.5 text-xs font-semibold"
+                            class="rounded-full bg-primary-soft px-2 py-0.5 text-xs font-semibold"
                         >
                             {appState.dkgLastResult.threshold}-of-{appState
                                 .dkgLastResult.total}
@@ -2255,9 +2299,12 @@
                     <div class="relative mt-2 text-2xl font-bold tracking-tight">
                         ${heroFiat.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                     </div>
+                {:else}
+                    <div class="relative mt-2 text-2xl font-bold tracking-tight" aria-label="Fiat value unavailable">—</div>
                 {/if}
+                <div class="hero-address">
                 <button
-                    class="relative mt-3 flex items-center gap-2"
+                    class="relative flex items-center gap-2"
                     on:click={() => copyAddress(displayAddress)}
                     title="Copy address"
                 >
@@ -2266,51 +2313,40 @@
                     </span>
                     <Icon name={addrCopied ? "check" : "copy"} size={15} />
                 </button>
-                <div class="relative mt-3 flex gap-2">
+                <div class="relative flex gap-2">
                     <button
-                        class="rounded-lg bg-white/20 px-2.5 py-1.5 text-xs font-semibold text-white backdrop-blur transition hover:bg-white/30"
+                        class="rounded-lg bg-primary-soft px-2.5 py-1.5 text-xs font-semibold text-primary backdrop-blur transition hover:bg-surface-3"
                         on:click={() => copyAddress(displayAddress)}
                     >
                         {addrCopied ? "Copied" : "Copy address"}
                     </button>
-                    {#if appState.dkgGroupPublicKey}
-                        <button
-                            class="rounded-lg bg-white/20 px-2.5 py-1.5 text-xs font-semibold text-white backdrop-blur transition hover:bg-white/30"
-                            on:click={() => (showGroupKey = !showGroupKey)}
-                        >
-                            Group key
-                        </button>
-                    {/if}
                 </div>
-                {#if showGroupKey && appState.dkgGroupPublicKey}
-                    <div
-                        class="relative mt-2 break-all rounded-lg bg-black/15 p-2 font-mono text-[10px] text-white/90"
-                    >
-                        {appState.dkgGroupPublicKey}
-                    </div>
-                {/if}
+                </div>
             </div>
         {/if}
 
         <!-- First-run onboarding (#26): guided create-or-join wizard, shown
              until this profile has a wallet (or the user dismisses it). -->
-        {#if (keystoreStatus.wallets?.length ?? 0) === 0 && !hasExternalAccounts && !showCreateWallet && !onboardingDismissed}
+        {#if showAccountSetup || ((keystoreStatus.wallets?.length ?? 0) === 0 && !hasExternalAccounts && !showCreateWallet && !onboardingDismissed)}
             <Onboarding
                 wsConnected={appState.wsConnected}
-                on:create={() => (showCreateWallet = true)}
+                on:create={() => { showAccountSetup = false; showCreateWallet = true; }}
                 on:ledger={connectLedgerAccounts}
                 on:yubikey={refreshYubiKeyAccounts}
                 on:simulation={({ detail }) =>
                     addSimulationAccount(detail.address, detail.blockchain)}
                 on:reconnect={reconnectSignalAfterRoomSave}
-                on:done={() => (onboardingDismissed = true)}
+                on:done={() => { onboardingDismissed = true; showAccountSetup = false; }}
             />
         {/if}
         {#if accountSetupStatus}
             <div class="alert alert-info text-xs">{accountSetupStatus}</div>
         {/if}
 
-        <!-- Primary actions -->
+        <!-- Wallet assets + activity + send/receive (shown once a wallet exists).
+             Gate on the account address the header already shows: the
+             post-DKG `dkgAddress` fetch is one-shot and racy, and a saved
+             wallet reloaded from the keystore never sets it. -->
         {@const canCreate =
             !appState.sessionInfo ||
             appState.dkgState === DkgState.Complete}
@@ -2319,8 +2355,77 @@
             !keystoreStatus.locked &&
             (keystoreStatus.wallets?.length ?? 0) > 0 &&
             !appState.sessionInfo}
+        {#if canSign && displayAddress}
+            {#if showSend && isEvmChain(appState.chain)}
+                <div class="card card-pad">
+                    {#key `${displayAddress}:${appState.chain}:${currentEvmNetworkId}`}
+                    <SendForm
+                        from={displayAddress}
+                        chain={appState.chain}
+                        networkId={currentEvmNetworkId}
+                        on:submit={handleSendSubmit}
+                        on:cancel={() => (showSend = false)}
+                    />
+                    {/key}
+                </div>
+            {:else if showReceive}
+                <div class="card card-pad">
+                    <ReceiveCard address={displayAddress} chain={String(appState.chain)} network={isEvmChain(appState.chain) ? evmNetworks.find((n) => n.id === currentEvmNetworkId)?.name ?? "" : ""} />
+                    <button class="btn-ghost mt-2 w-full" on:click={() => (showReceive = false)}>Close</button>
+                </div>
+            {:else}
+                <div class="grid grid-cols-2 gap-2.5 wallet-actions primary-actions">
+                    <button
+                        class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
+                        on:click={() => { showSend = true; sendStatus = ""; }}
+                        disabled={selectedAccount !== 0 || !isEvmChain(appState.chain)}
+                        title={selectedAccount !== 0
+                            ? "Sending is currently available on Account 0"
+                            : isEvmChain(appState.chain)
+                              ? "Send"
+                              : "Sending is not available for this network"}
+                    ><Icon name="send" size={20} /> Send</button>
+                    <button
+                        class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
+                        on:click={() => (showReceive = true)}
+                    ><Icon name="qr" size={20} /> Receive</button>
+                </div>
+                {#if sendStatus}
+                    <p class="text-xs text-muted">{sendStatus}</p>
+                {/if}
+                {#key dataEpoch}
+                    {#if isEvmChain(appState.chain)}
+                        <div class="card card-pad portfolio-panel">
+                            <TokenList address={displayAddress} chain={appState.chain} networkId={currentEvmNetworkId} />
+                        </div>
+                        <div class="portfolio-secondary">
+                        <div class="card card-pad activity-panel">
+                            <ActivityFeed address={displayAddress} chain={appState.chain} />
+                        </div>
+                        <div class="card card-pad collectibles-panel">
+                            <NftGallery address={displayAddress} chain={appState.chain || "ethereum"} />
+                        </div>
+                        </div>
+                    {:else if appState.chain === "solana"}
+                        <div class="card card-pad">
+                            <NftGallery address={displayAddress} chain="solana" />
+                        </div>
+                    {:else if isSupportedChain(appState.chain)}
+                        <div class="alert alert-info text-xs">
+                            {CHAIN_METADATA[appState.chain].note ??
+                                "Address and threshold signing are available. Transaction tools for this chain are not wired yet."}
+                        </div>
+                    {/if}
+                {/key}
+            {/if}
+        {/if}
+
+        <!-- Sign message and account tools -->
+        {#if canCreate || canSign}<div class="section-title">Wallet tools</div>{/if}
+        <!-- Secondary wallet tools -->
+        <!-- Wallet management actions -->
         {#if canCreate || canSign}
-            <div class="grid grid-cols-2 gap-2.5">
+            <div class="grid grid-cols-2 gap-2.5 wallet-actions wallet-tools">
                 {#if canCreate}
                     <button
                         class="group flex flex-col items-start gap-2 rounded-xl border border-line bg-surface p-3 text-left transition hover:border-primary disabled:opacity-50 disabled:hover:border-line"
@@ -2361,83 +2466,22 @@
                             <Icon name="edit" size={17} />
                         </span>
                         <span class="text-sm font-semibold">Sign message</span>
-                        <span class="text-xs text-muted">Request signatures</span>
+                        <span class="text-xs text-muted">Co-sign with your devices</span>
                     </button>
                 {/if}
             </div>
         {/if}
 
-        <!-- Wallet assets + activity + send/receive (shown once a wallet exists).
-             Gate on the account address the header already shows: the
-             post-DKG `dkgAddress` fetch is one-shot and racy, and a saved
-             wallet reloaded from the keystore never sets it. -->
-        {#if canSign && displayAddress}
-            {#if showSend && isEvmChain(appState.chain)}
-                <div class="card card-pad">
-                    <SendForm
-                        from={displayAddress}
-                        chain={appState.chain}
-                        on:submit={handleSendSubmit}
-                        on:cancel={() => (showSend = false)}
-                    />
-                </div>
-            {:else if showReceive}
-                <div class="card card-pad">
-                    <ReceiveCard address={displayAddress} />
-                    <button class="btn-ghost mt-2 w-full" on:click={() => (showReceive = false)}>Close</button>
-                </div>
-            {:else}
-                <div class="grid grid-cols-2 gap-2.5">
-                    <button
-                        class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
-                        on:click={() => { showSend = true; sendStatus = ""; }}
-                        disabled={selectedAccount !== 0 || !isEvmChain(appState.chain)}
-                        title={selectedAccount !== 0
-                            ? "Signing currently pins to Account 0 — per-session account selection ships next"
-                            : isEvmChain(appState.chain)
-                              ? "Send"
-                              : "Transaction sending is not wired for this chain yet"}
-                    >Send</button>
-                    <button
-                        class="rounded-xl border border-line bg-surface p-3 text-sm font-semibold transition hover:border-primary"
-                        on:click={() => (showReceive = true)}
-                    >Receive</button>
-                </div>
-                {#if sendStatus}
-                    <p class="text-xs text-muted">{sendStatus}</p>
-                {/if}
-                {#key dataEpoch}
-                    {#if isEvmChain(appState.chain)}
-                        <div class="card card-pad">
-                            <TokenList address={displayAddress} chain={appState.chain} />
-                        </div>
-                        <div class="card card-pad">
-                            <ActivityFeed address={displayAddress} chain={appState.chain} />
-                        </div>
-                        <div class="card card-pad">
-                            <NftGallery address={displayAddress} chain={appState.chain || "ethereum"} />
-                        </div>
-                    {:else if appState.chain === "solana"}
-                        <div class="card card-pad">
-                            <NftGallery address={displayAddress} chain="solana" />
-                        </div>
-                    {:else if isSupportedChain(appState.chain)}
-                        <div class="alert alert-info text-xs">
-                            {CHAIN_METADATA[appState.chain].note ??
-                                "Address and threshold signing are available. Transaction tools for this chain are not wired yet."}
-                        </div>
-                    {/if}
-                {/key}
-            {/if}
+        {#if keystoreStatus.initialized}
+            <button class="btn btn-secondary btn-block" on:click={() => (showAccountSetup = !showAccountSetup)}><Icon name="plus" size={18} /> Add hardware or watch-only account</button>
         {/if}
 
-        <!-- Sign message: inline form (opened from the action above) -->
         {#if canSign && showSignForm}
             <form
                 class="card card-pad space-y-3"
                 on:submit|preventDefault={buildSignPreview}
             >
-                <p class="text-sm font-semibold">Sign a message</p>
+                <FeatureHeader title="Sign a message" subtitle="Review what your devices will approve" icon="edit" />
                 <div>
                     <label class="label" for="sign-wallet">Wallet</label>
                     <select
@@ -2606,11 +2650,11 @@
                         </dd>
                     </div>
                     {#if signPreview.eip191Hash}
-                        <div>
+                        <details class="rounded-lg border border-line p-2"><summary class="cursor-pointer text-xs text-muted">Technical details</summary>
                             <dt class="label mb-1">
                                 EIP-191 hash
                                 <span class="font-normal text-faint"
-                                    >(signed as BIP-340 Schnorr — not ecrecover-compatible)</span
+                                    >(signed with threshold ECDSA — ecrecover-compatible)</span
                                 >
                             </dt>
                             <dd
@@ -2618,7 +2662,7 @@
                             >
                                 {signPreview.eip191Hash}
                             </dd>
-                        </div>
+                        </details>
                     {/if}
                 </dl>
                 <p class="mt-3 text-xs text-muted">
@@ -2731,7 +2775,7 @@
         {#if signingErrorToasts.length > 0}
             <div class="fixed right-4 top-4 z-40 space-y-2">
                 {#each signingErrorToasts as toast (toast.expiresAt)}
-                    <div class="alert alert-error shadow-lg">
+                    <div class="alert alert-danger shadow-lg">
                         <p class="font-semibold">Signing failed</p>
                         <p class="text-[11px] opacity-80">{toast.error}</p>
                     </div>
@@ -2801,11 +2845,14 @@
                         <Icon name="x" size={15} />
                     </button>
                 </div>
+                {#if signatureVerification}
+                    <p class="mb-2 text-xs">{signatureVerification}</p>
+                {/if}
                 <dl class="space-y-2 text-xs">
                     <dd>
                         {#if signatureBanner.blockchain === "ethereum"}
-                            <span class="badge badge-warning"
-                                >EIP-191 · BIP-340 Schnorr (not ecrecover)</span
+                            <span class="badge badge-info"
+                                >Ethereum · threshold ECDSA</span
                             >
                         {:else}
                             <span class="badge badge-info">ed25519 · Solana</span>
@@ -2997,7 +3044,11 @@
                     </p>
                 {/if}
             </div>
-        {:else if appState.sessionInfo && appState.dkgState !== DkgState.Idle}
+        {:else if appState.sessionInfo?.session_type === "dkg" && appState.dkgState === DkgState.Failed}
+            <div class="alert alert-danger" role="alert">
+                Wallet setup failed. Check your devices and try again.
+            </div>
+        {:else if appState.sessionInfo?.session_type === "dkg" && appState.dkgState !== DkgState.Idle}
             <div class="alert alert-info">
                 Generating keys — your wallet address will appear when complete.
             </div>
@@ -3005,7 +3056,7 @@
 
         <!-- Multi-account support. Also rendered for hardware/simulation users
              even before any FROST DKG completes. -->
-        {#if appState.dkgState === DkgState.Complete || hasExternalAccounts}
+        {#if hasExternalAccounts}
             <AccountManager blockchain={isSupportedChain(appState.chain) ? appState.chain : "ethereum"} />
         {/if}
 
@@ -3027,8 +3078,8 @@
             </div>
         {/if}
 
-    <!-- Active shared-wallet session (DKG ceremony in progress / done) -->
-    {#if appState.sessionInfo}
+    <!-- Wallet creation has its own progress; signing uses the signing roster above. -->
+    {#if appState.sessionInfo?.session_type === "dkg"}
         <div class="card card-pad">
             <div class="mb-3 flex items-center justify-between">
                 <h3 class="flex items-center gap-1.5 text-sm font-bold">
@@ -3168,6 +3219,7 @@
                         Wallet ready. Any {appState.sessionInfo.threshold} of {appState
                             .sessionInfo.total} can sign together.
                     </div>
+                    {#if showDeveloper}
                     <Button
                         variant="ghost"
                         block
@@ -3176,12 +3228,21 @@
                     >
                         Run test signing
                     </Button>
+                    {/if}
                 </div>
             {:else if appState.dkgState === DkgState.Initializing || appState.dkgState === DkgState.Round1InProgress || appState.dkgState === DkgState.Round1Complete || appState.dkgState === DkgState.Round2InProgress || appState.dkgState === DkgState.Round2Complete || appState.dkgState === DkgState.Finalizing}
                 <div class="mt-3 border-t border-line pt-3">
-                    <div class="alert alert-info">
-                        Generating keys — please keep the popup open until it
-                        completes.
+                    <div class="alert alert-info" data-testid="dkg-progress">
+                        {#if appState.dkgState === DkgState.Finalizing && appState.ecdsaDkgStatus === "waiting-primes"}
+                            {ecdsaPrimesLabel(appState.ecdsaPrimes)} — the Ethereum key is created as soon as it is done.
+                        {:else if appState.dkgState === DkgState.Finalizing && appState.ecdsaDkgStatus === "aux-info"}
+                            Creating the Ethereum key (step 1 of 2, takes a few minutes)…
+                        {:else if appState.dkgState === DkgState.Finalizing && appState.ecdsaDkgStatus === "keygen"}
+                            Creating the Ethereum key (step 2 of 2)…
+                        {:else}
+                            Generating keys — please keep the popup open until it
+                            completes.
+                        {/if}
                     </div>
                 </div>
             {/if}
@@ -3238,12 +3299,21 @@
 
     <!-- Developer options (connection, devices, manual sessions) -->
     <Collapsible
-        title="Developer options"
-        subtitle="Connection, devices & manual sessions"
+        title="Advanced"
+        subtitle="Connection and device details"
         icon="code"
         bind:open={showDeveloper}
     >
         <div class="space-y-4">
+            {#if appState.dkgGroupPublicKey}
+                <div>
+                    <span class="label">Wallet group key</span>
+                    <div class="flex items-center gap-2">
+                        <code class="mono min-w-0 flex-1 break-all rounded-lg bg-surface-2 px-2 py-1.5 text-xs">{appState.dkgGroupPublicKey}</code>
+                        <CopyButton value={appState.dkgGroupPublicKey} variant="icon" />
+                    </div>
+                </div>
+            {/if}
             <!-- Device id -->
             <div>
                 <span class="label">Your device ID</span>
@@ -3362,98 +3432,7 @@
                 <div class="divider"></div>
 
                 <div class="space-y-2">
-                    <span class="label">Keystore</span>
-                    <button
-                        class="btn btn-secondary btn-block btn-sm"
-                        on:click={() => {
-                            const input = document.createElement("input");
-                            input.type = "file";
-                            input.accept = ".json";
-                            input.onchange = async (e) => {
-                                const file = (e.target as HTMLInputElement)
-                                    .files?.[0];
-                                if (file) {
-                                    const reader = new FileReader();
-                                    reader.onload = async (event) => {
-                                        const keystoreData = event.target
-                                            ?.result as string;
-                                        try {
-                                            const parsedKeystore =
-                                                JSON.parse(keystoreData);
-                                            let password = undefined;
-                                            if (
-                                                parsedKeystore.encrypted === true
-                                            ) {
-                                                password = prompt(
-                                                    "This keystore is encrypted. Please enter the password:",
-                                                );
-                                                if (!password) {
-                                                    alert(
-                                                        "Password is required for encrypted keystores",
-                                                    );
-                                                    return;
-                                                }
-                                            }
-                                            chrome.runtime.sendMessage(
-                                                {
-                                                    type: "importKeystore",
-                                                    keystoreData,
-                                                    password,
-                                                    chain: protocolChainFor(appState.chain),
-                                                },
-                                                (response) => {
-                                                    if (
-                                                        chrome.runtime.lastError
-                                                    ) {
-                                                        console.error(
-                                                            "[UI] Error importing keystore:",
-                                                            chrome.runtime
-                                                                .lastError
-                                                                .message,
-                                                        );
-                                                        alert(
-                                                            "Failed to import keystore: " +
-                                                                chrome.runtime
-                                                                    .lastError
-                                                                    .message,
-                                                        );
-                                                        return;
-                                                    }
-                                                    if (response.success) {
-                                                        console.log(
-                                                            "[UI] Keystore imported successfully",
-                                                        );
-                                                        alert(
-                                                            "Keystore imported successfully!",
-                                                        );
-                                                    } else {
-                                                        console.error(
-                                                            "[UI] Failed to import keystore:",
-                                                            response.error,
-                                                        );
-                                                        alert(
-                                                            "Failed to import keystore: " +
-                                                                response.error,
-                                                        );
-                                                    }
-                                                },
-                                            );
-                                        } catch (err) {
-                                            console.error(
-                                                "[UI] Error reading keystore file:",
-                                                err,
-                                            );
-                                            alert("Invalid keystore file");
-                                        }
-                                    };
-                                    reader.readAsText(file);
-                                }
-                            };
-                            input.click();
-                        }}
-                    >
-                        <Icon name="upload" size={15} /> Import keystore from CLI
-                    </button>
+
 
                 </div>
 
@@ -3576,6 +3555,7 @@
      can be async — return value is discarded). -->
 {#if showPasswordPrompt}
     <PasswordPrompt
+        bind:error={passwordPromptError}
         title={passwordPromptConfig.title}
         message={passwordPromptConfig.message}
         confirmMode={passwordPromptConfig.confirmMode}

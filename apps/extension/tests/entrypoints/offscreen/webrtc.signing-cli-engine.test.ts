@@ -193,7 +193,7 @@ describe("extension co-signs a CLI-proposed ceremony (real engine)", () => {
         [3, ["tui", "desktop"]],
         [2, ["tui"]],
     ] as const) {
-        for (const chain of ["ethereum", "bitcoin"] as const) {
+        for (const chain of ["bitcoin"] as const) {
             it(`${t}-of-3 ${chain}-0: the CLI aggregates a valid signature`, async () => {
                 if (!isWasmInitialized()) return;
                 const env = await extension(t);
@@ -220,7 +220,7 @@ describe("a second ceremony after the first finished", () => {
     it("ignores the previous ceremony's resent SIGN_COMMIT (live: InvalidSignatureShare from the extension)", async () => {
         if (!isWasmInitialized()) return;
         const env = await extension(3);
-        const first = await ceremony(env, { chain: "ethereum", cliSigners: ["tui", "desktop"], msg: MSG, sessionId: "sign_1" });
+        const first = await ceremony(env, { chain: "bitcoin", cliSigners: ["tui", "desktop"], msg: MSG, sessionId: "sign_1" });
         expect(first.clis.get("tui")!.signature).toBeTruthy();
 
         // The CLI resends unacked ceremony frames (#117); one lands after
@@ -232,7 +232,7 @@ describe("a second ceremony after the first finished", () => {
         } as any);
 
         const second = await ceremony(env, {
-            chain: "ethereum",
+            chain: "bitcoin",
             cliSigners: ["tui", "desktop"],
             msg: "ab".repeat(32),
             sessionId: "sign_2",

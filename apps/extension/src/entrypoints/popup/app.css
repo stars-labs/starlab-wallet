@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@import "./presentation.css";
+@import "./density.css";
 
 /* Class-based dark mode (driven by src/lib/theme.ts), but the actual
    palette also tracks the system when theme = "system". We toggle the
@@ -14,7 +16,7 @@
  * the active theme automatically.
  * ------------------------------------------------------------------ */
 :root {
-    --c-bg: #f3f4f7;
+    --c-bg: #f4f3f9;
     --c-surface: #ffffff;
     --c-surface-2: #f4f5f8;
     --c-surface-3: #e9ebf0;
@@ -23,7 +25,7 @@
 
     --c-text: #14161c;
     --c-muted: #5d626c;
-    --c-faint: #9499a3;
+    --c-faint: #777487;
 
     --c-primary: #6753ff;
     --c-primary-hover: #5a45f0;
@@ -46,14 +48,14 @@
     --c-info-soft: #e8f0fe;
     --c-info-fg: #1d4ed8;
 
-    --grad-brand: linear-gradient(135deg, #6753ff 0%, #9b5cff 55%, #b961ff 100%);
-    --shadow-card: 0 1px 2px rgba(16, 18, 27, 0.04), 0 4px 16px rgba(16, 18, 27, 0.06);
-    --shadow-pop: 0 12px 40px rgba(16, 18, 27, 0.18);
+    --grad-brand: var(--glass-brand);
+    --shadow-card: var(--glass-shadow-card);
+    --shadow-pop: var(--glass-shadow-pop);
     --ring: rgba(103, 83, 255, 0.4);
 }
 
 .dark {
-    --c-bg: #0c0d11;
+    --c-bg: #101019;
     --c-surface: #15171d;
     --c-surface-2: #1b1e25;
     --c-surface-3: #232730;
@@ -62,7 +64,7 @@
 
     --c-text: #e9ebf0;
     --c-muted: #9aa0ab;
-    --c-faint: #6b7280;
+    --c-faint: #918da4;
 
     --c-primary: #8776ff;
     --c-primary-hover: #978bff;
@@ -85,9 +87,9 @@
     --c-info-soft: rgba(106, 163, 255, 0.14);
     --c-info-fg: #8db8ff;
 
-    --grad-brand: linear-gradient(135deg, #6d5bff 0%, #8f5bff 55%, #a45bff 100%);
-    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.35);
-    --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55);
+    --grad-brand: var(--glass-brand);
+    --shadow-card: var(--glass-shadow-card);
+    --shadow-pop: var(--glass-shadow-pop);
     --ring: rgba(135, 118, 255, 0.45);
 }
 
@@ -474,4 +476,42 @@
         border-radius: var(--radius-md);
         background-color: var(--c-surface-2);
     }
+}
+
+/* Shared product presentation across assets, approvals and settings. */
+@layer components {
+    .asset-identity { display:flex; align-items:center; gap:10px; min-width:0; }
+    .asset-identity > div { min-width:0; }
+    .asset-network { display:block; font-size:11px; color:var(--c-muted); margin-top:2px; }
+    .feature-heading { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+    .sf-review-amount { display:flex; align-items:center; justify-content:center; gap:12px; padding:20px 0; font-size:24px; }
+    .state-panel { display:flex; align-items:center; flex-direction:column; justify-content:center; gap:8px; padding:24px 12px; color:var(--c-muted); text-align:center; font-size:12px; }
+    .state-panel strong { font-size:14px; color:var(--c-text); }
+    .state-error { color:var(--c-danger-fg); background:var(--c-danger-soft); border-radius:12px; }
+    .skeleton-row { width:100%; height:36px; border-radius:10px; background:linear-gradient(100deg,var(--c-surface-2) 25%,var(--c-surface-3) 50%,var(--c-surface-2) 75%); background-size:200% 100%; animation:wallet-skeleton 1.8s ease-in-out infinite; }
+    .sf-field input, .sf-field select { min-height:42px; border-color:var(--c-line-strong); background:var(--c-surface); color:var(--c-text); }
+    .sf-review { background:var(--c-surface-2); border:1px solid var(--c-line); border-radius:14px; }
+    .sf-review code { overflow-wrap:anywhere; }
+}
+@keyframes wallet-skeleton { to { background-position:-200% 0; } }
+@media (prefers-reduced-motion:reduce) { .skeleton-row { animation:none; } }
+@media (min-width:600px) {
+    body { width:min(900px, calc(100vw - 40px)); margin:20px auto; min-height:0; border:1px solid var(--c-line); border-radius:20px; box-shadow:var(--shadow-pop); overflow-x:hidden; }
+    html { background:var(--c-bg); }
+}
+@layer components {
+    .section-icon { display:inline-flex; align-items:center; color:var(--c-primary); margin-right:8px; vertical-align:middle; }
+    .wallet-actions > button { display:flex; align-items:center; justify-content:center; gap:8px; min-height:44px; }
+    .wallet-actions > button:disabled { opacity:.5; cursor:not-allowed; }
+    .hero { background:var(--c-surface); color:var(--c-text); border:1px solid var(--c-line); }
+    .hero::after { display:none; }
+    .hero .text-white\/80, .hero .text-white\/90, .hero .text-white { color:var(--c-muted); }
+    .hero .bg-white\/20 { background:var(--c-primary-soft); color:var(--c-primary); }
+    .hero .bg-black\/15 { background:var(--c-surface-2); color:var(--c-text); }
+}
+@layer components {
+    .modal-panel { max-height:calc(100vh - 32px); overflow:auto; }
+}
+@layer components {
+    .feature-title-icon { display:inline-flex; align-items:center; justify-content:center; flex:none; width:36px; height:36px; border-radius:12px; background:var(--c-primary-soft); color:var(--c-primary); }
 }

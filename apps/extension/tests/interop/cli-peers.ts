@@ -33,6 +33,33 @@ export type Peer = {
   kill(): void;
 };
 
+/**
+ * INSECURE, TESTS ONLY: published ECDSA safe primes (starlab-core's
+ * testdata, three distinct sets) so a secp256k1 DKG doesn't spend minutes
+ * generating them. Set 0 goes to the extension, set i to CLI peer i.
+ */
+const PRIME_SETS: unknown[] = JSON.parse(
+  fs.readFileSync(path.resolve(HERE, "../fixtures/ecdsa/insecure-test-primes.json"), "utf8"),
+);
+
+/** Primes JSON (one `starlab_core::ecdsa::Primes`) for party `i`. */
+export function insecureTestPrimes(i: number): string {
+  return JSON.stringify(PRIME_SETS[i % PRIME_SETS.length]);
+}
+
+/**
+ * A `starlab-cli` stand-in for `serve_autojoin.py --cli`: runs the real CLI
+ * with the hidden `serve --insecure-test-primes <file>` flag added.
+ */
+function cliWithTestPrimes(i: number): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "interop-primes-"));
+  const primes = path.join(dir, "primes.json");
+  fs.writeFileSync(primes, insecureTestPrimes(i));
+  const wrapper = path.join(dir, "starlab-cli");
+  fs.writeFileSync(wrapper, `#!/bin/sh\nexec "${CLI_BIN}" "$@" --insecure-test-primes "${primes}"\n`, { mode: 0o755 });
+  return wrapper;
+}
+
 /** A fresh strong room id (≥16 chars, the worker's requirement). */
 export function freshRoom(): string {
   return "interop-" + crypto.randomBytes(12).toString("hex");
@@ -78,7 +105,7 @@ export function startPeers(opts: {
         "--signal", opts.signal,
         "--room", opts.room,
         "--curve", opts.curve,
-        "--cli", CLI_BIN,
+        "--cli", opts.curve === "ed25519" ? CLI_BIN : cliWithTestPrimes(i),
         "--pw-var", pwVar,
       ],
       { env: { ...process.env, [pwVar]: opts.password }, stdio: ["ignore", "pipe", "pipe"] },

@@ -22,11 +22,16 @@ import type {
     NewAccountSession
 } from "@stars-labs/types/keystore";
 
+/** Curves a wallet can hold besides its FROST share (`setCurveShare`). */
+export const EXTRA_CURVES = ["secp256k1-ecdsa"] as const;
+
 export class KeystoreService {
     private static instance: KeystoreService;
     private static testMode: boolean = false;
     private keystoreIndex: KeystoreIndex | null = null;
     private keyShares: Map<string, KeyShareData> = new Map();
+    /** Decrypted per-curve shares (`setCurveShare`), keyed by storage key. */
+    private curveShares: Map<string, string> = new Map();
     private password: string | null = null;
     private isUnlocked: boolean = false;
     
@@ -128,6 +133,7 @@ export class KeystoreService {
         this.password = null;
         this.isUnlocked = false;
         this.keyShares.clear();
+        this.curveShares.clear();
     }
     
     /**
@@ -378,7 +384,12 @@ export class KeystoreService {
         
         // Remove encrypted share
         await storage.removeItem(`local:${this.SHARES_KEY_PREFIX}${walletId}`);
-        
+        for (const curve of EXTRA_CURVES) {
+            const key = this.curveShareKey(walletId, curve);
+            await storage.removeItem(`local:${key}`);
+            this.curveShares.delete(key);
+        }
+
         // Remove from cache
         this.keyShares.delete(walletId);
     }
@@ -480,6 +491,83 @@ export class KeystoreService {
         await storage.setItem(`local:${this.INDEX_KEY}`, this.keystoreIndex);
     }
     
+    /** Change a wallet's primary address in the index (e.g. once its
+     *  Ethereum (ECDSA) share is attached). */
+    public async updateWalletAddress(walletId: string, address: string, blockchain?: string): Promise<void> {
+        const wallet = this.keystoreIndex?.wallets.find((w) => w.id === walletId);
+        if (!wallet) throw new Error(`Wallet ${walletId} not found`);
+        wallet.address = address;
+        if (blockchain) wallet.blockchain = blockchain;
+        this.keystoreIndex!.lastModified = Date.now();
+        await this.saveKeystoreIndex();
+    }
+
+    /**
+     * Another curve's share of a wallet (the threshold-ECDSA
+     * `secp256k1-ecdsa` share next to the FROST one): the engine's
+     * per-curve keystore entry. Plaintext is the curve's own share JSON,
+     * encrypted exactly like the FROST share (same password, PBKDF2 +
+     * AES-GCM, fresh salt).
+     */
+    public async setCurveShare(walletId: string, curve: string, shareJson: string): Promise<void> {
+        if (!this.isUnlocked || !this.password) {
+            throw new Error("Keystore is locked");
+        }
+        const key = this.curveShareKey(walletId, curve);
+        await storage.setItem(`local:${key}`, await this.encryptSecret(walletId, shareJson));
+        this.curveShares.set(key, shareJson);
+    }
+
+    /** The share JSON stored by `setCurveShare`, or null if the wallet has none. */
+    public async getCurveShare(walletId: string, curve: string): Promise<string | null> {
+        if (!this.isUnlocked) {
+            throw new Error("Keystore is locked");
+        }
+        const key = this.curveShareKey(walletId, curve);
+        const cached = this.curveShares.get(key);
+        if (cached !== undefined) return cached;
+        const encrypted = await storage.getItem<EncryptedKeyShare>(`local:${key}`);
+        if (!encrypted) return null;
+        const json = await this.decryptSecret(encrypted);
+        this.curveShares.set(key, json);
+        return json;
+    }
+
+    private curveShareKey(walletId: string, curve: string): string {
+        return `${this.SHARES_KEY_PREFIX}${walletId}__${curve}`;
+    }
+
+    /** Encrypt any secret string with the keystore password (same scheme as shares). */
+    public async encryptSecret(id: string, plaintext: string): Promise<EncryptedKeyShare> {
+        if (!this.password) {
+            throw new Error("No password set");
+        }
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const key = await this.deriveKey(this.password, salt);
+        const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext));
+        return {
+            walletId: id,
+            algorithm: 'AES-GCM',
+            salt: bytesToBase64(salt),
+            iv: bytesToBase64(iv),
+            ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
+        };
+    }
+
+    /** Inverse of `encryptSecret`. */
+    public async decryptSecret(encrypted: EncryptedKeyShare): Promise<string> {
+        if (!this.password) {
+            throw new Error("No password set");
+        }
+        const salt = Uint8Array.from(atob(encrypted.salt), c => c.charCodeAt(0));
+        const iv = Uint8Array.from(atob(encrypted.iv), c => c.charCodeAt(0));
+        const ciphertext = Uint8Array.from(atob(encrypted.ciphertext), c => c.charCodeAt(0));
+        const key = await this.deriveKey(this.password, salt);
+        const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+        return new TextDecoder().decode(decrypted);
+    }
+
     private async encryptKeyShare(walletId: string, keyShare: KeyShareData): Promise<EncryptedKeyShare> {
         if (!this.password) {
             throw new Error("No password set");
@@ -507,7 +595,7 @@ export class KeystoreService {
             algorithm: 'AES-GCM',
             salt: btoa(String.fromCharCode(...salt)),
             iv: btoa(String.fromCharCode(...iv)),
-            ciphertext: btoa(String.fromCharCode(...new Uint8Array(ciphertext)))
+            ciphertext: bytesToBase64(new Uint8Array(ciphertext))
         };
     }
     
@@ -669,4 +757,14 @@ export class KeystoreService {
             ['encrypt', 'decrypt']
         );
     }
+}
+
+/** base64 of arbitrary-size bytes (spreading a large array into
+ *  String.fromCharCode overflows the call stack). */
+function bytesToBase64(bytes: Uint8Array): string {
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+        bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(bin);
 }

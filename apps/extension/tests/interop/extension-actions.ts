@@ -4,6 +4,13 @@
 import { expect, type Page, type Worker } from "@playwright/test";
 import { popupUrl } from "./fixtures";
 
+/**
+ * How long a DKG may take: a secp256k1 wallet also creates its threshold-ECDSA
+ * (Ethereum) key — aux info is ~2 min of wasm in the extension, and one-shot
+ * CLI creators generate their own safe primes (~1.5 min) first.
+ */
+export const DKG_MS = (process.env.INTEROP_CURVE ?? "secp256k1") === "ed25519" ? 60_000 : 12 * 60_000;
+
 export async function openPopup(page: Page, extensionId: string): Promise<void> {
   await page.goto(popupUrl(extensionId));
   await page.waitForLoadState("domcontentloaded");
@@ -100,10 +107,10 @@ export async function approveSigningRequest(page: Page): Promise<void> {
 }
 
 /** The extension's DKG result, read from the background state. */
-export async function dkgResult(page: Page): Promise<{ groupPublicKey: string; address: string | null }> {
+export async function dkgResult(page: Page, timeout = DKG_MS): Promise<{ groupPublicKey: string; address: string | null }> {
   await expect
     .poll(() => page.evaluate(() => chrome.runtime.sendMessage({ type: "getState" }).then((s) => !!s?.dkgLastResult)), {
-      timeout: 60_000,
+      timeout,
     })
     .toBe(true);
   return page.evaluate(() => chrome.runtime.sendMessage({ type: "getState" }).then((s) => s.dkgLastResult));
@@ -135,7 +142,7 @@ export async function saveWallet(page: Page, password: string): Promise<void> {
  * initiator): Sign message → Review → Confirm & broadcast.
  */
 export async function signMessage(page: Page, message: string): Promise<void> {
-  const trigger = page.getByRole("button", { name: /Sign message Request signatures/ });
+  const trigger = page.getByRole("button", { name: /^Sign message\b/ });
   await expect(trigger).toBeEnabled({ timeout: 30_000 });
   await trigger.click();
   await page.locator("#sign-msg").fill(message);

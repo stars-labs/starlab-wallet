@@ -11,6 +11,8 @@
     import { MESSAGE_TYPES } from "@stars-labs/types/messages";
     import Button from "../lib/ui/Button.svelte";
     import CopyButton from "../lib/ui/CopyButton.svelte";
+    import FeatureHeader from "../lib/ui/FeatureHeader.svelte";
+    import ChainIcon from "../lib/ui/ChainIcon.svelte";
     import Icon from "../lib/ui/Icon.svelte";
     import { guideError } from "../utils/error-guidance";
     import {
@@ -85,7 +87,7 @@
 </script>
 
 <div class="card card-pad">
-    <h2 class="text-base font-bold">Create a wallet</h2>
+    <FeatureHeader title="Create a shared wallet" subtitle="Keep control across your trusted devices" icon="users" /><div class="threshold-preview"><ChainIcon chain={String(chain)} size={32} /><div><strong>{threshold} of {total} devices</strong><span>required to approve a signature</span></div><span class="badge badge-primary">{CHAIN_METADATA[chain].label}</span></div>
     <p class="mt-1 text-xs text-muted">
         You'll set up a shared wallet that several devices co-manage. Others
         join from their own wallet once you create it — no single device can
@@ -235,3 +237,9 @@
         </Button>
     </div>
 </div>
+
+<style>
+.threshold-preview { display:flex; gap:10px; align-items:center; padding:14px; border-radius:12px; background:var(--c-surface-2); margin:16px 0; }
+.threshold-preview strong { display:block; font-size:14px; }
+.threshold-preview span:not(.badge) { display:block; color:var(--c-muted); font-size:11px; }
+</style>

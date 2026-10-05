@@ -1,4 +1,7 @@
 <script lang="ts">
+    import TokenIcon from "../../../lib/ui/TokenIcon.svelte";
+    import ChainIcon from "../../../lib/ui/ChainIcon.svelte";
+    import Icon from "../../../lib/ui/Icon.svelte";
     import { createEventDispatcher } from 'svelte';
     import type { ExtensionWalletMetadata } from "@stars-labs/types/keystore";
     import { getChainLabel } from "@stars-labs/types/appstate";
@@ -23,29 +26,6 @@
         return `${address.slice(0, 6)}...${address.slice(-4)}`;
     }
     
-    function getWalletIcon(blockchain: string): string {
-        switch (blockchain) {
-            case 'ethereum':
-                return '⟠';
-            case 'solana':
-                return '◎';
-            case 'bitcoin':
-                return '₿';
-            case 'sui':
-                return 'S';
-            case 'polygon':
-                return '⬡';
-            case 'arbitrum':
-                return 'A';
-            case 'optimism':
-                return 'O';
-            case 'base':
-                return 'B';
-            default:
-                return '●';
-        }
-    }
-    
     // Close dropdown when clicking outside
     function handleClickOutside(event: MouseEvent) {
         const target = event.target as HTMLElement;
@@ -67,7 +47,7 @@
         >
             <div class="wallet-info">
                 {#if activeWallet}
-                    <span class="wallet-icon">{getWalletIcon(activeWallet.blockchain)}</span>
+                    <ChainIcon chain={activeWallet.blockchain} size={30} />
                     <span class="wallet-name">{activeWallet.name}</span>
                     <span class="wallet-chain">{getChainLabel(activeWallet.blockchain)}</span>
                     <span class="wallet-address">{formatAddress(activeWallet.address)}</span>
@@ -109,7 +89,7 @@
                             class:active={wallet.id === activeWallet?.id}
                             on:click={() => selectWallet(wallet)}
                         >
-                            <span class="wallet-icon">{getWalletIcon(wallet.blockchain)}</span>
+                            <ChainIcon chain={wallet.blockchain} size={32} />
                             <div class="wallet-details">
                                 <span class="wallet-name">{wallet.name}</span>
                                 <span class="wallet-chain">{getChainLabel(wallet.blockchain)}</span>
@@ -124,7 +104,7 @@
                 
                 <div class="dropdown-footer">
                     <button class="manage-button" on:click={() => dispatch('manage')}>
-                        Manage Wallets
+                        Wallet settings
                     </button>
                 </div>
             </div>
@@ -140,9 +120,9 @@
     
     .wallet-selector-button {
         width: 100%;
-        padding: 12px 16px;
-        background: var(--c-surface);
-        border: 1px solid var(--c-line);
+        padding: 8px 12px;
+        background: var(--glass-surface);
+        border: 1px solid var(--glass-outline);
         border-radius: 14px;
         cursor: pointer;
         display: flex;
@@ -163,15 +143,6 @@
         gap: 8px;
         flex: 1;
         text-align: left;
-    }
-    
-    .wallet-icon {
-        font-size: 18px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 24px;
-        height: 24px;
     }
     
     .wallet-name {
@@ -211,13 +182,14 @@
         top: calc(100% + 8px);
         left: 0;
         right: 0;
-        background: var(--c-surface);
-        border: 1px solid var(--c-line);
+        background: var(--glass-raised);
+        border: 1px solid var(--glass-outline);
         border-radius: 14px;
         box-shadow: var(--shadow-pop);
+        backdrop-filter: blur(20px) saturate(125%);
         z-index: 100;
         overflow: hidden;
-        animation: slideDown 0.2s ease-out;
+        animation: slideDown 0.16s ease-out;
     }
     
     @keyframes slideDown {
@@ -269,7 +241,7 @@
     
     .wallet-item {
         width: 100%;
-        padding: 12px 16px;
+        padding: 8px 12px;
         background: none;
         border: none;
         cursor: pointer;
@@ -309,7 +281,7 @@
     }
 
     .dropdown-footer {
-        padding: 12px 16px;
+        padding: 8px 12px;
         border-top: 1px solid var(--c-line);
     }
 
@@ -317,7 +289,7 @@
         width: 100%;
         padding: 8px;
         background: none;
-        border: 1px solid var(--c-line);
+        border: 1px solid var(--glass-outline);
         border-radius: 8px;
         color: var(--c-text);
         font-size: 13px;

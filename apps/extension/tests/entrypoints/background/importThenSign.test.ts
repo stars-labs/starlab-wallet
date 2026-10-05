@@ -12,7 +12,9 @@ import * as mockImports from "../../wxt-imports-mock";
 mock.module("#imports", () => mockImports);
 mock.module("../../../src/entrypoints/background/index", () => ({ checkAndRestoreKeystores: async () => {} }));
 
-import wasmInit, { derive_account_addresses } from "@stars-labs/core-wasm";
+import wasmInit, { derive_account_addresses, ecdsa_share_info } from "@stars-labs/core-wasm";
+import { encryptEcdsaShareBackup } from "../../../src/utils/shareBackup";
+import { ECDSA_WALLET } from "../../helpers/ecdsaFixture";
 import { REAL_WEBCRYPTO } from "../../setup-bun";
 import { KeystoreService } from "../../../src/services/keystoreService";
 import { SessionManager } from "../../../src/entrypoints/background/sessionManager";
@@ -47,6 +49,7 @@ beforeEach(async () => {
     KeystoreService.resetInstance();
 });
 afterEach(() => {
+    (KeystoreService as any).testMode = true;
     (globalThis as any).crypto = savedCrypto;
 });
 
@@ -65,6 +68,9 @@ function background() {
         sendToOffscreen: jest.fn(async (msg: any) => {
             if (msg.type === "deriveAccounts") {
                 return { success: true, accounts: [{ account: 0, addresses: JSON.parse(derive_account_addresses(msg.curve, msg.groupPublicKey, 0)) }] };
+            }
+            if (msg.type === "ecdsaShareInfo") {
+                return { success: true, info: JSON.parse(ecdsa_share_info(msg.shareJson)) };
             }
             if (msg.type === "deriveAccountGroupKey") {
                 return { success: true, groupPublicKey: await deriveAccountGroupKey(msg.keyShare, msg) };
@@ -86,13 +92,25 @@ function background() {
 describe("import an engine backup, then sign from the popup", () => {
     it("announces the wallet's whole cohort, sorted, with its threshold", async () => {
         const bg = background();
+        // A secp256k1 wallet backs up as two files: FROST + its Ethereum (ECDSA) share.
+        const ecdsaFile = await encryptEcdsaShareBackup(
+            ECDSA_WALLET.shares[0],
+            JSON.parse(ecdsa_share_info(ECDSA_WALLET.shares[0])),
+            { id: "w-transfer", deviceId: "device-a" },
+            PASSWORD,
+        );
         const imported = await new Promise<any>((resolve) =>
             (bg.handler as any).handleImportKeystoreMessage(
-                { type: "importKeystore", keystoreData: FILE, password: PASSWORD, chain: "ethereum" },
+                { type: "importKeystore", keystoreFiles: [ecdsaFile, FILE], password: PASSWORD, chain: "ethereum" },
                 resolve,
             ),
         );
         expect(imported).toMatchObject({ success: true, walletId: "w-transfer" });
+        const restored = KeystoreManager.getInstance().getWallets().find((wallet) => wallet.id === "w-transfer")!;
+        expect(restored.blockchain).toBe("ethereum");
+        const account0 = JSON.parse(derive_account_addresses("secp256k1-ecdsa", ECDSA_WALLET.group_public_key, 0));
+        expect(restored.address).toBe(account0.find((entry: any) => entry.chain === "Ethereum").address);
+        expect(imported.address).toBe(restored.address);
 
         const signed = await new Promise<any>((resolve) =>
             (bg.handler as any).handleCreateSigningSessionRequest({ walletId: "w-transfer", message: "hello" }, resolve),
@@ -104,5 +122,36 @@ describe("import an engine backup, then sign from the popup", () => {
         expect(info.participants).toEqual(["device-a", "device-b", "device-c"]);
         expect([info.threshold, info.total]).toEqual([2, 3]);
         expect(info.wallet_name).toBe("w-transfer-ethereum-0");
+        // Ethereum signs with the imported ECDSA key.
+        expect(info.curve_type).toBe("secp256k1-ecdsa");
+        expect(info.group_public_key).toBe(ECDSA_WALLET.group_public_key);
+
+        await KeystoreManager.getInstance().lock();
+        (KeystoreManager as any).instance = null;
+        KeystoreService.resetInstance();
+        // Exercise the real persisted-index read; resetInstance skips it by default.
+        (KeystoreService as any).testMode = false;
+        const reloaded = KeystoreManager.getInstance();
+        await reloaded.initialize("device-a");
+        expect(await reloaded.unlock(PASSWORD)).toBe(true);
+        expect(reloaded.getWallets().find((wallet) => wallet.id === "w-transfer")).toMatchObject({
+            blockchain: "ethereum", address: restored.address,
+        });
+    }, 30000);
+
+    it("an Ethereum signing needs the wallet's ECDSA share file too", async () => {
+        const bg = background();
+        await new Promise<any>((resolve) =>
+            (bg.handler as any).handleImportKeystoreMessage(
+                { type: "importKeystore", keystoreData: FILE, password: PASSWORD, chain: "ethereum" },
+                resolve,
+            ),
+        );
+        const signed = await new Promise<any>((resolve) =>
+            (bg.handler as any).handleCreateSigningSessionRequest({ walletId: "w-transfer", message: "hello" }, resolve),
+        );
+        expect(signed.success).toBe(false);
+        expect(signed.error).toContain("ECDSA");
+        expect(bg.announces).toHaveLength(0);
     }, 30000);
 });

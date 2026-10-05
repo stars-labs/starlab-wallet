@@ -1,13 +1,23 @@
 import { SessionInfo, DkgState, MeshStatus, MeshStatusType } from "@stars-labs/types/appstate";
 import { WebRTCAppMessage } from "@stars-labs/types/webrtc";
 import { ICE_SERVERS } from "../../config/ice";
+import { PREFIXES as ECDSA_PREFIXES, isEcdsaFrame } from "../../ecdsa/wire";
+import { EcdsaEngine, hexToBytes } from "../../ecdsa/engine";
+import type { WorkerLike } from "../../ecdsa/protocol";
+import { spawnEcdsaWorker } from "../../ecdsa/spawn";
 
-const CEREMONY_PREFIXES = ["DKG_ROUND1:", "DKG_ROUND2:", "SIGN_COMMIT:", "SIGN_SET:", "SIGN_SHARE:", "RESHARE_ROUND1:", "RESHARE_ROUND2:"];
+const CEREMONY_PREFIXES = ["DKG_ROUND1:", "DKG_ROUND2:", "SIGN_COMMIT:", "SIGN_SET:", "SIGN_SHARE:", "RESHARE_ROUND1:", "RESHARE_ROUND2:", ...ECDSA_PREFIXES];
 
 /** A DKG / signing / reshare round frame (the CLI/TUI native SimpleMessage). */
 function isCeremonyFrame(message: WebRTCAppMessage): boolean {
   const text = (message as { text?: unknown }).text;
   return typeof text === "string" && CEREMONY_PREFIXES.some((p) => text.startsWith(p));
+}
+
+/** A message for the log: long texts (ECDSA chunks) are cut. */
+function describeMessage(message: WebRTCAppMessage): string {
+  const json = JSON.stringify(message);
+  return json.length > 300 ? `${json.slice(0, 300)}… (${json.length} chars)` : json;
 }
 
 /**
@@ -28,14 +38,20 @@ export function decodeSignerSet(text: string): string[] | null {
     return null;
   }
 }
-import { to_frost_wire } from "@stars-labs/core-wasm";
+import {
+  to_frost_wire,
+  ecdsa_recover_ethereum_address,
+  ecdsa_share_info,
+  ecdsa_ethereum_address,
+  standard_account_path,
+} from "@stars-labs/core-wasm";
 import { WebSocketMessagePayload, WebRTCSignal } from "@stars-labs/types/websocket";
 import type { KeyShareData } from "@stars-labs/types/keystore";
 import {
   dkgParticipantIdentifiers,
   toEngineKeystoreJson,
 } from "../../utils/engineKeystore";
-import { curveForChain } from "../../utils/wallet-id";
+import { curveForChain, isEcdsaChain } from "../../utils/wallet-id";
 
 export { DkgState, MeshStatusType }; // Export DkgState and MeshStatusType
 
@@ -221,7 +237,18 @@ export class WebRTCManager {
      *  (via addWallet) to encrypt + persist the keyshare once the
      *  user picks a password. */
     keystoreJson: string;
+    /** secp256k1 wallets: the threshold-ECDSA (Ethereum) key made right
+     *  after FROST — its share JSON (SECRET) and root group key. */
+    ecdsa?: { shareJson: string; groupPublicKey: string };
   }) => void = () => { };
+  /** Progress of the ECDSA part of a DKG (for the popup's status line). */
+  public onEcdsaDkgStatus: (status: "waiting-primes" | "aux-info" | "keygen") => void = () => { };
+  /** Paillier safe primes for the next ECDSA DKG (the offscreen PrimePool). */
+  public getEcdsaPrimes: () => Promise<string> = () => Promise.reject(new Error("no ECDSA prime source"));
+  /** Threshold-ECDSA engine (Ethereum key): DKG after FROST + signing. */
+  public readonly ecdsa: EcdsaEngine;
+  /** Worker factory for ECDSA ceremonies (tests may inject their own). */
+  public spawnEcdsaWorker: () => WorkerLike = spawnEcdsaWorker;
   public onSigningStateUpdate: (state: SigningState, info: SigningInfo | null) => void = () => { };
   /**
    * Ext-2d-progress: fires on every signing-ceremony progression
@@ -329,6 +356,18 @@ export class WebRTCManager {
     }
 
     this.sendPayloadToBackgroundForRelay = sendPayloadCallback || null;
+
+    this.ecdsa = new EcdsaEngine({
+      selfId: this.localPeerId,
+      sendText: (peer, text) =>
+        this.sendWebRTCAppMessage(peer, { webrtc_msg_type: "SimpleMessage", text } as WebRTCAppMessage),
+      spawnWorker: () => this.spawnEcdsaWorker(),
+      recoverAddress: (prehash, signature) => ecdsa_recover_ethereum_address(prehash, signature),
+      log: (m) => this._log(m),
+    });
+    this.ecdsa.onStatus = (s) => {
+      if (s === "aux-info" || s === "keygen") this.onEcdsaDkgStatus(s);
+    };
   }
 
   private _log(message: string) {
@@ -672,7 +711,7 @@ export class WebRTCManager {
     const dc = this.dataChannels.get(toPeerId);
     if (dc && dc.readyState === 'open') {
       dc.send(JSON.stringify(message));
-      this._log(`Sent WebRTCAppMessage to ${toPeerId}: ${JSON.stringify(message)}`);
+      this._log(`Sent WebRTCAppMessage to ${toPeerId}: ${describeMessage(message)}`);
     } else {
       // The channel may still be opening (a peer that just (re)connected);
       // deliver when it opens rather than dropping the message.
@@ -932,6 +971,7 @@ export class WebRTCManager {
 
       // Reset DKG state
       this._resetDkgState();
+      this.ecdsa.resetForNewDkg();
 
       // Set participant index either from params or from session info.
       // Sort the list so the 1-based index matches the Rust core's
@@ -1120,6 +1160,14 @@ export class WebRTCManager {
   }
 
   public handleWebRTCAppMessage(fromPeerId: string, message: WebRTCAppMessage): void {
+    // Threshold-ECDSA frames (aux info is ~200 KiB per message) go
+    // straight to the ECDSA engine — never logged in full or forwarded
+    // to the background.
+    const text = (message as { webrtc_msg_type?: string; text?: unknown }).text;
+    if ((message as any).webrtc_msg_type === "SimpleMessage" && typeof text === "string" && isEcdsaFrame(text)) {
+      this.ecdsa.onFrame(fromPeerId, text);
+      return;
+    }
     this._log(`Handling WebRTC app message from ${fromPeerId}: ${JSON.stringify(message)}`);
 
     // Call the existing onWebRTCAppMessage callback
@@ -1745,60 +1793,171 @@ export class WebRTCManager {
       const keystoreJson: string = this.frostDkg.finalize_dkg();
       this.groupPublicKey = this.frostDkg.get_group_public_key();
 
-      // Generate blockchain addresses using proper WASM methods
-      if (this.groupPublicKey) {
-        if (this.currentBlockchain === 'ethereum') {
-          // For Ethereum, use the secp256k1 WASM method
-          this.ethereumAddress = (this.frostDkg as any).get_eth_address();
-          this.walletAddress = this.ethereumAddress;
-        } else {
-          // For Solana, use the Ed25519 WASM method for proper Base58 encoding
-          this.solanaAddress = (this.frostDkg as any).get_address();
-          this.walletAddress = this.solanaAddress;
-        }
+      if (this.currentBlockchain === "ethereum") {
+        // A secp256k1 wallet also gets its threshold-ECDSA key (the
+        // Ethereum account): the same participants run aux info then
+        // keygen right after FROST, exactly like the engine. The DKG is
+        // complete only once that share exists too.
+        this._updateDkgState(DkgState.Finalizing);
+        this._log(`FROST done (group ${this.groupPublicKey}); starting the ECDSA key generation`);
+        void this._runEcdsaDkg(keystoreJson);
+        return;
       }
 
-      this._updateDkgState(DkgState.Complete);
-      this._log(`DKG completed successfully. Group public key: ${this.groupPublicKey}`);
-
-      // Ext-1d event propagation: surface the derived key material to
-      // the offscreen outer layer (and on up to background + popup)
-      // so the post-ceremony flow (display address, prompt password,
-      // encrypt + save keyshare) has something to hook into. Fired
-      // exactly once per ceremony — the DkgState.Failed branch
-      // below doesn't emit this, and we don't re-fire on repeat
-      // enters of Complete (dkgState transition already dedups).
-      try {
-        const address =
-          this.currentBlockchain === "ethereum"
-            ? this.ethereumAddress
-            : this.solanaAddress;
-        this.onDkgComplete({
-          groupPublicKey: this.groupPublicKey ?? "",
-          address: address ?? null,
-          blockchain: this.currentBlockchain,
-          sessionId: this.sessionInfo?.session_id ?? null,
-          threshold: this.sessionInfo?.threshold ?? 0,
-          total: this.sessionInfo?.total ?? 0,
-          participants: this.sessionInfo?.participants ?? [],
-          participantIndex: this.participantIndex,
-          participantIdentifiers: dkgParticipantIdentifiers(
-            this.sessionInfo?.participants ?? [],
-          ),
-          keystoreJson,
-        });
-      } catch (cbErr) {
-        // A broken onDkgComplete subscriber must not surface as a
-        // FROST failure — we already have the group key, the
-        // ceremony succeeded cryptographically. Log and move on.
-        this._log(
-          `onDkgComplete subscriber threw (non-fatal): ${this._getErrorMessage(cbErr)}`,
-        );
-      }
+      this.solanaAddress = (this.frostDkg as any).get_address();
+      this.walletAddress = this.solanaAddress;
+      this._completeDkg(keystoreJson, this.solanaAddress);
     } catch (error) {
       this._log(`Error finalizing DKG: ${this._getErrorMessage(error)}`);
       this._updateDkgState(DkgState.Failed);
     }
+  }
+
+  /**
+   * Terminal step of a DKG: mark it complete and surface the key material
+   * to the offscreen outer layer (→ background → popup save flow). Fired
+   * exactly once per ceremony.
+   */
+  private _completeDkg(
+    keystoreJson: string,
+    address: string | null,
+    ecdsa?: { shareJson: string; groupPublicKey: string },
+  ): void {
+    this._updateDkgState(DkgState.Complete);
+    this._log(`DKG completed successfully. Group public key: ${this.groupPublicKey}`);
+    try {
+      this.onDkgComplete({
+        groupPublicKey: this.groupPublicKey ?? "",
+        address: address ?? null,
+        blockchain: this.currentBlockchain,
+        sessionId: this.sessionInfo?.session_id ?? null,
+        threshold: this.sessionInfo?.threshold ?? 0,
+        total: this.sessionInfo?.total ?? 0,
+        participants: this.sessionInfo?.participants ?? [],
+        participantIndex: this.participantIndex,
+        participantIdentifiers: dkgParticipantIdentifiers(this.sessionInfo?.participants ?? []),
+        keystoreJson,
+        ...(ecdsa ? { ecdsa } : {}),
+      });
+    } catch (cbErr) {
+      // A broken subscriber must not surface as a ceremony failure.
+      this._log(`onDkgComplete subscriber threw (non-fatal): ${this._getErrorMessage(cbErr)}`);
+    }
+  }
+
+  /** How long a DKG waits for this device's safe primes (engine: 15 min). */
+  private ecdsaPrimesWaitMs = 15 * 60_000;
+
+  /** ECDSA aux info + keygen after a secp256k1 FROST DKG. */
+  private async _runEcdsaDkg(keystoreJson: string): Promise<void> {
+    const session = this.sessionInfo;
+    if (!session) {
+      this._log(`ECDSA DKG: no active session`);
+      this._updateDkgState(DkgState.Failed);
+      return;
+    }
+    try {
+      this.onEcdsaDkgStatus("waiting-primes");
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const primes = await Promise.race([
+        this.getEcdsaPrimes(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("timed out waiting for ECDSA safe primes")), this.ecdsaPrimesWaitMs);
+        }),
+      ]).finally(() => clearTimeout(timer));
+      if (this.sessionInfo?.session_id !== session.session_id) throw new Error("the DKG session changed");
+      const shareJson = await this.ecdsa.runDkg(session.session_id, session.participants, session.threshold, primes);
+      if (this.sessionInfo?.session_id !== session.session_id) throw new Error("the DKG session changed");
+      const info = JSON.parse(ecdsa_share_info(shareJson)) as { group_public_key: string };
+      this.ethereumAddress = ecdsa_ethereum_address(info.group_public_key, 0);
+      this.walletAddress = this.ethereumAddress;
+      this._log(`ECDSA key ready: group ${info.group_public_key}, Ethereum ${this.ethereumAddress}`);
+      this._completeDkg(keystoreJson, this.ethereumAddress, {
+        shareJson,
+        groupPublicKey: info.group_public_key,
+      });
+    } catch (e) {
+      this._log(`ECDSA key generation failed: ${this._getErrorMessage(e)}`);
+      this._updateDkgState(DkgState.Failed);
+    }
+  }
+
+  /**
+   * Co-sign / propose an Ethereum signing with the threshold-ECDSA key
+   * (announce curve `secp256k1-ecdsa`, wallet `{root}-ethereum-{n}`).
+   * `messageHex` is the 32-byte hash to sign (EIP-191 digest or a tx
+   * sighash). The signature (hex r‖s‖v, v = 27/28) is reported through
+   * `onSigningComplete` like a FROST one.
+   */
+  public initiateEcdsaSigning(sessionInfo: SessionInfo, messageHex: string, shareJson: string, account: number): boolean {
+    if (this._signingActive()) {
+      this._log(`Cannot start ECDSA signing: a signing is already in progress (${this.signingState})`);
+      return false;
+    }
+    const signingId = `sign_${sessionInfo.session_id}`;
+    let prehash: Uint8Array;
+    let info: { participants: string[]; threshold: number; group_public_key: string };
+    let path: string;
+    let address: string;
+    try {
+      prehash = hexToBytes(messageHex);
+      if (prehash.length !== 32) throw new Error(`ECDSA signs a 32-byte hash, got ${prehash.length} bytes`);
+      info = JSON.parse(ecdsa_share_info(shareJson));
+      const p = standard_account_path("ethereum", account);
+      if (!p) throw new Error("no Ethereum derivation path");
+      path = p;
+      address = ecdsa_ethereum_address(info.group_public_key, account);
+    } catch (e) {
+      this.signingInfo = { signing_id: signingId } as SigningInfo;
+      this._failSigning(this._getErrorMessage(e));
+      return false;
+    }
+    this.signingInfo = {
+      signing_id: signingId,
+      transaction_data: messageHex,
+      threshold: info.threshold,
+      participants: info.participants.slice(),
+      acceptances: new Map(),
+      accepted_participants: [this.localPeerId],
+      selected_signers: [],
+      signer_identifiers: {},
+      step: "commitment_phase",
+      initiator: sessionInfo.proposer_id,
+    };
+    this.currentBlockchain = "ethereum";
+    this.ethereumAddress = address;
+    this.signingState = SigningState.CommitmentPhase;
+    this.onSigningStateUpdate(this.signingState, this.signingInfo);
+    const ceremony = this.signingInfo;
+    this._log(`Initiating ECDSA signing ${signingId} for ${address} (proposer ${sessionInfo.proposer_id})`);
+    this.ecdsa
+      .sign({
+        sessionId: sessionInfo.session_id,
+        proposerId: sessionInfo.proposer_id,
+        shareJson,
+        participants: info.participants,
+        threshold: info.threshold,
+        path,
+        address,
+        prehash,
+      })
+      .then(
+        (sigHex) => {
+          if (this.signingInfo !== ceremony) return;
+          this._updateSigningState(SigningState.Complete, ceremony);
+          this.onSigningComplete({
+            signingId,
+            signature: sigHex,
+            messageHex,
+            blockchain: "ethereum",
+            sessionId: sessionInfo.session_id,
+          });
+        },
+        (e: Error) => {
+          if (this.signingInfo === ceremony) this._failSigning(e.message);
+        },
+      );
+    return true;
   }
 
   private _resetDkgState(): void {
@@ -2412,6 +2571,9 @@ export class WebRTCManager {
   ): Promise<boolean> {
     const curve = curveForChain(target.chain);
     if (!curve) throw new Error(`Unsupported signing chain: ${target.chain}`);
+    if (isEcdsaChain(target.chain)) {
+      throw new Error("Ethereum signs with the wallet's threshold-ECDSA key, not FROST");
+    }
     if (curve !== keyShareData.curve) {
       throw new Error(`Wallet is ${keyShareData.curve}; ${target.chain} signs with ${curve}`);
     }
@@ -2450,14 +2612,7 @@ export class WebRTCManager {
     this.participantIndex = keyShareData.participant_index;
     this.walletIdentifiers = { ...keyShareData.participant_identifiers };
     this.groupPublicKey = keyShareData.group_public_key;
-    if (target.chain === "ethereum") {
-      try {
-        this.ethereumAddress = (instance as any).get_eth_address?.() ?? null;
-        this.walletAddress = this.ethereumAddress;
-      } catch (e) {
-        this._log(`Failed to derive ethereum address: ${e}`);
-      }
-    } else if (target.chain === "solana") {
+    if (target.chain === "solana") {
       try {
         this.solanaAddress = (instance as any).get_address?.() ?? null;
         this.walletAddress = this.solanaAddress;

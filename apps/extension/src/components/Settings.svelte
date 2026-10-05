@@ -1,10 +1,15 @@
 <script lang="ts">
+    import { tokenName } from "../lib/ui/tokenIdentity";
+    import WalletRestore from "./WalletRestore.svelte";
+    import TokenIcon from "../lib/ui/TokenIcon.svelte";
+    import ChainIcon from "../lib/ui/ChainIcon.svelte";
     import { onMount } from "svelte";
     import NetworkService from "../services/networkService";
     import type { Chain } from "@stars-labs/types/network";
     import type { SupportedChain } from "@stars-labs/types/appstate";
     import {
         CHAIN_METADATA,
+        getProtocolBlockchainForChain,
         EVM_CHAINS,
         LIMITED_CHAINS,
         getCompatibleChains,
@@ -68,7 +73,7 @@
                 const up = await probeSandbox();
                 if (!up.evm && !up.solana) {
                     sandboxStatus =
-                        "No local nodes found — run scripts/sandbox.sh first.";
+                        "Start the local simulation nodes on your computer, then try again.";
                     return;
                 }
                 await enableSandbox();
@@ -303,20 +308,28 @@
                     return;
                 }
                 if (response?.success && response.keystoreData) {
-                    const blob = new Blob([response.keystoreData], {
-                        type: "application/json",
-                    });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = `starlab-share-backup-${chain}-${Date.now()}.json`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
+                    // One file per key, named like the engine's export
+                    // (`<stem>-<curve>.json` when a wallet has several).
+                    const files: { curve: string; keystoreData: string }[] =
+                        response.files ?? [{ curve: chain, keystoreData: response.keystoreData }];
+                    const stem = `starlab-share-backup-${chain}-${Date.now()}`;
+                    for (const f of files) {
+                        const blob = new Blob([f.keystoreData], { type: "application/json" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = files.length > 1 ? `${stem}-${f.curve}.json` : `${stem}.json`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    }
                     backupPassword = "";
                     backupPasswordConfirm = "";
-                    backupStatus = "Encrypted backup saved. Store it offline, away from this device.";
+                    backupStatus =
+                        files.length > 1
+                            ? `Encrypted backup saved as ${files.length} files (one per key) — keep them together, offline.`
+                            : "Encrypted backup saved. Store it offline, away from this device.";
                 } else {
                     backupStatus = `Export failed: ${response?.error ?? "unknown error"}`;
                 }
@@ -557,6 +570,13 @@
             return;
         }
 
+        try {
+            const rpcUrl = new URL(customNetworkRpcUrl);
+            if (!["http:", "https:"].includes(rpcUrl.protocol)) throw new Error();
+        } catch {
+            customNetworkError = "RPC URL must start with http:// or https://";
+            return;
+        }
         const chainId = parseInt(customNetworkChainId, 10);
         if (isNaN(chainId)) {
             customNetworkError = "Chain ID must be a valid number";
@@ -612,7 +632,7 @@
     }
 </script>
 
-<div class="space-y-4">
+<div class="wallet-settings space-y-4">
     <div class="flex items-center justify-between">
         <h2 class="text-base font-bold">Settings</h2>
         <Button
@@ -626,7 +646,7 @@
 
     <!-- Appearance -->
     <div class="card card-pad">
-        <h3 class="section-title mb-2.5">Appearance</h3>
+        <h3 class="section-title mb-2.5"><span class="section-icon"><Icon name="sun" size={17} /></span>Appearance</h3>
         <div class="grid grid-cols-3 gap-1.5 rounded-xl bg-surface-2 p-1">
             {#each THEME_OPTIONS as opt}
                 <button
@@ -645,7 +665,7 @@
 
     <!-- Signal server / tenant room -->
     <div class="card card-pad space-y-2">
-        <h3 class="section-title">Signal server room</h3>
+        <h3 class="section-title"><span class="section-icon"><Icon name="users" size={17} /></span>Signal server room</h3>
         <p class="text-xs text-muted">
             The hosted server requires a strong room. All co-signers of a wallet
             must use the <strong>same</strong> room. Reconnect after changing it.
@@ -668,39 +688,39 @@
 
     <!-- Connected dApps (#15): review + revoke per-origin permissions -->
     <div class="card card-pad space-y-2">
-        <h3 class="section-title">Connected dApps</h3>
+        <h3 class="section-title"><span class="section-icon"><Icon name="link" size={17} /></span>Connected dApps</h3>
         {#if dappPermissions.length === 0}
             <p class="text-xs text-muted">No dApps connected.</p>
         {:else}
             <ul class="space-y-2">
                 {#each dappPermissions as p (p.origin)}
                     <li class="flex items-center justify-between gap-2">
-                        <div class="min-w-0">
+                        <div class="asset-identity"><span class="feature-title-icon"><Icon name="link" size={20} /></span><div class="min-w-0">
                             <div class="truncate text-xs font-semibold">{p.origin}</div>
                             <div class="truncate text-xs text-muted">
                                 {p.connectedAccounts.map(shortAcct).join(", ")}
                             </div>
                         </div>
-                        <Button
+                        </div><Button
                             size="sm"
                             variant="ghost"
                             on:click={() => revokeDapp(p.origin)}
                         >
-                            Revoke
+                            Disconnect
                         </Button>
                     </li>
                 {/each}
             </ul>
             <p class="text-xs text-muted">
-                Revoking removes the site's access; it takes effect on the
-                site's next request.
+                Disconnecting removes the site's account access. Existing token
+                approvals remain active until you revoke them below.
             </p>
         {/if}
     </div>
 
     <!-- Address book (#25) -->
     <div class="card card-pad space-y-2">
-        <h3 class="section-title">Address book</h3>
+        <h3 class="section-title"><span class="section-icon"><Icon name="users" size={17} /></span>Address book</h3>
         {#if contacts.length > 0}
             <ul class="space-y-1">
                 {#each contacts as c (c.chain + ":" + c.address)}
@@ -723,7 +743,7 @@
 
     <!-- Policy (#35): spending limits + auto-lock -->
     <div class="card card-pad space-y-2">
-        <h3 class="section-title">Spending policy</h3>
+        <h3 class="section-title"><span class="section-icon"><Icon name="shield" size={17} /></span>Spending policy</h3>
         <p class="text-xs text-muted">
             Limits are enforced before any signing starts. A blocked send fails
             with the policy reason; loosen the limits here if you really mean it.
@@ -750,13 +770,13 @@
 
     <!-- Backup (#22): export this device's key share -->
     <div class="card card-pad space-y-2">
-        <h3 class="section-title">Backup</h3>
+        <h3 class="section-title"><span class="section-icon"><Icon name="download" size={17} /></span>Backup</h3>
         <p class="text-xs text-muted">
             Exports <strong>this device's key share</strong> as a password-encrypted
             file (CLI-compatible).
             One share alone can never sign — the threshold protects you — but treat
             the file like a secret: store it offline, never paste it anywhere.
-            Restore via "Import keystore" or the CLI.
+            Restore your device from this file when needed.
         </p>
         <label class="flex items-center gap-2 text-xs">
             <input type="checkbox" bind:checked={backupAcknowledged} />
@@ -784,6 +804,7 @@
         {#if backupStatus}
             <p class="text-xs text-muted">{backupStatus}</p>
         {/if}
+        <WalletRestore chain={getProtocolBlockchainForChain(chain)} />
     </div>
 
     <!-- Devices / Reshare (M3 #23): rotate shares or retire a device -->
@@ -792,12 +813,12 @@
     {#if isEvmChain(chain)}
         <!-- Tokens (#21): tracked list + custom add + auto-discovery -->
         <div class="card card-pad space-y-2">
-            <h3 class="section-title">Tokens</h3>
+            <h3 class="section-title"><span class="section-icon"><Icon name="wallet" size={17} /></span>Tokens</h3>
             {#if trackedTokens.length > 0}
                 <ul class="space-y-1">
                     {#each trackedTokens as t (t.address)}
                         <li class="flex items-center justify-between gap-2 text-xs">
-                            <span class="truncate"><strong>{t.symbol}</strong> · {t.address.slice(0, 8)}…{t.address.slice(-4)}</span>
+                            <div class="asset-identity"><TokenIcon symbol={t.symbol} chain={String(evmChainId() ?? chain)} address={t.address} size={28} /><span class="truncate"><strong>{t.symbol}</strong> · {t.address.slice(0, 8)}…{t.address.slice(-4)}</span></div>
                             <Button size="sm" variant="ghost" on:click={() => removeToken(t.address)}>Remove</Button>
                         </li>
                     {/each}
@@ -822,7 +843,7 @@
 
         <!-- Token approvals (#17): review + revoke ERC-20 allowances -->
         <div class="card card-pad space-y-2">
-            <h3 class="section-title">Token approvals</h3>
+            <h3 class="section-title"><span class="section-icon"><Icon name="shield" size={17} /></span>Token approvals</h3>
             {#if allowances.length === 0}
                 <p class="text-xs text-muted">
                     No active approvals recorded. Approvals signed in this wallet
@@ -832,15 +853,16 @@
                 <ul class="space-y-2">
                     {#each allowances as r (r.chainId + r.token + r.spender)}
                         <li class="flex items-center justify-between gap-2">
-                            <div class="min-w-0 text-xs">
+                            <div class="asset-identity"><TokenIcon symbol="?" chain={String(r.chainId)} address={r.token} size={28} /><div class="min-w-0 text-xs">
                                 <div class="truncate font-semibold">
-                                    token {shortHexId(r.token)} → spender {shortHexId(r.spender)}
+                                    {tokenName(String(r.chainId), r.token)} · {shortHexId(r.token)}
                                 </div>
                                 <div class="truncate text-muted">
-                                    {r.current === -1n ? "current allowance unknown" : `allowance: ${r.current}`}
+                                    Spender {shortHexId(r.spender)}
+                                    <span class="block">{r.current === -1n ? "Allowance unavailable" : r.current === (2n ** 256n - 1n) ? "Unlimited allowance" : `Allowance: ${r.current}`}</span>
                                 </div>
                             </div>
-                            <Button size="sm" variant="ghost" on:click={() => revokeAllowance(r)}>
+                            </div><Button size="sm" variant="ghost" on:click={() => revokeAllowance(r)}>
                                 Revoke
                             </Button>
                         </li>
@@ -855,11 +877,10 @@
 
     <!-- Sandbox mode (#31): one-click switch onto local fork nodes -->
     <div class="card card-pad space-y-2">
-        <h3 class="section-title">Sandbox mode</h3>
+        <h3 class="section-title"><span class="section-icon"><Icon name="monitor" size={17} /></span>Sandbox mode</h3>
         <p class="text-xs text-muted">
-            Point the wallet at local fork chains (anvil :8545 / surfpool :8899)
-            — real signing &amp; broadcast, no real funds. Start the nodes with
-            <code>scripts/sandbox.sh</code>.
+            Explore transactions in a simulated environment. Your devices
+            still co-sign, while no real funds are spent.
         </p>
         <div class="flex items-center gap-2">
             <Button
@@ -878,7 +899,7 @@
 
     <!-- Network -->
     <div class="card card-pad space-y-3">
-        <h3 class="section-title">Network</h3>
+        <h3 class="section-title flex items-center gap-2"><ChainIcon chain={String(chain)} />Network</h3>
 
         <div>
             <label class="label" for="chain-select">Blockchain</label>
@@ -905,7 +926,7 @@
                 </optgroup>
             </select>
             <p class="mt-1 text-xs text-muted">
-                {CHAIN_METADATA[chain].family} · {getRequiredCurve(chain)}
+                {CHAIN_METADATA[chain].family} network
             </p>
             {#if CHAIN_METADATA[chain].status === "limited"}
                 <p class="mt-1 text-xs text-muted">{CHAIN_METADATA[chain].note}</p>
@@ -974,7 +995,7 @@
     <!-- Add Custom Network -->
     {#if showCustomNetworkForm}
         <div class="card card-pad space-y-3">
-            <h3 class="section-title">Add custom network</h3>
+            <h3 class="section-title"><span class="section-icon"><Icon name="plus" size={17} /></span>Add custom network</h3>
 
             {#if customNetworkError}
                 <div class="alert alert-danger text-xs">{customNetworkError}</div>

@@ -59,6 +59,7 @@ export async function restoreActiveWallet(
     }
     if (keyShare) {
         patch.dkgGroupPublicKey = keyShare.group_public_key;
+        patch.ecdsaGroupPublicKey = keyShare.ecdsa_group_public_key ?? "";
         patch.dkgLastResult = {
             groupPublicKey: keyShare.group_public_key,
             address: activeWallet.address || null,

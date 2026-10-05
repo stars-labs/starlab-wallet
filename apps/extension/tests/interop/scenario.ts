@@ -2,8 +2,8 @@
 // signal server, the extension onboarded into a fresh room, and N CLI peers.
 import type { BrowserContext, Page } from "@playwright/test";
 import { expect, mirrorOffscreenConsole } from "./fixtures";
-import { openPopup, onboard, useSignalServer, setRoom, createWallet, dkgResult, saveWallet } from "./extension-actions";
-import { startPeers, killPeers, freshRoom, ensurePrereqs, startSignalServer, type Peer } from "./cli-peers";
+import { openPopup, onboard, useSignalServer, setRoom, createWallet, dkgResult, saveWallet, DKG_MS } from "./extension-actions";
+import { startPeers, killPeers, freshRoom, ensurePrereqs, startSignalServer, insecureTestPrimes, type Peer } from "./cli-peers";
 
 // "local" = a private starlab-signal-server per test (see startSignalServer).
 export const SIGNAL = process.env.INTEROP_SIGNAL ?? "wss://panda.qzz.io";
@@ -40,7 +40,24 @@ export async function setupExtension(page: Page, context: BrowserContext, extens
   await openPopup(page, extensionId);
   await onboard(page, PASSWORD);
   await setRoom(page, room);
+  if (CURVE !== "ed25519") await useInsecureTestPrimes(context);
   return env;
+}
+
+/**
+ * Hand the extension fixture ECDSA primes (INSECURE, tests only) instead of
+ * minutes of generation. The hook only exists in a test build
+ * (`WXT_INSECURE_TEST_PRIMES=1 bun run build`); a production build has none.
+ */
+export async function useInsecureTestPrimes(context: BrowserContext): Promise<void> {
+  const sw = context.serviceWorkers()[0];
+  const hooked = await sw.evaluate(async (primes) => {
+    const hook = (globalThis as any).__starlabInsecureTestPrimes;
+    if (typeof hook !== "function") return false;
+    await hook(primes);
+    return true;
+  }, insecureTestPrimes(0));
+  expect(hooked, "build the extension with WXT_INSECURE_TEST_PRIMES=1 for the interop specs").toBe(true);
 }
 
 /**
@@ -61,7 +78,27 @@ export async function extensionInitiatedDkg(
   const groupKey = results[0].groupKey;
   expect(groupKey).toMatch(/^[0-9a-f]+$/);
   // The TS/WASM extension derived the same key as the Rust peers.
-  expect((await dkgResult(page)).groupPublicKey, "extension and CLI peers must agree on the group key").toBe(groupKey);
+  const ext = await dkgResult(page);
+  expect(ext.groupPublicKey, "extension and CLI peers must agree on the group key").toBe(groupKey);
+  if (CURVE !== "ed25519") {
+    // …and the same threshold-ECDSA key: the CLI reports its Ethereum address.
+    expect(new Set(results.map((r) => r.address.toLowerCase())).size).toBe(1);
+    expect(ext.address?.toLowerCase(), "extension and CLI peers must agree on the Ethereum (ECDSA) address").toBe(
+      results[0].address.toLowerCase(),
+    );
+  }
   await saveWallet(page, PASSWORD);
   return groupKey;
 }
+
+/** The extension's Ethereum account-0 address (from its ECDSA key). */
+export async function extensionEthereumAddress(page: Page): Promise<string> {
+  const state = await page.evaluate(() => chrome.runtime.sendMessage({ type: "getState" }));
+  return String(state.dkgLastResult?.address ?? state.ethereumAddress ?? "").toLowerCase();
+}
+
+/** Test timeout for a spec running `dkgs` DKGs plus some signing. */
+export const specTimeout = (dkgs = 1) => 180_000 + dkgs * DKG_MS;
+
+/** `--timeout` (s) for one-shot CLI ceremonies (a secp256k1 DKG makes the ECDSA key too). */
+export const CLI_TIMEOUT_S = String(Math.round(DKG_MS / 1000));

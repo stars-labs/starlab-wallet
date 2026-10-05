@@ -135,6 +135,11 @@ export interface KeyShareData {
     curve: 'secp256k1' | 'ed25519'; // Ethereum or Solana
     blockchains: BlockchainInfo[]; // Multi-chain support
     
+    /** secp256k1 wallets: root group key (SEC1 hex) of the wallet's
+     *  threshold-ECDSA key, whose share is stored as its own keystore
+     *  entry (curve `secp256k1-ecdsa`). Ethereum accounts derive from it. */
+    ecdsa_group_public_key?: string;
+
     // Legacy support
     ethereum_address?: string; // Derived Ethereum address
     solana_address?: string; // Derived Solana address

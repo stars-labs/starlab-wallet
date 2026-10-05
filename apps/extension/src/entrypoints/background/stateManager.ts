@@ -41,7 +41,7 @@ export type DkgStateListener = (state: DkgState) => void;
  * background until the wallet is saved; the popup never needs it, and the
  * popup logs every message it receives. Apply at every popup egress.
  */
-const SECRET_KEYS = ["pendingKeystoreJson", "keystoreJson"] as const;
+const SECRET_KEYS = ["pendingKeystoreJson", "keystoreJson", "pendingEcdsaShareJson", "ecdsa"] as const;
 
 export function withoutSecrets<T extends object>(message: T): T {
     if (!SECRET_KEYS.some((k) => k in message)) return message;
@@ -59,6 +59,7 @@ export class StateManager {
     private static readonly STATE_STORAGE_KEY = 'starlab_background_state';
     private isStateLoaded = false;
     private pendingPopupPorts: chrome.runtime.Port[] = [];
+    private withdrawSigningInvite?: (sessionId: string) => void;
     private rpcHandler?: any; // Will be set after initialization
     /** External observers of dkgState transitions. Keepalive uses
      *  this; see `keepaliveController.ts`. */
@@ -126,6 +127,7 @@ export class StateManager {
                 // pendingKeystoreReady" flag doesn't lie to the UI.
                 (this.appState as any).pendingKeystoreJson = null;
                 (this.appState as any).pendingKeystoreReady = false;
+                this.appState.pendingEcdsaShareJson = null;
                 console.log("[StateManager] State restored from persistence");
             } else {
                 console.log("[StateManager] No persisted state found, using initial state");
@@ -161,9 +163,12 @@ export class StateManager {
         console.log("[StateManager] All pending popup ports processed");
     }
 
-    /**
-     * Set the RPC handler for signature callbacks
-     */
+    /** Withdraw discovery after the signing transport has sent the result. */
+    setSigningInviteWithdrawal(handler: (sessionId: string) => void): void {
+        this.withdrawSigningInvite = handler;
+    }
+
+    /** Set the RPC handler for signature callbacks. */
     setRpcHandler(handler: any): void {
         this.rpcHandler = handler;
         console.log("[StateManager] RPC handler set");
@@ -571,6 +576,11 @@ export class StateManager {
                     (this.appState as any).pendingKeystoreReady =
                         typeof info.keystoreJson === "string" &&
                         info.keystoreJson.length > 0;
+                    // secp256k1: the wallet's threshold-ECDSA key (Ethereum).
+                    // Its share is as secret as the FROST one: memory only.
+                    this.appState.pendingEcdsaShareJson = info.ecdsa?.shareJson ?? null;
+                    this.appState.ecdsaGroupPublicKey = info.ecdsa?.groupPublicKey ?? "";
+                    this.appState.ecdsaDkgStatus = null;
                     // The DKG is done; it is no longer something to join
                     // (see WebSocketManager: re-announces are ignored too).
                     this.appState.invites = (this.appState.invites ?? []).filter(
@@ -582,8 +592,8 @@ export class StateManager {
                         `(keystore JSON ${info.keystoreJson ? "PRESENT" : "MISSING"})`,
                     );
                     this.broadcastToPopupPorts({
-                        type: "dkgCompleted",
                         ...info,
+                        type: "dkgCompleted",
                     } as any);
                     this.broadcastCurrentState();
                 }
@@ -698,6 +708,15 @@ export class StateManager {
                         sessionId: info.sessionId,
                         completedAt: Date.now(),
                     };
+                    // Offscreen emits completion after sending the final signature.
+                    // Remove discovery at the proposer only; keep the mesh alive
+                    // for slower signers and participants outside the signer set.
+                    const session = this.appState.sessionInfo;
+                    if (session?.session_type === "signing" &&
+                        session.session_id === info.sessionId &&
+                        session.proposer_id === this.appState.deviceId) {
+                        this.withdrawSigningInvite?.(info.sessionId);
+                    }
                     // Clear the active signing session so "+ Sign" is
                     // available again, and drop the finished request.
                     this.dropSigningInvite(info.sessionId);
@@ -731,8 +750,8 @@ export class StateManager {
                         );
                     }
                     this.broadcastToPopupPorts({
-                        type: "signingCompleted",
                         ...info,
+                        type: "signingCompleted",
                     } as any);
                     this.broadcastCurrentState();
                 }

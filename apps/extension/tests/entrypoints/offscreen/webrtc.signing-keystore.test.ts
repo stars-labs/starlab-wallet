@@ -17,6 +17,7 @@ import {
     toEngineKeystoreJson,
 } from "../../../src/utils/engineKeystore";
 import { schnorrVerify, segwitV1Program } from "../../helpers/bip340";
+import { ECDSA_WALLET, stubEcdsaDkg, waitFor } from "../../helpers/ecdsaFixture";
 
 let originalLog: any, originalErr: any, originalWarn: any;
 beforeAll(async () => {
@@ -74,7 +75,10 @@ async function dkgThroughManagers(chain: Chain, t = 2): Promise<any[]> {
         (mgr as any).participantIndex = i + 1;
         (mgr as any).receivedRound2Packages = new Set(DEVICES);
         mgr.onDkgComplete = (p) => payloads.push(p);
+        // secp256k1: the ECDSA key follows FROST (fixture share here).
+        stubEcdsaDkg(mgr, i);
         await (mgr as any)._finalizeDkg();
+        await waitFor(() => mgr.dkgState !== DkgState.Finalizing);
         expect(mgr.dkgState).toBe(DkgState.Complete);
     }
     dkgs.forEach((d) => d.free());
@@ -96,8 +100,37 @@ function storedShare(payload: any, deviceId: string): KeyShareData {
     };
 }
 
+describe("secp256k1 DKG → the threshold-ECDSA key completes the wallet", () => {
+    it("reports the ECDSA share and its account-0 Ethereum address", async () => {
+        if (!isWasmInitialized()) return;
+        const payloads = await dkgThroughManagers("ethereum");
+        const { ecdsa_ethereum_address } = await import("@stars-labs/core-wasm");
+        expect(payloads[1].ecdsa.shareJson).toBe(ECDSA_WALLET.shares[1]);
+        expect(payloads[1].ecdsa.groupPublicKey).toBe(ECDSA_WALLET.group_public_key);
+        expect(payloads[1].address).toBe(ecdsa_ethereum_address(ECDSA_WALLET.group_public_key, 0));
+    }, 30000);
+
+    it("fails the DKG when the ECDSA key generation fails", async () => {
+        if (!isWasmInitialized()) return;
+        const mgr = new WebRTCManager("dev-a", () => {});
+        mgr.setBlockchain("ethereum");
+        mgr.sessionInfo = { session_id: "s", proposer_id: "dev-a", total: 2, threshold: 2, participants: ["dev-a", "dev-b"] } as any;
+        const completed: unknown[] = [];
+        mgr.onDkgComplete = (p) => completed.push(p);
+        mgr.getEcdsaPrimes = async () => "fixture";
+        (mgr.ecdsa as any).runDkg = async () => {
+            throw new Error("peer vanished");
+        };
+        await (mgr as any)._runEcdsaDkg("{}");
+        expect(mgr.dkgState).toBe(DkgState.Failed);
+        expect(completed).toEqual([]);
+    });
+});
+
 for (const chain of ["ethereum", "solana"] as const) {
-    describe(`DKG wallet → signing keystore load (${chain}, real WASM)`, () => {
+    // FROST signs Bitcoin on a secp256k1 wallet (Ethereum is ECDSA).
+    const signChain = chain === "ethereum" ? "bitcoin" : "solana";
+    describe(`DKG wallet → signing keystore load (${signChain}, real WASM)`, () => {
         it("stores a real hex group key and no secret material under group_public_key", async () => {
             if (!isWasmInitialized()) return;
             const payloads = await dkgThroughManagers(chain);
@@ -128,8 +161,8 @@ for (const chain of ["ethereum", "solana"] as const) {
                 };
                 mgr.onSigningComplete = (p) => signatures.set(id, p.signature);
                 const share = storedShare(payloads[DEVICES.indexOf(id)], id);
-                expect(await mgr.loadKeystoreForSigning(share, { chain, account: 0 })).toBe(true);
-                expect(mgr.getDkgStatus().address).toBeTruthy();
+                expect(await mgr.loadKeystoreForSigning(share, { chain: signChain, account: 0 })).toBe(true);
+                if (signChain === "solana") expect(mgr.getDkgStatus().address).toBeTruthy();
                 managers.set(id, mgr);
             }
 
@@ -226,12 +259,13 @@ describe("co-signing a bitcoin account session (real WASM)", () => {
         }, 30000);
     }
 
-    it("the ethereum account's signature does not verify for the bc1p address", async () => {
+    it("never signs an ethereum account with FROST (EOAs need ECDSA)", async () => {
         if (!isWasmInitialized()) return;
         const payloads = await dkgThroughManagers("ethereum");
-        const sigs = await coSign(payloads, ["dev-b", "dev-c"], { chain: "ethereum", account: 0 }, sighash);
-        const key = await bitcoinOutputKey(payloads[0].groupPublicKey);
-        expect(schnorrVerify(key, Buffer.from(sighash, "hex"), Buffer.from(sigs.get("dev-c")!, "hex"))).toBe(false);
+        const mgr = new WebRTCManager("dev-a", () => {});
+        await expect(
+            mgr.loadKeystoreForSigning(storedShare(payloads[0], "dev-a"), { chain: "ethereum", account: 0 }),
+        ).rejects.toThrow("threshold-ECDSA");
     }, 30000);
 
     it("refuses a chain on the other curve", async () => {

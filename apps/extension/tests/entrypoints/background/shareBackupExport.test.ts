@@ -19,18 +19,21 @@ const keystore = {
     isLocked() { return this.locked; },
     getActiveWallet() { return this.wallet; },
     async getKeyShare(id: string) { return id === this.wallet?.id ? this.keyShare : null; },
+    ecdsaShare: null as string | null,
+    async getCurveShare(id: string, curve: string) { return id === this.wallet?.id && curve === "secp256k1-ecdsa" ? this.ecdsaShare : null; },
 };
 mock.module("../../../src/services/keystoreManager", () => ({
     KeystoreManager: { getInstance: () => keystore },
 }));
 
-import wasmInit, { FrostDkgSecp256k1 } from "@stars-labs/core-wasm";
+import wasmInit, { FrostDkgSecp256k1, ecdsa_share_info } from "@stars-labs/core-wasm";
+import { ECDSA_WALLET } from "../../helpers/ecdsaFixture";
 import { REAL_WEBCRYPTO } from "../../setup-bun";
 import { PopupMessageHandler } from "../../../src/entrypoints/background/messageHandlers";
 import { StateManager } from "../../../src/entrypoints/background/stateManager";
 import { restoreActiveWallet } from "../../../src/entrypoints/background/walletRestore";
 import { keyShareCoreFromEngine } from "../../../src/utils/engineKeystore";
-import { openShareBackup } from "../../../src/utils/shareBackup";
+import { openShareBackup, openEcdsaShareBackup } from "../../../src/utils/shareBackup";
 import { toEngineKeystoreJson } from "../../../src/utils/engineKeystore";
 import { DkgState } from "@stars-labs/types/dkg";
 
@@ -56,7 +59,7 @@ function runDkg() {
         parts.forEach((p) => p.finalize_dkg());
         const bob = parts[1];
         groupKey = bob.get_group_public_key();
-        ethAddress = bob.get_eth_address();
+        ethAddress = bob.get_address();
         return {
             ...keyShareCoreFromEngine(bob.export_keystore(), groupKey, COHORT),
             session_id: "dkg_abc",
@@ -69,8 +72,14 @@ function runDkg() {
     }
 }
 
+const offscreen = {
+    createOffscreenDocument: async () => ({ success: true }),
+    sendToOffscreen: async (msg: any) =>
+        msg.type === "ecdsaShareInfo" ? { success: true, info: JSON.parse(ecdsa_share_info(msg.shareJson)) } : { success: true },
+};
+
 function handler(stateManager: StateManager) {
-    return new PopupMessageHandler(stateManager, {} as any, {} as any, {} as any, {} as any, {} as any);
+    return new PopupMessageHandler(stateManager, offscreen as any, {} as any, {} as any, {} as any, {} as any);
 }
 
 function exportBackup(stateManager: StateManager, password = PASSWORD) {
@@ -165,9 +174,32 @@ describe("exportKeystore after a restore", () => {
         try {
             fresh.import_keystore(toEngineKeystoreJson(keyShare));
             expect(fresh.get_group_public_key()).toBe(groupKey);
-            expect(fresh.get_eth_address()).toBe(ethAddress);
+            expect(fresh.get_address()).toBe(ethAddress);
         } finally {
             fresh.free();
+        }
+    });
+
+    it("writes one file per key: the FROST share, then the Ethereum (ECDSA) share", async () => {
+        keystore.ecdsaShare = ECDSA_WALLET.shares[1];
+        try {
+            const res = await exportBackup(await restoredState());
+            expect(res.files.map((f: any) => f.curve)).toEqual(["secp256k1", "secp256k1-ecdsa"]);
+            expect(res.files[0].keystoreData).toBe(res.keystoreData);
+            const ecdsaFile = res.files[1].keystoreData;
+            expect(ecdsaFile).not.toContain("key_share");
+            const { metadata, shareJson } = await openEcdsaShareBackup(ecdsaFile, PASSWORD);
+            expect(shareJson).toBe(ECDSA_WALLET.shares[1]);
+            expect(metadata).toMatchObject({
+                session_id: "wallet-1",
+                device_id: "ext-bob",
+                curve_type: "secp256k1-ecdsa",
+                participant_index: 2,
+                group_public_key: ECDSA_WALLET.group_public_key,
+                label: "Team",
+            });
+        } finally {
+            keystore.ecdsaShare = null;
         }
     });
 

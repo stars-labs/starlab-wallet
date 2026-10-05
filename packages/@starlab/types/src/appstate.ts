@@ -308,6 +308,16 @@ export interface AppState {
   dkgError?: string;
   /** FROST group public key hex. */
   dkgGroupPublicKey?: string;
+  /** Root group key (SEC1 hex) of the wallet's threshold-ECDSA key — the
+   *  Ethereum accounts derive from it (secp256k1 wallets only). */
+  ecdsaGroupPublicKey?: string;
+  /** Background generation of this device's Paillier safe primes (needed
+   *  by the next wallet's ECDSA key): `done` of `total` primes finished. */
+  ecdsaPrimes?: { state: "idle" | "generating" | "ready"; done: number; total: number };
+  /** ECDSA part of a running secp256k1 DKG. */
+  ecdsaDkgStatus?: "waiting-primes" | "aux-info" | "keygen" | null;
+  /** The DKG's ECDSA key share JSON (SECRET), held until the wallet is saved. */
+  pendingEcdsaShareJson?: string | null;
   /** Full DKG result snapshot for the save-wallet form. */
   dkgLastResult?: {
     groupPublicKey: string;
@@ -363,30 +373,3 @@ export const INITIAL_APP_STATE: AppState = {
   totalParticipants: 3,
   threshold: 2,
 };
-
-/** EVM chains whose standard EOA transactions verify with ECDSA, not Schnorr. */
-const EVM_EOA_CHAINS: ReadonlySet<string> = new Set([
-  'ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'bsc', 'avalanche',
-]);
-
-/**
- * Signing-scheme compatibility caveat for a chain, or `null` if it verifies
- * FROST (Schnorr/Ed25519) signatures natively.
- *
- * Mirrors the Rust `blockchain_config::signing_caveat`. FROST produces Schnorr
- * signatures; a standard Ethereum-family EOA transaction verifies with ECDSA
- * and will reject them — EVM use needs a smart-contract account (ERC-4337 / a
- * Schnorr-verifier contract). See docs/SIGNATURE_CHAIN_COMPATIBILITY.md.
- */
-export function signingCaveat(chain: string): string | null {
-  if (EVM_EOA_CHAINS.has(chain)) {
-    return (
-      'Threshold-Schnorr wallet: a standard Ethereum-family EOA transaction ' +
-      'verifies with ECDSA and will not accept this signature. EVM use ' +
-      'requires a smart-contract account (ERC-4337 / a Schnorr-verifier ' +
-      'contract). Receiving is fine; spending via a normal EOA transaction ' +
-      'is not supported.'
-    );
-  }
-  return null;
-}

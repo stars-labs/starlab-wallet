@@ -50,7 +50,21 @@ const CHAIN_CURVES: Record<string, "secp256k1" | "ed25519"> = {
     sui: "ed25519",
 };
 
-/** FROST curve that signs for `chain` (starlab-mpc `curve_for_chain`). */
+/** Curve tag of the wallet's threshold-ECDSA key (starlab-mpc `ECDSA_CURVE`). */
+export const ECDSA_CURVE = "secp256k1-ecdsa";
+
+/**
+ * Whether `chain`'s accounts sign with the wallet's threshold-ECDSA key
+ * (starlab-mpc `curve_for_chain(chain) == ECDSA_CURVE`): Ethereum — an EOA
+ * only accepts ECDSA. Bitcoin (BIP-340) and ed25519 chains use FROST.
+ */
+export function isEcdsaChain(chain: string): boolean {
+    const c = chain.toLowerCase();
+    return c === "ethereum" || c === "eth";
+}
+
+/** Secp256k1 key family of `chain` (the FROST share, or for
+ *  `isEcdsaChain` chains its ECDSA sibling). */
 export function curveForChain(chain: string): "secp256k1" | "ed25519" | null {
     return CHAIN_CURVES[chain.toLowerCase()] ?? null;
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import FeatureHeader from "../lib/ui/FeatureHeader.svelte";
     /**
      * M3 reshare: "Devices / Reshare" card for Settings.
      *
@@ -6,13 +7,13 @@
      * device ids from the decrypted key share) and offers two flows:
      *
      *   - Rotate shares: same cohort, same threshold — every device
-     *     gets a brand-new share, the group key (and all addresses)
+     *     gets a brand-new FROST share, the FROST group key and addresses
      *     stay identical. Use after a device might have leaked its
      *     share.
      *   - Replace device: remove a lost/retired device from the
      *     cohort (optionally adjusting the threshold). The remaining
      *     devices reshare among themselves; the removed device's
-     *     share becomes useless.
+     *     FROST share is excluded from the refreshed cohort; its Ethereum key is unchanged.
      *
      * Both flows announce a `reshare` session over the signal
      * server; the OTHER devices must be online and join (their popup
@@ -206,7 +207,7 @@
                 return `Round 2 of 2 — packages ${rs.round2Received.length}/${rs.participants.length}`;
             case "Complete":
                 return rs.saved
-                    ? "Done — new shares saved. Addresses unchanged."
+                    ? "Done — new Bitcoin, Solana or Sui shares saved. Their addresses are unchanged."
                     : "Ceremony finished, but saving the new share failed.";
             case "Failed":
                 return `Reshare failed: ${rs.error ?? "unknown error"}`;
@@ -220,10 +221,12 @@
 </script>
 
 <div class="card card-pad space-y-2" data-testid="reshare-card">
-    <h3 class="section-title">Devices / Reshare</h3>
+    <FeatureHeader title="Manage wallet devices" subtitle="Refresh Bitcoin, Solana or Sui shares" icon="users" />
     <p class="text-xs text-muted">
-        Rotate this wallet's key shares or retire a lost device. The group key
-        — and every address — stays the same; only the shares change.
+        Refresh this wallet's Bitcoin, Solana or Sui shares while keeping
+        their addresses. Ethereum shares and device access stay unchanged.
+        To retire a device for Ethereum, create a new wallet with the devices
+        you trust and transfer the funds to its new address.
         <strong>All remaining devices must be online and join.</strong>
     </p>
 
@@ -308,8 +311,8 @@
                     />
                 </label>
                 <p class="text-[10px] text-muted">
-                    The removed device's share becomes useless after the
-                    reshare. The removed device does NOT need to be online —
+                    The removed device is excluded from the refreshed
+                    Bitcoin, Solana or Sui cohort. Its Ethereum share stays unchanged. The removed device does NOT need to be online —
                     everyone else does. Adding a brand-new device is not
                     supported yet (every reshare participant must already hold
                     a share).

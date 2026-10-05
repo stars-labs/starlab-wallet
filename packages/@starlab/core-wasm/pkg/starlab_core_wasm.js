@@ -1,5 +1,375 @@
 /* @ts-self-types="./starlab_core_wasm.d.ts" */
 
+/**
+ * Aux-info ceremony (Paillier moduli + ZK proofs) — the slow one.
+ */
+export class EcdsaAuxInfo {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        EcdsaAuxInfoFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_ecdsaauxinfo_free(ptr, 0);
+    }
+    /**
+     * Hex execution id (also bytes 3..35 of every payload).
+     * @returns {string}
+     */
+    execution_id() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.ecdsaauxinfo_execution_id(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Our keygen index.
+     * @returns {number}
+     */
+    index() {
+        const ret = wasm.ecdsaauxinfo_index(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {boolean}
+     */
+    is_finished() {
+        const ret = wasm.ecdsaauxinfo_is_finished(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * `participants`: sorted device ids (position = keygen index);
+     * `index`: ours; `primes_json`: from [`ecdsa_primes_from_parts`].
+     * @param {string} session_id
+     * @param {string[]} participants
+     * @param {number} index
+     * @param {string} primes_json
+     */
+    constructor(session_id, participants, index, primes_json) {
+        const ptr0 = passStringToWasm0(session_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArrayJsValueToWasm0(participants, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(primes_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.ecdsaauxinfo_new(ptr0, len0, ptr1, len1, index, ptr2, len2);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        EcdsaAuxInfoFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Keygen indices of all parties (us included).
+     * @returns {Uint16Array}
+     */
+    parties() {
+        const ret = wasm.ecdsaauxinfo_parties(this.__wbg_ptr);
+        var v1 = getArrayU16FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 2, 2);
+        return v1;
+    }
+    /**
+     * Advance; returns the aux-info JSON (secret) once finished, else
+     * undefined. Throws if the protocol aborts.
+     * @returns {string | undefined}
+     */
+    proceed() {
+        const ret = wasm.ecdsaauxinfo_proceed(this.__wbg_ptr);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        let v1;
+        if (ret[0] !== 0) {
+            v1 = getStringFromWasm0(ret[0], ret[1]);
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+    }
+    /**
+     * Queue a payload from party `sender` (keygen index). Throws on a
+     * payload of another execution, from a non-party, or
+     * undecodable — the ceremony's state is unchanged then, so a
+     * caller may log and drop it. Exact duplicates are ignored.
+     * @param {number} sender
+     * @param {Uint8Array} payload
+     */
+    receive(sender, payload) {
+        const ptr0 = passArray8ToWasm0(payload, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.ecdsaauxinfo_receive(this.__wbg_ptr, sender, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Drain the messages to send (production order).
+     * @returns {Array<any>}
+     */
+    take_outgoing() {
+        const ret = wasm.ecdsaauxinfo_take_outgoing(this.__wbg_ptr);
+        return ret;
+    }
+}
+if (Symbol.dispose) EcdsaAuxInfo.prototype[Symbol.dispose] = EcdsaAuxInfo.prototype.free;
+
+/**
+ * Threshold keygen ceremony.
+ */
+export class EcdsaKeygen {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        EcdsaKeygenFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_ecdsakeygen_free(ptr, 0);
+    }
+    /**
+     * Hex execution id (also bytes 3..35 of every payload).
+     * @returns {string}
+     */
+    execution_id() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.ecdsakeygen_execution_id(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Our keygen index.
+     * @returns {number}
+     */
+    index() {
+        const ret = wasm.ecdsakeygen_index(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {boolean}
+     */
+    is_finished() {
+        const ret = wasm.ecdsakeygen_is_finished(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @param {string} session_id
+     * @param {string[]} participants
+     * @param {number} index
+     * @param {number} threshold
+     */
+    constructor(session_id, participants, index, threshold) {
+        const ptr0 = passStringToWasm0(session_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArrayJsValueToWasm0(participants, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.ecdsakeygen_new(ptr0, len0, ptr1, len1, index, threshold);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        EcdsaKeygenFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Keygen indices of all parties (us included).
+     * @returns {Uint16Array}
+     */
+    parties() {
+        const ret = wasm.ecdsakeygen_parties(this.__wbg_ptr);
+        var v1 = getArrayU16FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 2, 2);
+        return v1;
+    }
+    /**
+     * Advance; returns the keygen output JSON (secret; join it with the
+     * aux info via [`ecdsa_key_share_from_parts`]) once finished.
+     * @returns {string | undefined}
+     */
+    proceed() {
+        const ret = wasm.ecdsakeygen_proceed(this.__wbg_ptr);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        let v1;
+        if (ret[0] !== 0) {
+            v1 = getStringFromWasm0(ret[0], ret[1]);
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+    }
+    /**
+     * Queue a payload from party `sender` (keygen index). Throws on a
+     * payload of another execution, from a non-party, or
+     * undecodable — the ceremony's state is unchanged then, so a
+     * caller may log and drop it. Exact duplicates are ignored.
+     * @param {number} sender
+     * @param {Uint8Array} payload
+     */
+    receive(sender, payload) {
+        const ptr0 = passArray8ToWasm0(payload, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.ecdsakeygen_receive(this.__wbg_ptr, sender, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Drain the messages to send (production order).
+     * @returns {Array<any>}
+     */
+    take_outgoing() {
+        const ret = wasm.ecdsakeygen_take_outgoing(this.__wbg_ptr);
+        return ret;
+    }
+}
+if (Symbol.dispose) EcdsaKeygen.prototype[Symbol.dispose] = EcdsaKeygen.prototype.free;
+
+/**
+ * One signing (full interactive protocol — no presignatures).
+ */
+export class EcdsaSigning {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        EcdsaSigningFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_ecdsasigning_free(ptr, 0);
+    }
+    /**
+     * Hex execution id (also bytes 3..35 of every payload).
+     * @returns {string}
+     */
+    execution_id() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.ecdsasigning_execution_id(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * Our keygen index.
+     * @returns {number}
+     */
+    index() {
+        const ret = wasm.ecdsasigning_index(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {boolean}
+     */
+    is_finished() {
+        const ret = wasm.ecdsasigning_is_finished(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * Sign the 32-byte `prehash` with the HD child at `path` (e.g.
+     * "m/44'/60'/0'/0/0") together with `signers` (keygen indices, exactly
+     * the share's threshold, us included). `session_id` must be fresh per
+     * signing (`sign_<uuid>`).
+     * @param {string} session_id
+     * @param {string} share_json
+     * @param {Uint16Array} signers
+     * @param {string} path
+     * @param {Uint8Array} prehash
+     */
+    constructor(session_id, share_json, signers, path, prehash) {
+        const ptr0 = passStringToWasm0(session_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(share_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray16ToWasm0(signers, wasm.__wbindgen_malloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ptr4 = passArray8ToWasm0(prehash, wasm.__wbindgen_malloc);
+        const len4 = WASM_VECTOR_LEN;
+        const ret = wasm.ecdsasigning_new(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        EcdsaSigningFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Keygen indices of all parties (us included).
+     * @returns {Uint16Array}
+     */
+    parties() {
+        const ret = wasm.ecdsasigning_parties(this.__wbg_ptr);
+        var v1 = getArrayU16FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 2, 2);
+        return v1;
+    }
+    /**
+     * Advance; once finished returns hex of the 65-byte `r ‖ s ‖ v`
+     * (low-s, `v = 27 + recovery_id` — personal_sign's convention; a typed
+     * transaction takes `y_parity = v - 27`), else undefined.
+     * @returns {string | undefined}
+     */
+    proceed() {
+        const ret = wasm.ecdsasigning_proceed(this.__wbg_ptr);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        let v1;
+        if (ret[0] !== 0) {
+            v1 = getStringFromWasm0(ret[0], ret[1]);
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+    }
+    /**
+     * Queue a payload from party `sender` (keygen index). Throws on a
+     * payload of another execution, from a non-party, or
+     * undecodable — the ceremony's state is unchanged then, so a
+     * caller may log and drop it. Exact duplicates are ignored.
+     * @param {number} sender
+     * @param {Uint8Array} payload
+     */
+    receive(sender, payload) {
+        const ptr0 = passArray8ToWasm0(payload, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.ecdsasigning_receive(this.__wbg_ptr, sender, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Drain the messages to send (production order).
+     * @returns {Array<any>}
+     */
+    take_outgoing() {
+        const ret = wasm.ecdsasigning_take_outgoing(this.__wbg_ptr);
+        return ret;
+    }
+}
+if (Symbol.dispose) EcdsaSigning.prototype[Symbol.dispose] = EcdsaSigning.prototype.free;
+
 export class FrostDkgEd25519 {
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
@@ -524,27 +894,6 @@ export class FrostDkgSecp256k1 {
     /**
      * @returns {string}
      */
-    get_eth_address() {
-        let deferred2_0;
-        let deferred2_1;
-        try {
-            const ret = wasm.frostdkgsecp256k1_get_eth_address(this.__wbg_ptr);
-            var ptr1 = ret[0];
-            var len1 = ret[1];
-            if (ret[3]) {
-                ptr1 = 0; len1 = 0;
-                throw takeFromExternrefTable0(ret[2]);
-            }
-            deferred2_0 = ptr1;
-            deferred2_1 = len1;
-            return getStringFromWasm0(ptr1, len1);
-        } finally {
-            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
-        }
-    }
-    /**
-     * @returns {string}
-     */
     get_group_public_key() {
         let deferred2_0;
         let deferred2_1;
@@ -854,28 +1203,6 @@ export class FrostDkgUnified {
         let deferred2_1;
         try {
             const ret = wasm.frostdkgunified_get_ed25519_public_key(this.__wbg_ptr);
-            var ptr1 = ret[0];
-            var len1 = ret[1];
-            if (ret[3]) {
-                ptr1 = 0; len1 = 0;
-                throw takeFromExternrefTable0(ret[2]);
-            }
-            deferred2_0 = ptr1;
-            deferred2_1 = len1;
-            return getStringFromWasm0(ptr1, len1);
-        } finally {
-            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
-        }
-    }
-    /**
-     * Get Ethereum address (secp256k1 keccak256).
-     * @returns {string}
-     */
-    get_eth_address() {
-        let deferred2_0;
-        let deferred2_1;
-        try {
-            const ret = wasm.frostdkgunified_get_eth_address(this.__wbg_ptr);
             var ptr1 = ret[0];
             var len1 = ret[1];
             if (ret[3]) {
@@ -1460,6 +1787,248 @@ export function derive_child_keystore_secp256k1(keystore_json, path) {
     }
 }
 
+/**
+ * Curve tag of the ECDSA key (keystore / accounts / signing announce).
+ * @returns {string}
+ */
+export function ecdsa_curve() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.ecdsa_curve();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Ethereum address of `account` for an ECDSA group key (hex SEC1) —
+ * public-only, the same as `derive_account_addresses("secp256k1-ecdsa", …)`.
+ * @param {string} group_public_key_hex
+ * @param {number} account
+ * @returns {string}
+ */
+export function ecdsa_ethereum_address(group_public_key_hex, account) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(group_public_key_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.ecdsa_ethereum_address(ptr0, len0, account);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Execution id (hex) of a ceremony — `protocol` is "aux-info" | "keygen" |
+ * "signing"; `participants` are device ids in any order. Lets a caller
+ * route a payload that arrives before its ceremony exists.
+ * @param {string} session_id
+ * @param {string} protocol_tag
+ * @param {string[]} participants
+ * @returns {string}
+ */
+export function ecdsa_execution_id(session_id, protocol_tag, participants) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(session_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(protocol_tag, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArrayJsValueToWasm0(participants, wasm.__wbindgen_malloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.ecdsa_execution_id(ptr0, len0, ptr1, len1, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
+ * Generate ONE Paillier safe prime (JSON `{"radix":16,"value":…}`). Slow
+ * (minutes in wasm): a set needs four — run them in parallel workers and
+ * join with [`ecdsa_primes_from_parts`].
+ * @returns {string}
+ */
+export function ecdsa_generate_safe_prime() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.ecdsa_generate_safe_prime();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Join a keygen output and an aux-info output (both from `proceed()`) into
+ * the persistable key share JSON (secret: encrypt before storing).
+ * `participants` = the sorted device ids the ceremonies ran with.
+ * @param {string[]} participants
+ * @param {string} keygen_json
+ * @param {string} aux_info_json
+ * @returns {string}
+ */
+export function ecdsa_key_share_from_parts(participants, keygen_json, aux_info_json) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passArrayJsValueToWasm0(participants, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(keygen_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(aux_info_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.ecdsa_key_share_from_parts(ptr0, len0, ptr1, len1, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
+ * Execution id (hex) in a driver payload's header, or undefined.
+ * @param {Uint8Array} payload
+ * @returns {string | undefined}
+ */
+export function ecdsa_payload_execution_id(payload) {
+    const ptr0 = passArray8ToWasm0(payload, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecdsa_payload_execution_id(ptr0, len0);
+    let v2;
+    if (ret[0] !== 0) {
+        v2 = getStringFromWasm0(ret[0], ret[1]);
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    }
+    return v2;
+}
+
+/**
+ * Number of safe primes per set (4).
+ * @returns {number}
+ */
+export function ecdsa_prime_count() {
+    const ret = wasm.ecdsa_prime_count();
+    return ret >>> 0;
+}
+
+/**
+ * Join four primes from [`ecdsa_generate_safe_prime`] (JSON array of
+ * them) into the primes JSON an aux-info ceremony takes. Secret.
+ * @param {string} parts_json
+ * @returns {string}
+ */
+export function ecdsa_primes_from_parts(parts_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(parts_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.ecdsa_primes_from_parts(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * `ecrecover`: the address a 65-byte `r ‖ s ‖ v` signature (v ∈ {0,1,27,28})
+ * over the 32-byte `prehash` recovers to (lowercase 0x hex).
+ * @param {Uint8Array} prehash
+ * @param {Uint8Array} signature
+ * @returns {string}
+ */
+export function ecdsa_recover_ethereum_address(prehash, signature) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passArray8ToWasm0(prehash, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(signature, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.ecdsa_recover_ethereum_address(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Public facts of a key share JSON: `{"participants":[…],"index":i,
+ * "threshold":t,"n":n,"group_public_key":"<33-byte SEC1 hex>"}`.
+ * @param {string} share_json
+ * @returns {string}
+ */
+export function ecdsa_share_info(share_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(share_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.ecdsa_share_info(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
 export function main() {
     wasm.main();
 }
@@ -1528,6 +2097,14 @@ export function to_frost_wire(curve, kind, json_hex) {
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
+        __wbg___wbindgen_string_get_0380ccaa2f57f0d9: function(arg0, arg1) {
+            const obj = arg1;
+            const ret = typeof(obj) === 'string' ? obj : undefined;
+            var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len1 = WASM_VECTOR_LEN;
+            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+        },
         __wbg___wbindgen_throw_41e9ee4f547fc59a: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
@@ -1552,6 +2129,26 @@ function __wbg_get_imports() {
             const ret = new Error();
             return ret;
         },
+        __wbg_new_617a8cdb8bb1130e: function() {
+            const ret = new Object();
+            return ret;
+        },
+        __wbg_new_ee2291f50781bf1d: function() {
+            const ret = new Array();
+            return ret;
+        },
+        __wbg_new_from_slice_9a868026ffa4208a: function(arg0, arg1) {
+            const ret = new Uint8Array(getArrayU8FromWasm0(arg0, arg1));
+            return ret;
+        },
+        __wbg_push_2baf45db356cf468: function(arg0, arg1) {
+            const ret = arg0.push(arg1);
+            return ret;
+        },
+        __wbg_set_145a351398b48c65: function() { return handleError(function (arg0, arg1, arg2) {
+            const ret = Reflect.set(arg0, arg1, arg2);
+            return ret;
+        }, arguments); },
         __wbg_stack_3b0d974bbf31e44f: function(arg0, arg1) {
             const ret = arg1.stack;
             const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
@@ -1561,6 +2158,16 @@ function __wbg_get_imports() {
         },
         __wbg_wasmerror_new: function(arg0) {
             const ret = WasmError.__wrap(arg0);
+            return ret;
+        },
+        __wbindgen_generic_0000000000000001: function(arg0) {
+            // Cast intrinsic for `F64 -> Externref`.
+            const ret = arg0;
+            return ret;
+        },
+        __wbindgen_generic_0000000000000002: function(arg0, arg1) {
+            // Cast intrinsic for `Ref(String) -> Externref`.
+            const ret = getStringFromWasm0(arg0, arg1);
             return ret;
         },
         __wbindgen_init_externref_table: function() {
@@ -1579,6 +2186,15 @@ function __wbg_get_imports() {
     };
 }
 
+const EcdsaAuxInfoFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_ecdsaauxinfo_free(ptr, 1));
+const EcdsaKeygenFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_ecdsakeygen_free(ptr, 1));
+const EcdsaSigningFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_ecdsasigning_free(ptr, 1));
 const FrostDkgEd25519Finalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_frostdkged25519_free(ptr, 1));
@@ -1604,6 +2220,11 @@ function addToExternrefTable0(obj) {
     return idx;
 }
 
+function getArrayU16FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint16ArrayMemory0().subarray(ptr / 2, ptr / 2 + len);
+}
+
 function getArrayU8FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
@@ -1621,6 +2242,14 @@ function getStringFromWasm0(ptr, len) {
     return decodeText(ptr >>> 0, len);
 }
 
+let cachedUint16ArrayMemory0 = null;
+function getUint16ArrayMemory0() {
+    if (cachedUint16ArrayMemory0 === null || cachedUint16ArrayMemory0.byteLength === 0) {
+        cachedUint16ArrayMemory0 = new Uint16Array(wasm.memory.buffer);
+    }
+    return cachedUint16ArrayMemory0;
+}
+
 let cachedUint8ArrayMemory0 = null;
 function getUint8ArrayMemory0() {
     if (cachedUint8ArrayMemory0 === null || cachedUint8ArrayMemory0.byteLength === 0) {
@@ -1636,6 +2265,34 @@ function handleError(f, args) {
         const idx = addToExternrefTable0(e);
         wasm.__wbindgen_exn_store(idx);
     }
+}
+
+function isLikeNone(x) {
+    return x === undefined || x === null;
+}
+
+function passArray16ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 2, 2) >>> 0;
+    getUint16ArrayMemory0().set(arg, ptr / 2);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
+function passArray8ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 1, 1) >>> 0;
+    getUint8ArrayMemory0().set(arg, ptr / 1);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
+function passArrayJsValueToWasm0(array, malloc) {
+    const ptr = malloc(array.length * 4, 4) >>> 0;
+    for (let i = 0; i < array.length; i++) {
+        const add = addToExternrefTable0(array[i]);
+        getDataViewMemory0().setUint32(ptr + 4 * i, add, true);
+    }
+    WASM_VECTOR_LEN = array.length;
+    return ptr;
 }
 
 function passStringToWasm0(arg, malloc, realloc) {
@@ -1716,6 +2373,7 @@ function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     wasmModule = module;
     cachedDataViewMemory0 = null;
+    cachedUint16ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();
     return wasm;

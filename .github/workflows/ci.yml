@@ -42,11 +42,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # Match the desktop client fixes and integrated cache/deletion/control
-      # tests. Core/core-wasm are unchanged; the vendored WASM still matches.
+      # tests, plus the CLI peers starting DKG/reshare round 1 only once the
+      # whole cohort joined. Core/core-wasm are unchanged; the vendored WASM
+      # still matches.
       - uses: actions/checkout@v4
         with:
           repository: stars-labs/starlab-mpc
-          ref: 18328a1b8f6d04c769818036b2a0b835c58d22bb
+          ref: 2a491c2994295683ef8a3ba53f66adbf10d80f08
           path: starlab-mpc
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

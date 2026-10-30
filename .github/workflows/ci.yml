@@ -41,14 +41,12 @@ jobs:
         curve: [secp256k1, ed25519]
     steps:
       - uses: actions/checkout@v4
-      # Match the desktop client fixes and integrated cache/deletion/control
-      # tests, plus the CLI peers starting DKG/reshare round 1 only once the
-      # whole cohort joined. Core/core-wasm are unchanged; the vendored WASM
-      # still matches.
+      # starlab-mpc main with threshold ECDSA (#138); the vendored core-wasm
+      # pkg was built from the same engine code.
       - uses: actions/checkout@v4
         with:
           repository: stars-labs/starlab-mpc
-          ref: 2a491c2994295683ef8a3ba53f66adbf10d80f08
+          ref: 63336972abc60b5cedc2026c039efcdf8e4f2dd8
           path: starlab-mpc
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

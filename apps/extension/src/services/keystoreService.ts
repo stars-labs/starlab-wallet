@@ -108,20 +108,20 @@ export class KeystoreService {
         // must be loaded first (else any password "unlocks").
         await this.loaded;
         try {
+            this.lock();
             this.password = password;
             
             // Try to decrypt one key share to verify password
             if (this.keystoreIndex && this.keystoreIndex.wallets.length > 0) {
                 const firstWallet = this.keystoreIndex.wallets[0];
-                await this.loadKeyShare(firstWallet.id);
+                if (!await this.loadKeyShare(firstWallet.id)) throw new Error("Encrypted wallet share is missing");
             }
             
             this.isUnlocked = true;
             return true;
         } catch (error) {
             console.error("[KeystoreService] Failed to unlock:", error);
-            this.password = null;
-            this.isUnlocked = false;
+            this.lock();
             return false;
         }
     }
@@ -277,7 +277,7 @@ export class KeystoreService {
     /**
      * Export wallet in CLI-compatible format
      */
-    public async exportCLIWallet(walletId: string): Promise<WalletFile> {
+    public async exportCLIWallet(walletId: string, exportPassword?: string): Promise<WalletFile> {
         if (!this.isUnlocked || !this.keystoreIndex) {
             throw new Error("Keystore is locked");
         }
@@ -318,7 +318,7 @@ export class KeystoreService {
         };
         
         // Encrypt with current extension password (CLI will need to re-encrypt with their password)
-        const encryptedData = await this.encryptCLIData(JSON.stringify(cliKeyData));
+        const encryptedData = await this.encryptCLIData(JSON.stringify(cliKeyData), exportPassword);
         
         return {
             version: "2.0",
@@ -438,22 +438,16 @@ export class KeystoreService {
                 continue;
             }
             
-            // Save encrypted share
-            await this.saveEncryptedShare(wallet.metadata.id, wallet.encryptedShare);
-            
-            // Try to decrypt to verify password
+            const encrypted = wallet.encryptedShare;
+            const salt = Uint8Array.from(atob(encrypted.salt), c => c.charCodeAt(0));
+            const iv = Uint8Array.from(atob(encrypted.iv), c => c.charCodeAt(0));
+            const ciphertext = Uint8Array.from(atob(encrypted.ciphertext), c => c.charCodeAt(0));
+            const key = await this.deriveKey(password, salt);
+            let share: KeyShareData;
             try {
-                await this.loadKeyShare(wallet.metadata.id);
-                
-                // Add to index
-                this.keystoreIndex!.wallets.push(wallet.metadata);
-                this.keystoreIndex!.lastModified = Date.now();
-                await this.saveKeystoreIndex();
-            } catch (error) {
-                // Remove if decryption failed
-                await storage.removeItem(`local:${this.SHARES_KEY_PREFIX}${wallet.metadata.id}`);
-                throw new Error("Invalid password for backup");
-            }
+                share = JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext)));
+            } catch { throw new Error('Invalid password for backup'); }
+            await this.addWallet(wallet.metadata.id, share, wallet.metadata);
         }
     }
     
@@ -697,7 +691,7 @@ export class KeystoreService {
     /**
      * Encrypt data in CLI format
      */
-    private async encryptCLIData(data: string): Promise<string> {
+    private async encryptCLIData(data: string, exportPassword?: string): Promise<string> {
         if (!this.password) {
             throw new Error("No password set");
         }
@@ -707,7 +701,7 @@ export class KeystoreService {
         const nonce = crypto.getRandomValues(new Uint8Array(12));
         
         // Derive key (should be Argon2id for full CLI compatibility)
-        const key = await this.deriveCLIKey(this.password, salt);
+        const key = await this.deriveCLIKey(exportPassword ?? this.password, salt);
         
         // Encrypt data
         const encoder = new TextEncoder();

@@ -8,6 +8,9 @@
 // ===================================================================
 
 import { KeystoreService } from './keystoreService';
+import { getHardwareVault, sealHardwareVault, openHardwareVault, encodeBytes, HARDWARE_VAULT_KEY, type HardwareAssertion, type HardwareVaultRecord } from './hardwareVault';
+
+export interface KeystoreAuthStatus { mode: 'unconfigured' | 'password' | 'hardware'; credential?: HardwareVaultRecord; }
 import type { KeyShareData, ExtensionWalletMetadata, EncryptedKeyShare } from "@stars-labs/types/keystore";
 
 interface KeystoreSession {
@@ -15,13 +18,15 @@ interface KeystoreSession {
     unlockedAt?: number;
     deviceId: string;
     sessionTimeout: number; // in milliseconds
-    expiresAt?: number; // Unix timestamp when session expires
 }
 
 export class KeystoreManager {
     private static instance: KeystoreManager;
     private keystoreService: KeystoreService;
     private session: KeystoreSession | null = null;
+    private hardwareVerifiedAt: number | null = null;
+    private authenticationBusy = false;
+    private lockEpoch = 0;
     private lockTimer: ReturnType<typeof setTimeout> | null = null;
     
     // Default session timeout: 15 minutes
@@ -90,9 +95,83 @@ export class KeystoreManager {
         // set this session. The locked session initialize() writes on every
         // startup does not count — it would skip first-run password setup.
         const wallets = this.keystoreService.getWallets();
-        return wallets.length > 0 || this.session?.unlocked === true;
+        return (await getHardwareVault()) !== null || wallets.length > 0 || this.session?.unlocked === true;
     }
     
+    public async getAuthStatus(): Promise<KeystoreAuthStatus> {
+        await this.keystoreService.ready();
+        const credential = await getHardwareVault();
+        if (credential) return { mode: 'hardware', credential };
+        return { mode: await this.isInitialized() ? 'password' : 'unconfigured' };
+    }
+
+    /** Enroll only an empty vault; never replace existing wallet encryption. */
+    public async createHardwareKeystore(assertion: HardwareAssertion, deviceId?: string): Promise<void> {
+        return this.authenticate(async epoch => {
+            await this.keystoreService.ready();
+            if (await this.isInitialized()) throw new Error('A vault already exists on this device');
+            const secret = encodeBytes(crypto.getRandomValues(new Uint8Array(32)));
+            const record = await sealHardwareVault(assertion, secret);
+            const resolvedDeviceId = deviceId || this.session?.deviceId || 'default';
+            await this.keystoreService.initialize(resolvedDeviceId);
+            this.requireCurrentAuthentication(epoch);
+            // Persist the authenticated empty-vault marker before reporting setup complete.
+            await chrome.storage.local.set({ [HARDWARE_VAULT_KEY]: record });
+            this.requireCurrentAuthentication(epoch);
+            await this.unlockVaultSecret(secret, resolvedDeviceId, epoch);
+        });
+    }
+
+    public async unlockHardwareKeystore(assertion: HardwareAssertion): Promise<void> {
+        return this.authenticate(async epoch => {
+            const record = await getHardwareVault();
+            if (!record) throw new Error('No hardware vault is configured');
+            const secret = await openHardwareVault(record, assertion);
+            this.requireCurrentAuthentication(epoch);
+            await this.unlockVaultSecret(secret, this.session?.deviceId || 'default', epoch);
+        }, true);
+    }
+
+    private async unlockVaultSecret(secret: string, deviceId: string, epoch: number): Promise<void> {
+        if (!await this.keystoreService.unlock(secret)) throw new Error('Hardware vault could not decrypt the wallet');
+        this.requireCurrentAuthentication(epoch);
+        this.session = { unlocked: true, unlockedAt: Date.now(), deviceId, sessionTimeout: this.DEFAULT_SESSION_TIMEOUT };
+        await this.saveSession();
+        this.requireCurrentAuthentication(epoch);
+        this.setupAutoLockTimer(this.DEFAULT_SESSION_TIMEOUT);
+        this.hardwareVerifiedAt = Date.now();
+    }
+
+    private requireCurrentAuthentication(epoch: number): void {
+        if (epoch !== this.lockEpoch) throw new Error('Wallet was locked during authentication. Try again.');
+    }
+
+    /** Serialize changes to the one in-memory vault secret; a later lock wins. */
+    private async authenticate<T>(operation: (epoch: number) => Promise<T>, lockFirst = false): Promise<T> {
+        if (this.authenticationBusy) throw new Error('Another authentication operation is finishing. Try again.');
+        this.authenticationBusy = true;
+        if (lockFirst) this.lock();
+        const epoch = this.lockEpoch;
+        try {
+            const result = await operation(epoch);
+            this.requireCurrentAuthentication(epoch);
+            return result;
+        } catch (error) {
+            this.lock();
+            throw error;
+        } finally { this.authenticationBusy = false; }
+    }
+
+    /** Fresh hardware touch authorizes a portable backup, without exposing the vault secret. */
+    public hasRecentHardwareVerification(): boolean {
+        return !this.isLocked() && this.hardwareVerifiedAt !== null
+            && Date.now() >= this.hardwareVerifiedAt && Date.now() - this.hardwareVerifiedAt < 60_000;
+    }
+
+    public assertHardwareExportAuthorized(): void {
+        if (!this.hasRecentHardwareVerification()) throw new Error('Verify your hardware key again before exporting a backup');
+    }
+
     /**
      * Check if keystore is locked
      */
@@ -109,29 +188,34 @@ export class KeystoreManager {
      */
     public async createKeystore(password: string, deviceId?: string): Promise<boolean> {
         try {
-            const resolvedDeviceId =
-                deviceId || this.session?.deviceId || 'default';
-            // Initialize keystore service
-            await this.keystoreService.initialize(resolvedDeviceId);
+            return await this.authenticate(async epoch => {
+                if (await getHardwareVault()) throw new Error('Use your hardware key to unlock this vault');
+                const resolvedDeviceId =
+                    deviceId || this.session?.deviceId || 'default';
+                // Initialize keystore service
+                await this.keystoreService.initialize(resolvedDeviceId);
 
-            // Set the password and unlock
-            const success = await this.keystoreService.unlock(password);
+                // Set the password and unlock
+                const success = await this.keystoreService.unlock(password);
+                this.requireCurrentAuthentication(epoch);
 
-            if (success) {
-                this.session = {
-                    unlocked: true,
-                    unlockedAt: Date.now(),
-                    deviceId: resolvedDeviceId,
-                    sessionTimeout: this.DEFAULT_SESSION_TIMEOUT
-                };
+                if (success) {
+                    this.session = {
+                        unlocked: true,
+                        unlockedAt: Date.now(),
+                        deviceId: resolvedDeviceId,
+                        sessionTimeout: this.DEFAULT_SESSION_TIMEOUT
+                    };
+
+                    await this.saveSession();
+                    this.requireCurrentAuthentication(epoch);
+                    this.setupAutoLockTimer(this.session.sessionTimeout);
+
+                    return true;
+                }
                 
-                await this.saveSession();
-                this.setupAutoLockTimer(this.session.sessionTimeout);
-                
-                return true;
-            }
-            
-            return false;
+                return false;
+            });
         } catch (error) {
             console.error('[KeystoreManager] Create keystore failed:', error);
             return false;
@@ -143,44 +227,39 @@ export class KeystoreManager {
      */
     public async unlock(password: string, rememberDuration?: number): Promise<boolean> {
         try {
-            const success = await this.keystoreService.unlock(password);
-            
-            if (success) {
-                if (!this.session) {
-                    this.session = {
-                        unlocked: true,
-                        unlockedAt: Date.now(),
-                        deviceId: 'default',
-                        sessionTimeout: rememberDuration || this.DEFAULT_SESSION_TIMEOUT
-                    };
-                } else {
-                    this.session.unlocked = true;
-                    this.session.unlockedAt = Date.now();
-                    if (rememberDuration) {
-                        this.session.sessionTimeout = rememberDuration;
+            return await this.authenticate(async epoch => {
+                if (await getHardwareVault()) { this.lock(); return false; }
+                const success = await this.keystoreService.unlock(password);
+                this.requireCurrentAuthentication(epoch);
+                
+                if (success) {
+                    if (!this.session) {
+                        this.session = {
+                            unlocked: true,
+                            unlockedAt: Date.now(),
+                            deviceId: 'default',
+                            sessionTimeout: rememberDuration || this.DEFAULT_SESSION_TIMEOUT
+                        };
+                    } else {
+                        this.session.unlocked = true;
+                        this.session.unlockedAt = Date.now();
+                        if (rememberDuration) {
+                            this.session.sessionTimeout = rememberDuration;
+                        }
                     }
-                }
-                
-                await this.saveSession();
-                this.setupAutoLockTimer(this.session.sessionTimeout);
-                
-                // Store password hash for auto-unlock (optional, for better UX)
-                if (rememberDuration && rememberDuration > this.DEFAULT_SESSION_TIMEOUT) {
-                    await this.storePasswordHash(password);
-                }
-                
-                // Set session expiry
-                if (this.session && rememberDuration) {
-                    this.session.expiresAt = Date.now() + (rememberDuration * 1000);
+
                     await this.saveSession();
+                    this.requireCurrentAuthentication(epoch);
+                    this.setupAutoLockTimer(this.session.sessionTimeout);
+
+                    return true;
                 }
                 
-                return true;
-            }
-            
-            return false;
+                return false;
+            });
         } catch (error) {
             console.error('[KeystoreManager] Unlock failed:', error);
+            this.lock();
             return false;
         }
     }
@@ -189,6 +268,8 @@ export class KeystoreManager {
      * Lock keystore
      */
     public lock(): void {
+        this.lockEpoch++;
+        this.hardwareVerifiedAt = null;
         this.keystoreService.lock();
         
         if (this.session) {
@@ -399,7 +480,7 @@ export class KeystoreManager {
     private async saveSession(): Promise<void> {
         if (this.session) {
             await chrome.storage.session.set({
-                keystore_session: this.session
+                keystoreSession: this.session
             });
         }
     }
@@ -413,20 +494,6 @@ export class KeystoreManager {
             console.log('[KeystoreManager] Auto-locking due to timeout');
             this.lock();
         }, timeout);
-    }
-    
-    private async storePasswordHash(password: string): Promise<void> {
-        // In production, use a proper password hashing algorithm
-        // This is simplified for demonstration
-        const encoder = new TextEncoder();
-        const data = encoder.encode(password);
-        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-        
-        await chrome.storage.local.set({
-            keystorePasswordHash: hashHex
-        });
     }
     
     /**

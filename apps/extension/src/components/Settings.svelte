@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { SECURITY_KEY_MESSAGES, type SecurityKeyMessage } from "../services/securityKeyProtocol";
     import { tokenName } from "../lib/ui/tokenIdentity";
     import WalletRestore from "./WalletRestore.svelte";
     import TokenIcon from "../lib/ui/TokenIcon.svelte";
@@ -53,6 +54,7 @@
 
     /** Active wallet address (for the token-approvals review). */
     export let currentAddress: string = "";
+    export let authMode: "unconfigured" | "password" | "hardware" = "password";
 
     // Tenant room (multi-tenant signal server, #31). The hosted server routes
     // each ?room=<id> to an isolated instance and REQUIRES a strong room.
@@ -288,15 +290,33 @@
     // Keystore backup (#22): export this device's key share as a file.
     let backupAcknowledged = false;
     let backupStatus = "";
+    let backupError = false;
+    let verifyingYubiKey = false;
+    async function verifyYubiKeyForBackup() {
+        verifyingYubiKey = true;
+        backupError = false;
+        backupStatus = "";
+        try {
+            const response = await chrome.runtime.sendMessage({ type: SECURITY_KEY_MESSAGES.OPEN, action: "unlock" } satisfies SecurityKeyMessage);
+            if (!response?.success) throw new Error(response?.error || "Could not open YubiKey verification. Try again.");
+            backupStatus = "Verification opened in a Starlab tab. After verifying, open your wallet, return to Settings and export within one minute.";
+        } catch (e) {
+            backupError = true;
+            backupStatus = e instanceof Error ? e.message : "Could not open YubiKey verification. Try again.";
+        } finally { verifyingYubiKey = false; }
+    }
     let backupPassword = "";
     let backupPasswordConfirm = "";
     function exportKeystoreBackup() {
         backupStatus = "";
+        backupError = false;
         if (backupPassword.length < 8) {
+            backupError = true;
             backupStatus = "Backup password must be at least 8 characters.";
             return;
         }
         if (backupPassword !== backupPasswordConfirm) {
+            backupError = true;
             backupStatus = "Passwords don't match.";
             return;
         }
@@ -304,7 +324,8 @@
             { type: "exportKeystore", password: backupPassword },
             (response) => {
                 if (chrome.runtime.lastError) {
-                    backupStatus = `Export failed: ${chrome.runtime.lastError.message}`;
+                    backupError = true;
+                    backupStatus = "Could not export the backup. Try again.";
                     return;
                 }
                 if (response?.success && response.keystoreData) {
@@ -331,7 +352,10 @@
                             ? `Encrypted backup saved as ${files.length} files (one per key) — keep them together, offline.`
                             : "Encrypted backup saved. Store it offline, away from this device.";
                 } else {
-                    backupStatus = `Export failed: ${response?.error ?? "unknown error"}`;
+                    backupError = true;
+                    backupStatus = authMode === "hardware" && /verify|locked/i.test(response?.error ?? "")
+                        ? "Verify your YubiKey again, then return to Settings and export within one minute."
+                        : `Export failed: ${response?.error ?? "unknown error"}`;
                 }
             },
         );
@@ -778,6 +802,14 @@
             the file like a secret: store it offline, never paste it anywhere.
             Restore your device from this file when needed.
         </p>
+        {#if authMode === "hardware"}
+            <div class="rounded-xl bg-surface-2 p-3 space-y-2">
+                <p class="text-xs text-muted">Portable backups use a separate password you choose. Verify your YubiKey first, then return here and export. This backup password is not used for daily unlock.</p>
+                <Button size="sm" variant="secondary" on:click={verifyYubiKeyForBackup} disabled={verifyingYubiKey}>
+                    <Icon name="shield" size={14} /> {verifyingYubiKey ? "Opening verification…" : "Verify YubiKey"}
+                </Button>
+            </div>
+        {/if}
         <label class="flex items-center gap-2 text-xs">
             <input type="checkbox" bind:checked={backupAcknowledged} />
             I understand this file contains key material
@@ -802,7 +834,7 @@
             </Button>
         </div>
         {#if backupStatus}
-            <p class="text-xs text-muted">{backupStatus}</p>
+            <p class={backupError ? "text-xs text-danger-fg" : "text-xs text-muted"} role={backupError ? "alert" : "status"}>{backupStatus}</p>
         {/if}
         <WalletRestore chain={getProtocolBlockchainForChain(chain)} />
     </div>

@@ -39,4 +39,17 @@ describe("KeystoreManager.isInitialized", () => {
         await km.createKeystore("pw", "ext-00000001");
         expect(await km.isInitialized()).toBe(true);
     });
+
+    it('publishes the observed session key without persisting an unused password verifier', async () => {
+        const km = KeystoreManager.getInstance();
+        await km.initialize('session-fixture');
+        await km.createKeystore('session test password', 'session-fixture');
+        await km.unlock('session test password', 30 * 60_000);
+        const stored = await chrome.storage.session.get(null);
+        expect(stored.keystoreSession).toMatchObject({ unlocked: true, deviceId: 'session-fixture' });
+        expect(stored.keystoreSession).not.toHaveProperty('expiresAt');
+        expect(stored).not.toHaveProperty('keystore_session');
+        expect((await chrome.storage.local.get('keystorePasswordHash')).keystorePasswordHash).toBeUndefined();
+        km.lock();
+    });
 });

@@ -1192,9 +1192,15 @@ export class PopupMessageHandler {
         sendResponse: (response: any) => void,
     ): Promise<void> {
         try {
+            const keystoreManager = KeystoreManager.getInstance();
+            const hardware = (await keystoreManager.getAuthStatus()).mode === 'hardware';
             const password = message.password;
-            if (typeof password !== "string" || password.length < 1) {
+            if (!hardware && (typeof password !== "string" || password.length < 1)) {
                 sendResponse({ success: false, error: "Password required" });
+                return;
+            }
+            if (hardware && keystoreManager.isLocked()) {
+                sendResponse({ success: false, error: 'Unlock with your YubiKey before saving this wallet' });
                 return;
             }
             const walletName =
@@ -1287,11 +1293,9 @@ export class PopupMessageHandler {
             // unlock on subsequent saves. The SAME password is used
             // for both the keystore master password AND per-wallet
             // encryption — matches the existing UX where there's
-            // only one user-visible password.
-            const { KeystoreManager } = await import(
-                "../../services/keystoreManager"
-            );
-            const km = KeystoreManager.getInstance();
+            // only one user-visible password in password mode. Hardware
+            // mode already holds its random vault secret in the service.
+            const km = keystoreManager;
             const isInit = await km.isInitialized();
             if (!isInit) {
                 console.log(
@@ -1498,7 +1502,7 @@ export class PopupMessageHandler {
     }
 
     private async handleSendDirectMessageRequest(message: any, sendResponse: (response: any) => void): Promise<void> {
-        console.log("[PopupMessageHandler] Received sendDirectMessage request:", message);
+        console.log("[PopupMessageHandler] Received sendDirectMessage request:", redactForLog(message));
 
         if ('todeviceId' in message && 'message' in message &&
             typeof message.todeviceId === 'string' && typeof message.message === 'string') {
@@ -1643,7 +1647,7 @@ export class PopupMessageHandler {
     }
 
     private async handleRequestSigningMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
-        console.log("[PopupMessageHandler] Received requestSigning:", message);
+        console.log("[PopupMessageHandler] Received requestSigning:", redactForLog(message));
 
         if ('signingId' in message && 'transactionData' in message && 'requiredSigners' in message) {
             // Forward signing request to offscreen document
@@ -1850,6 +1854,9 @@ export class PopupMessageHandler {
                 sendResponse({ success: false, error: "Backup password must be at least 8 characters" });
                 return;
             }
+            if ((await keystoreManager.getAuthStatus()).mode === 'hardware') {
+                keystoreManager.assertHardwareExportAuthorized();
+            }
             const keyShare = await keystoreManager.getKeyShare(wallet.id);
             if (!keyShare) {
                 sendResponse({ success: false, error: `No key share stored for wallet ${wallet.id}` });
@@ -1956,7 +1963,8 @@ export class PopupMessageHandler {
             const keystoreManager = KeystoreManager.getInstance();
             const deviceId = this.stateManager.getState().deviceId;
             
-            await keystoreManager.createKeystore(message.password, deviceId);
+            const created = await keystoreManager.createKeystore(message.password, deviceId);
+            if (!created) throw new Error('Could not create the vault. Check the unlock method and try again.');
             // Onboarding done: start on the ECDSA primes a first wallet needs.
             syncEcdsaPrimes();
 
@@ -1978,6 +1986,7 @@ export class PopupMessageHandler {
             
             const status = {
                 initialized: await keystoreManager.isInitialized(),
+                authMode: (await keystoreManager.getAuthStatus()).mode,
                 locked: keystoreManager.isLocked(),
                 wallets: keystoreManager.getWallets(),
                 activeWallet: keystoreManager.getActiveWallet()
@@ -2206,7 +2215,7 @@ export class OffscreenMessageHandler {
      * Handle messages from offscreen document
      */
     async handleOffscreenMessage(payload: OffscreenToBackgroundMessage): Promise<void> {
-        console.log("[OffscreenMessageHandler] Handling offscreen message:", payload);
+        console.log("[OffscreenMessageHandler] Handling offscreen message:", redactForLog(payload));
 
         switch (payload.type) {
             case "relayViaWs":
@@ -2300,12 +2309,12 @@ export class OffscreenMessageHandler {
             const source = payload.payload.source || 'offscreen';
             console.log(`📄 [OffscreenMessageHandler] LOG from ${source}: ${payload.payload.message}`);
         } else {
-            console.log("[OffscreenMessageHandler] LOG:", payload);
+            console.log("[OffscreenMessageHandler] LOG:", redactForLog(payload));
         }
     }
 
     private async handleDkgComplete(payload: any): Promise<void> {
-        console.log("[OffscreenMessageHandler] DKG complete:", payload);
+        console.log("[OffscreenMessageHandler] DKG complete:", redactForLog(payload));
         
         // Update DKG state to Complete
         this.stateManager.updateStateProperty('dkgState', DkgState.Complete);
@@ -2371,7 +2380,7 @@ export class OffscreenMessageHandler {
     }
 
     private handleDkgStateUpdate(payload: any): void {
-        console.log("[OffscreenMessageHandler] DKG state update:", payload);
+        console.log("[OffscreenMessageHandler] DKG state update:", redactForLog(payload));
         
         if (payload.payload && typeof payload.payload.state === 'number') {
             const newState = payload.payload.state;

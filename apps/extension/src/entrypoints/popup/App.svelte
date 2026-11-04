@@ -42,6 +42,7 @@
     import SignatureRequest from "../../components/SignatureRequest.svelte";
     import ConnectRequest from "../../components/ConnectRequest.svelte";
     import type { ConnectRequestView } from "../background/connectRequest";
+    import { SECURITY_KEY_MESSAGES, type SecurityKeyMessage } from "../../services/securityKeyProtocol";
     import PasswordPrompt from "./components/PasswordPrompt.svelte";
     import WalletSelector from "./components/WalletSelector.svelte";
     import CreateWalletForm from "../../components/CreateWalletForm.svelte";
@@ -652,6 +653,7 @@
         wallets: import("@stars-labs/types/keystore").ExtensionWalletMetadata[];
         activeWallet: import("@stars-labs/types/keystore").ExtensionWalletMetadata | null;
         pendingImport: boolean;
+        authMode?: "unconfigured" | "password" | "hardware";
     } = {
         initialized: false,
         locked: true,
@@ -1940,7 +1942,7 @@
     function showUnlockPrompt() {
         passwordPromptConfig = {
             title: "Unlock Wallet",
-            message: "Enter your password to unlock the wallet",
+            message: keystoreStatus.authMode === "hardware" ? "Unlock this device with your YubiKey" : "Enter your password to unlock the wallet",
             confirmMode: false,
             onSubmit: handleUnlockPassword,
             onCancel: () => { showPasswordPrompt = false; }
@@ -1952,7 +1954,7 @@
     function showCreateKeystorePrompt() {
         passwordPromptConfig = {
             title: "Create Wallet",
-            message: "Create a password to secure your wallet",
+            message: "Choose how to unlock this device",
             confirmMode: true,
             onSubmit: handleCreateKeystore,
             onCancel: () => { showPasswordPrompt = false; }
@@ -1961,6 +1963,18 @@
         showPasswordPrompt = true;
     }
     
+    async function openSecurityKey(action: "create" | "unlock") {
+        passwordPromptError = "";
+        try {
+            const response = await chrome.runtime.sendMessage({ type: SECURITY_KEY_MESSAGES.OPEN, action } satisfies SecurityKeyMessage);
+            if (!response?.success) throw new Error(response?.error || "Could not open YubiKey verification. Try again.");
+            showPasswordPrompt = false;
+        } catch (e) {
+            passwordPromptError = e instanceof Error ? e.message : "Could not open YubiKey verification. Try again.";
+            if (!showPasswordPrompt) saveError = passwordPromptError;
+        }
+    }
+
     let passwordPromptError = "";
     async function handleUnlockPassword(event: CustomEvent) {
         const password = event.detail.password;
@@ -2140,6 +2154,7 @@
     {#if appState.showSettings}
         <Settings
             currentAddress={displayAddress}
+            authMode={keystoreStatus.authMode ?? "password"}
             on:backToWallet={({ detail }) => {
                 if (isSupportedChain(detail.chain)) {
                     appState.chain = detail.chain;
@@ -2200,7 +2215,7 @@
             </div>
             <h2 class="text-lg font-bold">Welcome to MPC Wallet</h2>
             <p class="mx-auto mt-1.5 max-w-[16rem] text-sm text-muted">
-                Set a password to create your wallet. Your keys are split
+                Choose YubiKey unlock or a password to protect this device. Your keys are split
                 across devices — no single device can sign on its own.
             </p>
             <Button class="mt-5" block on:click={showCreateKeystorePrompt}>
@@ -2897,12 +2912,12 @@
                     class="card card-pad space-y-3"
                     on:submit|preventDefault={async () => {
                         saveError = "";
-                        if (!savePassword || savePassword.length < 8) {
+                        if (keystoreStatus.authMode !== "hardware" && (!savePassword || savePassword.length < 8)) {
                             saveError =
                                 "Password must be at least 8 characters";
                             return;
                         }
-                        if (savePassword !== saveConfirm) {
+                        if (keystoreStatus.authMode !== "hardware" && savePassword !== saveConfirm) {
                             saveError = "Passwords don't match";
                             return;
                         }
@@ -2910,7 +2925,7 @@
                         try {
                             const response = await chrome.runtime.sendMessage({
                                 type: MESSAGE_TYPES.SAVE_DKG_WALLET,
-                                password: savePassword,
+                                password: keystoreStatus.authMode === "hardware" ? "" : savePassword,
                                 walletName:
                                     saveWalletName.trim() || undefined,
                             });
@@ -2938,8 +2953,9 @@
                         <Icon name="download" size={15} /> Save this wallet
                     </p>
                     <p class="-mt-1 text-xs text-muted">
-                        Encrypt your key share with a password so it survives
-                        restarts.
+                        {keystoreStatus.authMode === "hardware"
+                            ? "Save this wallet using the YubiKey protection already set up on this device. No wallet password is needed."
+                            : "Encrypt your key share with a password so it survives restarts."}
                     </p>
                     <input
                         type="text"
@@ -2948,6 +2964,7 @@
                         class="input"
                         disabled={saving}
                     />
+                    {#if keystoreStatus.authMode !== "hardware"}
                     <input
                         type="password"
                         placeholder="Password (at least 8 characters)"
@@ -2964,11 +2981,15 @@
                         disabled={saving}
                         autocomplete="new-password"
                     />
+                    {:else if keystoreStatus.locked}
+                        <p class="text-xs text-muted">Unlock with your YubiKey before saving this wallet.</p>
+                        <Button block variant="secondary" on:click={() => openSecurityKey("unlock")}>Unlock with YubiKey</Button>
+                    {/if}
                     {#if saveError}
                         <p class="text-xs text-danger-fg">{saveError}</p>
                     {/if}
-                    <Button type="submit" block variant="success" disabled={saving}>
-                        {saving ? "Encrypting…" : "Encrypt & save"}
+                    <Button type="submit" block variant="success" disabled={saving || (keystoreStatus.authMode === "hardware" && keystoreStatus.locked)}>
+                        {saving ? "Saving…" : keystoreStatus.authMode === "hardware" ? "Save wallet" : "Encrypt & save"}
                     </Button>
                 </form>
             {/if}
@@ -3559,6 +3580,8 @@
         title={passwordPromptConfig.title}
         message={passwordPromptConfig.message}
         confirmMode={passwordPromptConfig.confirmMode}
+        authMode={keystoreStatus.authMode === "hardware" ? "security-key" : "password"}
+        on:securitykey={() => openSecurityKey(passwordPromptConfig.confirmMode ? "create" : "unlock")}
         on:submit={(e: CustomEvent) => {
             passwordPromptConfig.onSubmit?.(e);
         }}

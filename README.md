@@ -37,9 +37,10 @@ verified browser path is Chromium.
 
 ## Use the wallet
 
-1. Open the extension and set this device's password. Each participating device
-   stores its own encrypted share; the password does not replace the other
-   devices needed to sign.
+1. Open the extension and choose **YubiKey** to create a passwordless local
+   vault, or choose **Password**. YubiKey setup requires a FIDO2 key with
+   WebAuthn PRF support; follow the browser's PIN and touch prompts. Each device
+   stores its own encrypted share and still needs the other signing devices.
 2. Choose **Create wallet** on one device. Select the devices and threshold,
    then share the invitation with the other participants. On each invited
    device, use **Accept & join** and keep the clients connected until setup
@@ -70,6 +71,22 @@ share an unencrypted device share or a password with another participant.
 are unchanged by refresh.** Dropping a device through FROST refresh does not
 remove that device's Ethereum share. Follow the recovery guidance for the
 chain you use.
+
+## Passwordless vaults
+
+A new or empty vault can use YubiKey for setup and unlock without a wallet
+password. Existing password-protected wallets are not automatically converted.
+This uses the browser's WebAuthn PRF flow; the native host described below is
+only needed for hardware signing accounts. Unsupported keys fail with an error.
+
+For a hardware vault, verify your YubiKey in **Settings** before exporting a
+backup, then choose a separate password for the portable backup file. Keep a
+recoverable share backup before relying on one physical key. Physical YubiKey
+compatibility still needs verification on your device.
+
+When updating an unpacked build, replace files in the **same directory** and
+click **Reload** on its extension card. A different directory can change the
+extension identity and prevent access to the existing WebAuthn credential.
 
 ## Hardware accounts
 

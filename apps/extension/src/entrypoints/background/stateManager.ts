@@ -23,7 +23,7 @@ import {
 import { MeshStatusType } from "@stars-labs/types/mesh";
 import { DkgState } from "@stars-labs/types/dkg";
 import type { KeyShareData } from "@stars-labs/types/keystore";
-import { keyShareCoreFromEngine } from "../../utils/engineKeystore";
+import { keyShareCoreFromEngine, parseEngineKeystore } from "../../utils/engineKeystore";
 import type {
     BackgroundToPopupMessage,
     InitialStateMessage,
@@ -41,7 +41,7 @@ export type DkgStateListener = (state: DkgState) => void;
  * background until the wallet is saved; the popup never needs it, and the
  * popup logs every message it receives. Apply at every popup egress.
  */
-const SECRET_KEYS = ["pendingKeystoreJson", "keystoreJson", "pendingEcdsaShareJson", "ecdsa"] as const;
+const SECRET_KEYS = ["pendingFrostShares", "frost", "keystoreJson", "pendingEcdsaShareJson", "ecdsa"] as const;
 
 export function withoutSecrets<T extends object>(message: T): T {
     if (!SECRET_KEYS.some((k) => k in message)) return message;
@@ -125,7 +125,7 @@ export class StateManager {
                 // key package in memory only. On a SW restart we
                 // can't recover it — force-reset so a "dangling
                 // pendingKeystoreReady" flag doesn't lie to the UI.
-                (this.appState as any).pendingKeystoreJson = null;
+                this.appState.pendingFrostShares = null;
                 (this.appState as any).pendingKeystoreReady = false;
                 this.appState.pendingEcdsaShareJson = null;
                 console.log("[StateManager] State restored from persistence");
@@ -541,7 +541,7 @@ export class StateManager {
                 // handler later consumes to build the KeyShareData
                 // and call KeystoreManager.addWallet.
                 //
-                // Security note: pendingKeystoreJson holds the
+                // Security note: pendingFrostShares holds the
                 // decrypted key package material (base64 inside
                 // JSON). It lives ONLY in in-memory appState; never
                 // written to chrome.storage.local. A SW restart
@@ -551,17 +551,26 @@ export class StateManager {
                 // set.
                 {
                     const info: any = payload;
-                    const sessionChain =
-                        isSupportedChain(this.appState.sessionInfo?.blockchain)
-                            ? this.appState.sessionInfo?.blockchain
-                            : this.getChain();
-                    (this.appState as any).dkgAddress = info.address ?? "";
-                    (this.appState as any).dkgGroupPublicKey =
-                        info.groupPublicKey ?? "";
-                    (this.appState as any).dkgLastResult = {
-                        groupPublicKey: info.groupPublicKey,
-                        address: info.address,
-                        blockchain: info.blockchain,
+                    if (info.curveType !== "unified" || !info.frost?.ed25519?.keystoreJson || !info.frost.ed25519.groupPublicKey || !info.frost?.secp256k1?.keystoreJson || !info.frost.secp256k1.groupPublicKey || !info.ecdsa?.shareJson || !info.ecdsa.groupPublicKey) {
+                        this.appState.dkgState = DkgState.Failed;
+                        this.appState.pendingKeystoreReady = false;
+                        this.appState.pendingFrostShares = null;
+                        this.appState.pendingEcdsaShareJson = null;
+                        throw new Error("Incomplete unified DKG: all three algorithm shares are required");
+                    }
+                    const sessionChain = this.getChain();
+                    const frostGroupPublicKeys = {
+                        ed25519: info.frost.ed25519.groupPublicKey,
+                        secp256k1: info.frost.secp256k1.groupPublicKey,
+                    };
+                    this.appState.frostGroupPublicKeys = frostGroupPublicKeys;
+                    this.appState.walletQuorums = Object.fromEntries(["ed25519","secp256k1","secp256k1-ecdsa"].map(curve => [curve,{threshold:info.threshold,total:info.total}]));
+                    this.appState.dkgAddress = info.addresses?.[sessionChain] ?? "";
+                    this.appState.dkgGroupPublicKey = frostGroupPublicKeys.secp256k1;
+                    this.appState.dkgLastResult = {
+                        groupPublicKey: frostGroupPublicKeys.secp256k1,
+                        address: this.appState.dkgAddress,
+                        blockchain: getProtocolBlockchainForChain(sessionChain),
                         chain: sessionChain,
                         sessionId: info.sessionId,
                         threshold: info.threshold,
@@ -570,16 +579,11 @@ export class StateManager {
                         participantIndex: info.participantIndex,
                         participantIdentifiers: info.participantIdentifiers,
                         completedAt: Date.now(),
-                    };
-                    (this.appState as any).pendingKeystoreJson =
-                        info.keystoreJson ?? null;
-                    (this.appState as any).pendingKeystoreReady =
-                        typeof info.keystoreJson === "string" &&
-                        info.keystoreJson.length > 0;
-                    // secp256k1: the wallet's threshold-ECDSA key (Ethereum).
-                    // Its share is as secret as the FROST one: memory only.
-                    this.appState.pendingEcdsaShareJson = info.ecdsa?.shareJson ?? null;
-                    this.appState.ecdsaGroupPublicKey = info.ecdsa?.groupPublicKey ?? "";
+                    } as any;
+                    this.appState.pendingFrostShares = info.frost;
+                    this.appState.pendingKeystoreReady = true;
+                    this.appState.pendingEcdsaShareJson = info.ecdsa.shareJson;
+                    this.appState.ecdsaGroupPublicKey = info.ecdsa.groupPublicKey;
                     this.appState.ecdsaDkgStatus = null;
                     // The DKG is done; it is no longer something to join
                     // (see WebSocketManager: re-announces are ignored too).
@@ -589,7 +593,7 @@ export class StateManager {
                     console.log(
                         "[StateManager] DKG complete received:",
                         (this.appState as any).dkgLastResult,
-                        `(keystore JSON ${info.keystoreJson ? "PRESENT" : "MISSING"})`,
+                        "(all three algorithm shares present)",
                     );
                     this.broadcastToPopupPorts({
                         ...info,
@@ -695,7 +699,7 @@ export class StateManager {
                 // so the popup can render a SignatureComplete banner,
                 // and clear the in-progress session so the user can
                 // start a new ceremony. Kept in in-memory appState only
-                // (same reasoning as pendingKeystoreJson — a SW restart
+                // (same reasoning as pendingFrostShares — a SW restart
                 // intentionally zeroes it; signatures are relevant only
                 // to the session where they were produced).
                 {
@@ -993,7 +997,8 @@ export class StateManager {
                     "Keystore locked before the new share could be saved — unlock and redo the reshare",
                 );
             }
-            const oldShare = await km.getKeyShare(info.walletId);
+            const targetCurve = parseEngineKeystore(info.newKeystoreJson).curve;
+            const oldShare = await km.getKeyShare(info.walletId, targetCurve);
             if (!oldShare) {
                 throw new Error(`No stored share for wallet ${info.walletId}`);
             }
@@ -1012,6 +1017,7 @@ export class StateManager {
             if (!ok) {
                 throw new Error("updateWalletKeyShare returned false");
             }
+            this.appState.walletQuorums = {...this.appState.walletQuorums,[targetCurve]:{threshold:newShare.threshold,total:newShare.total_participants}};
             saved = true;
             console.log(
                 `[StateManager] ✅ Reshare saved: wallet ${info.walletId} now ${newShare.threshold}-of-${newShare.total_participants} (group key unchanged)`,

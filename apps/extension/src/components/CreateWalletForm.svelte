@@ -15,35 +15,20 @@
     import ChainIcon from "../lib/ui/ChainIcon.svelte";
     import Icon from "../lib/ui/Icon.svelte";
     import { guideError } from "../utils/error-guidance";
-    import {
-        CHAIN_METADATA,
-        EVM_CHAINS,
-        LIMITED_CHAINS,
-        getRequiredCurve,
-        type SupportedChain,
-    } from "@stars-labs/types/appstate";
-
-    let showAdvanced = false;
-
-    export let deviceId: string = "";
     export let wsConnected: boolean = false;
     export let room: string = "";
 
     const dispatch = createEventDispatcher<{
-        created: { sessionId: string; chain: SupportedChain };
+        created: { sessionId: string };
         cancel: void;
     }>();
 
     // Defaults match TUI's ThresholdConfig screen starting values.
     let total = 3;
     let threshold = 2;
-    let chain: SupportedChain = "ethereum";
-    let curve: "secp256k1" | "ed25519" = "secp256k1";
     let walletName = "";
     let submitting = false;
     let errorMessage = "";
-    const evmChainOptions = EVM_CHAINS.map((id) => CHAIN_METADATA[id]);
-    const limitedChainOptions = LIMITED_CHAINS.map((id) => CHAIN_METADATA[id]);
 
     // Keep threshold clamped to [2, total] — threshold < 2 defeats the
     // purpose of multisig, and > total is nonsense. Mirror TUI.
@@ -51,7 +36,6 @@
     $: if (threshold < 2) threshold = 2;
     $: if (total < 2) total = 2;
     $: if (total > 10) total = 10;
-    $: curve = getRequiredCurve(chain);
 
     async function handleSubmit() {
         errorMessage = "";
@@ -67,11 +51,9 @@
                 name: walletName.trim() || undefined,
                 total,
                 threshold,
-                curve,
-                chain,
             });
             if (response?.success && response.sessionId) {
-                dispatch("created", { sessionId: response.sessionId, chain });
+                dispatch("created", { sessionId: response.sessionId });
             } else {
                 errorMessage = guideError(
                     response?.error ?? "Failed to create wallet (no error returned)",
@@ -87,12 +69,17 @@
 </script>
 
 <div class="card card-pad">
-    <FeatureHeader title="Create a shared wallet" subtitle="Keep control across your trusted devices" icon="users" /><div class="threshold-preview"><ChainIcon chain={String(chain)} size={32} /><div><strong>{threshold} of {total} devices</strong><span>required to approve a signature</span></div><span class="badge badge-primary">{CHAIN_METADATA[chain].label}</span></div>
+    <FeatureHeader title="Create a shared wallet" subtitle="One wallet across your supported chains" icon="users" />
+    <div class="threshold-preview"><Icon name="shield" size={28} /><div><strong>{threshold} of {total} devices</strong><span>required to approve a signature</span></div><span class="badge badge-primary">Multi-chain</span></div>
     <p class="mt-1 text-xs text-muted">
-        You'll set up a shared wallet that several devices co-manage. Others
-        join from their own wallet once you create it — no single device can
-        sign alone.
+        Create once for Ethereum, Bitcoin, Solana and Sui. Your trusted devices
+        set up all wallet keys together — no single device can sign alone.
     </p>
+    <div class="mt-3 flex flex-wrap gap-2" aria-label="Supported chains">
+        {#each ["ethereum", "bitcoin", "solana", "sui"] as chain}
+            <span class="chain-chip"><ChainIcon {chain} size={16} />{chain === "ethereum" ? "Ethereum" : chain === "bitcoin" ? "Bitcoin" : chain === "solana" ? "Solana" : "Sui"}</span>
+        {/each}
+    </div>
 
     <div class="mt-4">
         <label class="label" for="cw-name">Wallet name (optional)</label>
@@ -133,36 +120,6 @@
         </div>
     </div>
 
-    <div class="mt-3">
-        <label class="label" for="cw-chain">Primary chain</label>
-        <select
-            id="cw-chain"
-            bind:value={chain}
-            class="select"
-            disabled={submitting}
-        >
-            <optgroup label="EVM chains (secp256k1)">
-                {#each evmChainOptions as option}
-                    <option value={option.id}>{option.label}</option>
-                {/each}
-            </optgroup>
-            <optgroup label="ed25519">
-                <option value="solana">Solana</option>
-            </optgroup>
-            <optgroup label="Address + threshold signing">
-                {#each limitedChainOptions as option}
-                    <option value={option.id}>{option.label} — limited</option>
-                {/each}
-            </optgroup>
-        </select>
-        <p class="mt-1 text-xs text-muted">
-            {CHAIN_METADATA[chain].family} · {curve}
-        </p>
-        {#if CHAIN_METADATA[chain].status === "limited"}
-            <p class="mt-1 text-xs text-muted">{CHAIN_METADATA[chain].note}</p>
-        {/if}
-    </div>
-
     {#if room}
         <div class="mt-3 alert alert-info">
             <div class="mb-1.5 flex items-center justify-between gap-2">
@@ -185,36 +142,6 @@
         Any <b>{threshold}</b> of <b>{total}</b> devices will be able to approve
         a transaction together.
     </div>
-
-    <!-- Advanced / technical details -->
-    <button
-        type="button"
-        class="mt-3 flex w-full items-center justify-between text-xs font-semibold text-muted"
-        on:click={() => (showAdvanced = !showAdvanced)}
-    >
-        <span>Advanced details</span>
-        <span class="transition-transform" class:rotate-180={showAdvanced}>
-            <Icon name="chevron" size={15} />
-        </span>
-    </button>
-    {#if showAdvanced}
-        <div class="mt-2 space-y-1 rounded-lg bg-surface-2 p-2.5 text-xs text-muted">
-            <p>
-                Runs a FROST <b>{threshold}-of-{total}</b> distributed key
-                generation (DKG) on the
-                <span class="mono"
-                    >{curve === "secp256k1" ? "secp256k1" : "ed25519"}</span
-                > curve.
-            </p>
-            <p class="mono break-all">
-                initiator: {deviceId || "unregistered"}
-            </p>
-            <p>
-                The session is announced on the signal server; any TUI node or
-                extension can discover and join it.
-            </p>
-        </div>
-    {/if}
 
     {#if errorMessage}
         <div class="mt-3 alert alert-danger text-xs">{errorMessage}</div>
@@ -239,6 +166,7 @@
 </div>
 
 <style>
+.chain-chip { display:inline-flex; align-items:center; gap:5px; padding:4px 7px; border-radius:8px; background:var(--c-surface-2); font-size:11px; font-weight:600; }
 .threshold-preview { display:flex; gap:10px; align-items:center; padding:14px; border-radius:12px; background:var(--c-surface-2); margin:16px 0; }
 .threshold-preview strong { display:block; font-size:14px; }
 .threshold-preview span:not(.badge) { display:block; color:var(--c-muted); font-size:11px; }

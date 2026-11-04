@@ -10,7 +10,7 @@ mock.module("#imports", () => mockImports);
 // install our own fake rather than poking the real singleton.
 const keystore = {
     getWallets: () => [{ id: "w1", name: "Treasury", blockchain: "ethereum" }],
-    getKeyShare: async () => ({ group_public_key: "02ab", threshold: 3, total_participants: 5 }),
+    getKeyShare: async () => ({ group_public_key: "02ab", frost_group_public_keys: {ed25519: "ed-root", secp256k1: "02ab"}, ecdsa_group_public_key: "ecdsa-root", threshold: 3, total_participants: 5 }),
 };
 mock.module("../../../src/services/keystoreManager", () => ({
     KeystoreManager: { getInstance: () => keystore },
@@ -21,7 +21,7 @@ describe("PopupMessageHandler createSigningSession", () => {
     it("announces from the wallet's stored key share", async () => {
         const createSigningSession = jest.fn(async () => ({ success: true, sessionId: "sign_1" }));
         const handler = new PopupMessageHandler(
-            { getState: () => ({}) } as any,
+            { getState: () => ({}), getChain: () => "ethereum" } as any,
             {} as any,
             {} as any,
             { createSigningSession } as any,

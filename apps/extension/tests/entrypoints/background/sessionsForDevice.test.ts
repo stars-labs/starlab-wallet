@@ -79,7 +79,7 @@ describe("WebSocketManager — sessions_for_device bulk reply routing", () => {
                     threshold: 2,
                     participants: ["tui-1"],
                     session_type: "dkg",
-                    curve_type: "secp256k1",
+                    curve_type: "unified",
                     coordination_type: "Network",
                 },
                 {
@@ -138,6 +138,7 @@ describe("WebSocketManager — sessions_for_device bulk reply routing", () => {
                 // Valid.
                 {
                     session_id: "dkg_good",
+                    session_type: "dkg", curve_type: "unified",
                     total: 3,
                     threshold: 2,
                     participants: [],
@@ -164,7 +165,7 @@ describe("WebSocketManager — sessions_for_device bulk reply routing", () => {
                     threshold: 2,
                     participants: ["tui-1"],
                     session_type: "dkg",
-                    curve_type: "secp256k1",
+                    curve_type: "unified",
                     coordination_type: "Network",
                 },
             ],
@@ -181,7 +182,7 @@ describe("WebSocketManager — sessions_for_device bulk reply routing", () => {
                 threshold: 2,
                 participants: ["tui-1", "tui-2"],
                 session_type: "dkg",
-                curve_type: "secp256k1",
+                curve_type: "unified",
                 coordination_type: "Network",
             },
         });

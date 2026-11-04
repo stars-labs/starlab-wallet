@@ -144,4 +144,4 @@ export type WebSocketEvent =
   | { type: 'Registered'; deviceId: string };
 
 // Re-export session types for convenience (they're used in WebSocket messages)
-import type { SessionProposal, SessionResponse, SessionInfo } from './session';
+import type { SessionProposal, SessionResponse, SessionInfo } from './session.js';

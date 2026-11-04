@@ -99,3 +99,9 @@ results are recorded in the associated PR and local acceptance evidence.
 - [Chromium extension WebAuthn origins](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/content/browser/webauth/origins.md)
 - [Yubico PRF key derivation guide](https://developers.yubico.com/WebAuthn/Concepts/PRF_Extension/Developers_Guide_to_PRF.html)
 - [WebAuthn PRF explainer](https://github.com/w3c/webauthn/blob/main/explainers/prf-extension.md)
+
+
+Wallet creation and restoration now follow the
+[unified wallet contract](2026-11-04-unified-wallet-alignment.md). Incomplete
+single-algorithm test wallets are unsupported; no compatibility migration or
+single-share wallet restore path is retained.

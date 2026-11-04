@@ -47,7 +47,7 @@ function makeInvite(overrides: Partial<SessionInfo> = {}): SessionInfo {
         threshold: 2,
         participants: ["tui-alice"],
         session_type: "dkg",
-        curve_type: "secp256k1",
+        curve_type: "unified",
         coordination_type: "Network",
         accepted_devices: [],
         ...overrides,
@@ -94,6 +94,7 @@ function makeSessionManager(opts?: {
     const sendToOffscreen = jest.fn(async () => ({ success: true }));
     const stateManager = {
         getState: () => appState,
+        getChain: () => appState.chain ?? "ethereum",
         updateState: jest.fn((patch: Partial<AppState>) => {
             Object.assign(appState, patch);
         }),
@@ -172,12 +173,12 @@ describe("SessionManager.joinDkgSession", () => {
         });
 
         it("inherits threshold/total/curve from the invite, not UI input", async () => {
-            // Invite says 3-of-5 secp256k1. Our local sessionInfo
+            // Invite says 3-of-5 unified. Our local sessionInfo
             // must match exactly — no UI-side overrides.
             const invite = makeInvite({
                 total: 5,
                 threshold: 3,
-                curve_type: "ed25519",
+                curve_type: "unified",
             });
             const { mgr, appState } = makeSessionManager({
                 deviceId: "ext-bob",
@@ -187,7 +188,7 @@ describe("SessionManager.joinDkgSession", () => {
             expect(res.success).toBe(true);
             expect(appState.sessionInfo!.total).toBe(5);
             expect(appState.sessionInfo!.threshold).toBe(3);
-            expect(appState.sessionInfo!.curve_type).toBe("ed25519");
+            expect(appState.sessionInfo!.curve_type).toBe("unified");
         });
 
         it("appends self to local participants optimistically", async () => {
@@ -210,10 +211,10 @@ describe("SessionManager.joinDkgSession", () => {
             expect(appState.dkgState).toBe(DkgState.Initializing);
         });
 
-        it("sets blockchain from the invite's curve_type", async () => {
-            // ed25519 → solana; secp256k1 → ethereum.
+        it("uses the invite display chain while keeping the unified algorithm", async () => {
+            // Chain selection changes display, never the DKG algorithm.
             const { mgr, appState } = makeSessionManager({
-                invites: [makeInvite({ curve_type: "ed25519" })],
+                invites: [makeInvite({ curve_type: "unified", blockchain: "solana" })],
             });
             await mgr.joinDkgSession("dkg_abc");
             expect(appState.blockchain).toBe("solana");
@@ -247,5 +248,16 @@ describe("SessionManager.joinDkgSession", () => {
             expect(res.success).toBe(true);
             expect(wsClient.sendSessionStatusUpdate).toHaveBeenCalledWith("dkg_abc", "ext-bob");
         });
+    });
+});
+
+
+describe('unified DKG creation boundary', () => {
+    it('rejects an obsolete single-curve invite before joining the server', async () => {
+        const env = makeSessionManager({ invites: [makeInvite({ curve_type: 'ed25519' })] });
+        const result = await env.mgr.joinDkgSession('dkg_abc');
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('unified');
+        expect(env.wsClient.sendSessionStatusUpdate).not.toHaveBeenCalled();
     });
 });

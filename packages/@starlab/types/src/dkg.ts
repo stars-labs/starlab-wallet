@@ -137,7 +137,7 @@ export type DkgEvent =
     | { type: 'Error'; message: string; state: DkgState };
 
 // Import SessionInfo type (will be available after refactoring)
-import type { SessionInfo } from './session';
+import type { SessionInfo } from './session.js';
 
 // Ensure this file is treated as a module
 export { };

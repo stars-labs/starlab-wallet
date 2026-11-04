@@ -2,6 +2,7 @@
  * actual WebAuthn PRF is independently exercised by prf-extension-browser.mjs.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { ECDSA_WALLET } from '../helpers/ecdsaFixture';
 import { REAL_WEBCRYPTO, mockCrypto } from '../setup-bun';
 import { resetWxtStorageData } from '../wxt-imports-mock';
 import { KeystoreService } from '../../src/services/keystoreService';
@@ -12,6 +13,12 @@ const { KeystoreManager } = await import(realModule) as typeof import('../../src
 const random = () => encodeBytes(crypto.getRandomValues(new Uint8Array(32)));
 const auth = (): HardwareAssertion => ({credentialId:random(),prfSalt:random(),prfOutput:random()});
 const share: KeyShareData = {key_package:'public-fixture-FROST-secret',public_key_package:'fixture-public-package',group_public_key:'fixture-group',session_id:'fixture-wallet',device_id:'fixture-device',participant_index:1,threshold:2,total_participants:3,participants:['fixture-device','b','c'],participant_identifiers:{'fixture-device':1,b:2,c:3},curve:'secp256k1',blockchains:[],created_at:1};
+share.frost_group_public_keys={ed25519:'fixture-ed-group',secp256k1:share.group_public_key};
+share.ecdsa_group_public_key=ECDSA_WALLET.group_public_key;
+async function stage(manager: ReturnType<typeof KeystoreManager.getInstance>) {
+ await manager.setCurveShare(share.session_id,'ed25519',JSON.stringify({...share,curve:'ed25519',group_public_key:share.frost_group_public_keys!.ed25519}));
+ await manager.setCurveShare(share.session_id,'secp256k1-ecdsa',ECDSA_WALLET.shares[0]!);
+}
 const metadata = {id:'fixture-wallet',name:'Lifecycle fixture',curve:'secp256k1',blockchain:'bitcoin',address:'fixture-address',groupPublicKey:'fixture-group',createdAt:1,isActive:true,threshold:2,totalParticipants:3} as unknown as ExtensionWalletMetadata;
 let wxtData:Record<string,unknown>;
 let sessionData:Record<string,unknown>;
@@ -44,8 +51,8 @@ describe('hardware keystore real-crypto restart and lock boundary',()=>{
   const assertion=auth();let manager=KeystoreManager.getInstance();
   await manager.createHardwareKeystore(assertion,'fixture-device');
   expect(manager.isLocked()).toBe(false);
-  expect(await manager.addWallet(share.session_id,share,metadata)).toBe(true);
-  const ecdsa='public-fixture-ECDSA-private-share',primes='public-fixture-unused-primes';
+  await stage(manager);expect(await manager.addWallet(share.session_id,share,metadata)).toBe(true);
+  const ecdsa=ECDSA_WALLET.shares[0]!,primes='public-fixture-unused-primes';
   await manager.setCurveShare(share.session_id,'secp256k1-ecdsa',ecdsa);
   const cached=await manager.encryptSecret('prime-fixture',primes);
   await chrome.storage.local.set({primeFixture:cached});
@@ -85,7 +92,7 @@ describe('hardware keystore real-crypto restart and lock boundary',()=>{
  });
  it('rejects a correct hardware assertion when the stored wallet share is missing',async()=>{
   const assertion=auth(),manager=KeystoreManager.getInstance();await manager.createHardwareKeystore(assertion,'fixture-device');
-  expect(await manager.addWallet(share.session_id,share,metadata)).toBe(true);
+  await stage(manager);expect(await manager.addWallet(share.session_id,share,metadata)).toBe(true);
   delete wxtData[`local:mpc_keystore_share_${share.session_id}`];
   await expect(manager.unlockHardwareKeystore(assertion)).rejects.toThrow();
   expect(manager.isLocked()).toBe(true);expect(manager.hasRecentHardwareVerification()).toBe(false);
@@ -101,7 +108,7 @@ describe('hardware keystore real-crypto restart and lock boundary',()=>{
  });
  it('lock wins over a pending hardware unwrap and real service decrypt',async()=>{
   const assertion=auth(),manager=KeystoreManager.getInstance();await manager.createHardwareKeystore(assertion,'fixture-device');
-  expect(await manager.addWallet(share.session_id,share,metadata)).toBe(true);manager.lock();
+  await stage(manager);expect(await manager.addWallet(share.session_id,share,metadata)).toBe(true);manager.lock();
   const service=KeystoreService.getInstance(),original=service.unlock;
   let enter!:()=>void,release!:()=>void;
   const entered=new Promise<void>(resolve=>{enter=resolve}),gate=new Promise<void>(resolve=>{release=resolve});

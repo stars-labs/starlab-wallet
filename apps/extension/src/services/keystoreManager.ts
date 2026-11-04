@@ -83,6 +83,9 @@ export class KeystoreManager {
                 sessionTimeout: this.DEFAULT_SESSION_TIMEOUT
             };
             await this.saveSession();
+        } else if (this.session.deviceId !== deviceId && this.getWallets().length === 0) {
+            this.session = {...this.session,deviceId};
+            await this.saveSession();
         }
     }
     
@@ -378,25 +381,14 @@ export class KeystoreManager {
      */
     public getActiveWallet(): ExtensionWalletMetadata | null {
         const wallets = this.getWallets();
-        return wallets.find(w => w.isActive) || wallets[0] || null;
+        return wallets.find(w => w.isActive) ?? null;
     }
     
     /**
      * Set active wallet
      */
     public async setActiveWallet(walletId: string): Promise<boolean> {
-        const wallets = this.getWallets();
-        
-        // Update all wallets' active status
-        for (const wallet of wallets) {
-            wallet.isActive = wallet.id === walletId;
-        }
-        
-        // Save updated index
-        await chrome.storage.local.set({
-            'mpc_active_wallet_id': walletId
-        });
-        
+        await this.keystoreService.setActiveWallet(walletId);
         return true;
     }
     
@@ -408,43 +400,29 @@ export class KeystoreManager {
     }
     
     /**
-     * Export wallet for backup
-     */
-    public async exportWallet(walletId: string, password: string): Promise<any> {
-        if (!await this.unlock(password)) {
-            throw new Error('Invalid password');
-        }
-        
-        return await this.keystoreService.exportWallet(walletId);
-    }
-    
-    /**
-     * Import wallet from backup
-     */
-    public async importWallet(backup: any, password: string): Promise<boolean> {
-        if (!await this.unlock(password)) {
-            throw new Error('Invalid password');
-        }
-        
-        try {
-            await this.keystoreService.importWallet(backup, password);
-            return true;
-        } catch (error) {
-            console.error('[KeystoreManager] Import failed:', error);
-            return false;
-        }
-    }
-    
-    /**
      * Get key share for signing
      */
-    public async getKeyShare(walletId: string): Promise<KeyShareData | null> {
+    public async getKeyShare(walletId: string, curve?: "secp256k1" | "ed25519"): Promise<KeyShareData | null> {
         if (this.isLocked()) {
             console.error('[KeystoreManager] Cannot get key share - keystore is locked');
             return null;
         }
         
-        return await this.keystoreService.getKeyShare(walletId);
+        const root = await this.keystoreService.getKeyShare(walletId);
+        if (!root || !curve) return root;
+        if (root.curve !== "secp256k1" || !root.key_package || !root.public_key_package || !root.frost_group_public_keys?.ed25519 || !root.frost_group_public_keys.secp256k1 || !root.ecdsa_group_public_key) {
+            throw new Error("Incomplete test wallet. Recreate it using unified DKG.");
+        }
+        const json = await this.keystoreService.getCurveShare(walletId, "ed25519");
+        const ecdsa = await this.keystoreService.getCurveShare(walletId, "secp256k1-ecdsa");
+        if (!json || !ecdsa) throw new Error("Unified wallet is missing an encrypted algorithm share");
+        const share = JSON.parse(json) as KeyShareData;
+        if (share.curve !== "ed25519" || !share.key_package || !share.public_key_package ||
+            share.group_public_key !== root.frost_group_public_keys.ed25519 ||
+            root.group_public_key !== root.frost_group_public_keys.secp256k1) {
+            throw new Error(`Invalid algorithm share for wallet ${walletId}`);
+        }
+        return curve === "ed25519" ? share : root;
     }
 
     public async updateWalletAddress(walletId: string, address: string, blockchain?: string): Promise<void> {
@@ -496,88 +474,4 @@ export class KeystoreManager {
         }, timeout);
     }
     
-    /**
-     * Migrate imported keystores from chrome.storage.local
-     */
-    public async migrateFromChromeStorage(password: string): Promise<number> {
-        if (!await this.unlock(password)) {
-            throw new Error('Invalid password');
-        }
-        
-        let migratedCount = 0;
-        
-        try {
-            // Get all stored keystores
-            const storage = await chrome.storage.local.get(null);
-            const keystoreKeys = Object.keys(storage).filter(key => 
-                key.startsWith('mpc_imported_keystore_')
-            );
-            
-            for (const key of keystoreKeys) {
-                const importedData = storage[key] as any;
-                if (importedData && importedData.keystoreData) {
-                    try {
-                        // Parse the keystore data
-                        const keystoreData = JSON.parse(importedData.keystoreData);
-                        
-                        // Create key share data
-                        const keyShareData: KeyShareData = {
-                            key_package: keystoreData.key_package || '',
-                            public_key_package: keystoreData.public_key_package || '',
-                            group_public_key: importedData.sessionInfo.group_public_key || '',
-                            session_id: importedData.sessionInfo.session_id,
-                            device_id: importedData.sessionInfo.device_id,
-                            participant_index: importedData.sessionInfo.participant_index,
-                            threshold: importedData.sessionInfo.threshold,
-                            total_participants: importedData.sessionInfo.total_participants,
-                            participants: [importedData.sessionInfo.device_id],
-                            participant_identifiers: {
-                                [importedData.sessionInfo.device_id]: importedData.sessionInfo.participant_index,
-                            },
-                            curve: importedData.sessionInfo.curve_type as 'secp256k1' | 'ed25519',
-                            blockchains: importedData.sessionInfo.blockchains || [],
-                            ethereum_address: importedData.addresses?.ethereum,
-                            solana_address: importedData.addresses?.solana,
-                            created_at: importedData.importedAt || Date.now()
-                        };
-                        
-                        // Create wallet metadata
-                        const metadata: ExtensionWalletMetadata = {
-                            id: importedData.sessionInfo.session_id,
-                            name: `Imported Wallet ${migratedCount + 1}`,
-                            blockchain: importedData.chain || 'ethereum',
-                            address: importedData.addresses?.[importedData.chain] || '',
-                            session_id: importedData.sessionInfo.session_id,
-                            isActive: migratedCount === 0, // First wallet is active
-                            hasBackup: true
-                        };
-                        
-                        // Add to keystore
-                        await this.keystoreService.addWallet(
-                            importedData.sessionInfo.session_id,
-                            keyShareData,
-                            metadata
-                        );
-                        
-                        migratedCount++;
-                        
-                        // Remove from chrome.storage
-                        await chrome.storage.local.remove([key]);
-                    } catch (error) {
-                        console.error(`[KeystoreManager] Failed to migrate ${key}:`, error);
-                    }
-                }
-            }
-            
-            // Clean up other migration-related keys
-            await chrome.storage.local.remove(['mpc_active_keystore_id']);
-            
-            console.log(`[KeystoreManager] Migrated ${migratedCount} keystores`);
-        } catch (error) {
-            console.error('[KeystoreManager] Migration failed:', error);
-            throw error;
-        }
-        
-        return migratedCount;
-    }
 }

@@ -59,6 +59,7 @@ describe("session-parse: reshare wire format", () => {
             total: 2,
             threshold: 2,
             session_type: "reshare",
+            curve_type: "secp256k1",
             reshare_old_participants: ["a", 42, null, "b"],
         });
         expect(parsed).not.toBeNull();
@@ -69,6 +70,7 @@ describe("session-parse: reshare wire format", () => {
         const dkg: SessionInfo = {
             ...reshare,
             session_type: "dkg",
+            curve_type: "unified",
         };
         const wire = buildWireSessionInfo(dkg);
         expect("reshare_old_participants" in wire).toBe(false);

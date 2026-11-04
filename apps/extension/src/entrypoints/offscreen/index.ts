@@ -4,11 +4,11 @@ import type { WebRTCAppMessage } from "@stars-labs/types/webrtc";
 import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from "@stars-labs/types/websocket";
 
 // Import WASM modules for FROST DKG
-import wasmInit, { FrostDkgEd25519, FrostDkgSecp256k1, FrostReshareEd25519, FrostReshareSecp256k1, derive_account_addresses, ecdsa_primes_from_parts, ecdsa_share_info } from "@stars-labs/core-wasm";
+import wasmInit, { FrostDkgUnified, FrostDkgEd25519, FrostDkgSecp256k1, FrostReshareEd25519, FrostReshareSecp256k1, derive_account_addresses, ecdsa_primes_from_parts, ecdsa_share_info } from "@stars-labs/core-wasm";
 import { PrimePool } from "../../ecdsa/primePool";
 import { spawnEcdsaWorker } from "../../ecdsa/spawn";
 import { redactForLog } from "../../utils/redact";
-import { parseAccountWalletId, isEcdsaChain, ECDSA_CURVE } from "../../utils/wallet-id";
+import { parseAccountWalletId, isEcdsaChain, curveForChain, ECDSA_CURVE } from "../../utils/wallet-id";
 import { deriveAccountGroupKey } from "../../utils/accountKey";
 
 console.log("Offscreen script loaded.");
@@ -27,6 +27,7 @@ async function initializeWasmModules() {
         console.log("🔧 WASM Init: wasmInit() completed successfully");
 
         // Make WASM classes available globally for WebRTCManager
+        (globalThis as any).FrostDkgUnified = FrostDkgUnified;
         (globalThis as any).FrostDkgEd25519 = FrostDkgEd25519;
         (globalThis as any).FrostDkgSecp256k1 = FrostDkgSecp256k1;
         // M3 reshare classes — same pattern as the DKG classes.
@@ -593,7 +594,7 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                     const ecdsa = isEcdsaChain(target.chain);
                     const resp: any = await new Promise((resolve) =>
                         chrome.runtime.sendMessage(
-                            { type: "getWalletKeystore", walletId: target.root, ...(ecdsa ? { curve: ECDSA_CURVE } : {}) },
+                            { type: "getWalletKeystore", walletId: target.root, curve: ecdsa ? ECDSA_CURVE : curveForChain(target.chain) },
                             resolve,
                         ),
                     );
@@ -667,7 +668,7 @@ chrome.runtime.onMessage.addListener((message: { type?: string; payload?: any },
                 (async () => {
                     const keyShare = await new Promise<any | null>((resolve) => {
                         chrome.runtime.sendMessage(
-                            { type: "getWalletKeystore", walletId: payload.walletId },
+                            { type: "getWalletKeystore", walletId: payload.walletId, curve: payload.sessionInfo.curve_type },
                             (resp: any) => {
                                 if (!resp || !resp.success || !resp.keyShare) {
                                     console.warn(

@@ -20,7 +20,7 @@ import { SessionInfo, SessionProposal, SessionResponse } from "@stars-labs/types
 import { MeshStatus } from "@stars-labs/types/mesh";
 import { DkgState } from "@stars-labs/types/dkg";
 import { WebSocketClient } from "./websocket";
-import { validateSessionProposal, validateSessionAcceptance } from "@stars-labs/types/messages";
+import { validateSessionAcceptance } from "@stars-labs/types/messages";
 import type { BackgroundToPopupMessage, OffscreenMessage } from "@stars-labs/types/messages";
 import { buildWireSessionInfo } from "../../utils/session-parse";
 import { accountWalletId, ECDSA_CURVE, isEcdsaChain } from "../../utils/wallet-id";
@@ -108,7 +108,9 @@ export class SessionManager {
             threshold: proposalData.threshold,
             total: proposalData.total,
             accepted_devices: [fromPeerId], // Proposer automatically accepts
-            status: "proposed"
+            status: "proposed",
+            session_type: "dkg",
+            curve_type: "unified",
         };
 
         console.log("[SessionManager] Session proposal validated:", sessionInfo);
@@ -280,12 +282,10 @@ export class SessionManager {
         const session = invites[sessionIndex];
         console.log(`[SessionManager] Found session to accept:`, session);
 
-        const sessionCurve =
-            session.curve_type === "ed25519" ? "ed25519" : "secp256k1";
-        const chain =
-            isSupportedChain(session.blockchain)
-                ? session.blockchain
-                : getDefaultChainForCurve(sessionCurve);
+        if (session.session_type !== "signing" && session.curve_type !== "unified") {
+            return { success: false, error: "Only unified DKG sessions are supported. Recreate this test wallet." };
+        }
+        const chain = isSupportedChain(session.blockchain) ? session.blockchain : this.appState.chain ?? "ethereum";
         blockchain = getProtocolBlockchainForChain(chain);
 
         // Get current device ID
@@ -359,64 +359,8 @@ export class SessionManager {
     }
 
     /**
-     * Propose a new session
-     */
-    async proposeSession(
-        sessionId: string,
-        totalParticipants: number,
-        threshold: number,
-        participants: string[],
-        blockchain: "ethereum" | "solana" = "solana"
-    ): Promise<{ success: boolean; error?: string }> {
-        console.log(`[SessionManager] Proposing session: ${sessionId} with blockchain: ${blockchain}`);
-
-        if (!this.wsClient || this.wsClient.getReadyState() !== WebSocket.OPEN) {
-            return { success: false, error: "WebSocket not connected" };
-        }
-
-        const currentDeviceId = this.appState.deviceId;
-        
-        // Store blockchain selection
-        this.stateManager.updateState({ blockchain });
-        
-        // Sort participants to ensure consistent indexing across all peers
-        const sortedParticipants = [...participants].sort();
-        
-        const proposalData = {
-            websocket_msg_type: "SessionProposal",
-            session_id: sessionId,
-            proposer_id: currentDeviceId,
-            participants: sortedParticipants,
-            threshold: threshold,
-            total: totalParticipants
-        };
-
-        try {
-            // Send proposal to all other participants
-            const otherParticipants = participants.filter(p => p !== currentDeviceId);
-
-            await Promise.all(otherParticipants.map(async (peerId) => {
-                try {
-                    await this.wsClient!.relayMessage(peerId, proposalData);
-                    console.log(`[SessionManager] Session proposal sent to ${peerId}`);
-                } catch (error) {
-                    console.error(`[SessionManager] Failed to send proposal to ${peerId}:`, error);
-                }
-            }));
-
-            // Handle our own proposal (auto-accept for proposer)
-            await this.handleSessionProposal(currentDeviceId, proposalData);
-
-            return { success: true };
-        } catch (error) {
-            return { success: false, error: (error as Error).message };
-        }
-    }
-
-    /**
      * Ext-1b: create a new MPC wallet via DKG using the TUI-compatible
-     * announcement channel. Unlike `proposeSession` (which relays a
-     * `SessionProposal` to pre-selected peers), this broadcasts via
+     * announcement channel. This broadcasts via
      * `announce_session` — any client on the signal server can discover
      * it and join up to the threshold.
      *
@@ -435,8 +379,6 @@ export class SessionManager {
         name?: string;
         total: number;
         threshold: number;
-        curve: "secp256k1" | "ed25519";
-        chain?: SupportedChain;
     }): Promise<{ success: boolean; sessionId?: string; error?: string }> {
         if (!this.wsClient || this.wsClient.getReadyState() !== WebSocket.OPEN) {
             return { success: false, error: "WebSocket not connected" };
@@ -459,10 +401,7 @@ export class SessionManager {
         // here. TUI still parses the id as an opaque string so length
         // doesn't matter to it.)
         const sessionId = `dkg_${cryptoHex(12)}`;
-        const chain =
-            config.chain && isSupportedChain(config.chain)
-                ? config.chain
-                : getDefaultChainForCurve(config.curve);
+        const chain = this.appState.chain ?? "ethereum";
         const blockchain = getProtocolBlockchainForChain(chain);
 
         const sessionInfo: SessionInfo = {
@@ -472,7 +411,7 @@ export class SessionManager {
             threshold: config.threshold,
             participants: [currentDeviceId],
             session_type: "dkg",
-            curve_type: config.curve,
+            curve_type: "unified",
             blockchain: chain,
             coordination_type: "Network",
             accepted_devices: [currentDeviceId],
@@ -500,7 +439,7 @@ export class SessionManager {
             this.wsClient.announceSession(wire);
             console.log(
                 `[SessionManager] Created DKG wallet: ${sessionId} ` +
-                    `(${config.threshold}/${config.total} ${config.curve})`,
+                    `(${config.threshold}/${config.total} unified)`,
             );
             this.broadcastToPopup({
                 type: "dkgWalletCreated",
@@ -595,12 +534,10 @@ export class SessionManager {
                 new Set([...(invite.accepted_devices ?? []), currentDeviceId]),
             ),
         };
-        const curve =
-            local.curve_type === "ed25519" ? "ed25519" : "secp256k1";
-        const chain =
-            isSupportedChain(local.blockchain)
-                ? local.blockchain
-                : getDefaultChainForCurve(curve);
+        if (local.session_type !== "signing" && local.curve_type !== "unified") {
+            return { success: false, error: "Only unified DKG sessions are supported. Recreate this test wallet." };
+        }
+        const chain = isSupportedChain(local.blockchain) ? local.blockchain : this.appState.chain ?? "ethereum";
         // dkgState tracks key generation / the wallet's readiness. A
         // signing join (TUI warm signing even reuses the finished DKG's
         // session id) must leave the wallet Complete.
@@ -648,9 +585,8 @@ export class SessionManager {
      *     signing_message_hex filled in top-level per TUI's parser
      *     (command.rs:286 line, signing-sibling fields).
      *
-     * For secp256k1 wallets the caller passes the EIP-191 digest; FROST
-     * signs it as BIP-340 Schnorr (NOT ecrecover-compatible). For
-     * ed25519, raw bytes are signed.
+     * Ethereum signs a 32-byte digest with threshold ECDSA. Bitcoin
+     * uses the Taproot FROST key; Solana and Sui use ed25519.
      *
      * Does NOT actually run FROST rounds — that's the signing
      * auto-trigger (Ext-2d). This commit just announces.
@@ -658,7 +594,7 @@ export class SessionManager {
     async createSigningSession(config: {
         walletId: string;
         walletName: string;
-        blockchain: "ethereum" | "solana";
+        blockchain: SupportedChain;
         /** The wallet's stored share: cohort, threshold, and (in the
          *  offscreen) the account key the announce names. */
         keyShare: KeyShareData;
@@ -680,22 +616,32 @@ export class SessionManager {
         // Like the engine proposers: the wallet's whole cohort is listed —
         // TUI / desktop only offer a signing whose participants include them.
         const { keyShare } = config;
-        const participants = [
-            ...new Set(
-                keyShare.participants?.length
-                    ? keyShare.participants
-                    : Object.keys(keyShare.participant_identifiers ?? {}),
-            ),
-        ].sort();
+        if (!keyShare.frost_group_public_keys?.ed25519 || !keyShare.frost_group_public_keys.secp256k1 || !keyShare.ecdsa_group_public_key) {
+            return {success: false, error: "Incomplete test wallet. Recreate it using unified DKG."};
+        }
+        // FROST refresh may change its cohort; cggmp24 cannot refresh.
+        // Ethereum must retain the participants and quorum of its actual ECDSA share.
+        const cohort = isEcdsaChain(config.blockchain) ? keyShare.ecdsa_cohort : {
+            participants: keyShare.participants,
+            threshold: keyShare.threshold,
+            total: keyShare.total_participants,
+            participantIndex: keyShare.participant_index,
+        };
+        if (!cohort || !Array.isArray(cohort.participants) ||
+            !Number.isInteger(cohort.threshold) || !Number.isInteger(cohort.total) ||
+            cohort.threshold < 2 || cohort.total < cohort.threshold) {
+            return { success: false, error: isEcdsaChain(config.blockchain)
+                ? "Wallet is missing its ECDSA signing cohort. Recreate it using unified DKG."
+                : "Wallet is missing its FROST signing cohort." };
+        }
+        const participants = [...new Set(cohort.participants)].sort();
         if (!participants.includes(currentDeviceId)) {
             return { success: false, error: "This device is not in the wallet's cohort" };
         }
-        if (participants.length !== keyShare.total_participants) {
-            // A share that doesn't name every co-signer can't be announced:
-            // co-signers not listed would never be asked (and never sign).
+        if (participants.length !== cohort.total || participants.length !== cohort.participants.length) {
             return {
                 success: false,
-                error: `The wallet's share lists ${participants.length} of its ${keyShare.total_participants} devices (${participants.join(", ")}) — re-import it from a backup that carries the full cohort`,
+                error: `The wallet's share lists ${participants.length} of its ${cohort.total} devices (${participants.join(", ")}) — re-import it from a backup that carries the full cohort`,
             };
         }
         const account = { chain: config.blockchain, account: 0 };
@@ -724,7 +670,7 @@ export class SessionManager {
                 return { success: false, error: `Deriving the account key failed: ${derived?.error ?? "unknown"}` };
             }
             groupPublicKey = derived.groupPublicKey;
-            curveType = config.blockchain === "ethereum" ? "secp256k1" : "ed25519";
+            curveType = keyShare.curve;
         }
 
         const sessionId = `sign_${cryptoHex(12)}`;
@@ -732,8 +678,8 @@ export class SessionManager {
         const sessionInfo: SessionInfo = {
             session_id: sessionId,
             proposer_id: currentDeviceId,
-            total: keyShare.total_participants,
-            threshold: keyShare.threshold,
+            total: cohort.total,
+            threshold: cohort.threshold,
             participants,
             session_type: "signing",
             curve_type: curveType,
@@ -760,7 +706,7 @@ export class SessionManager {
         this.stateManager.updateState({
             sessionInfo,
             invites,
-            blockchain: config.blockchain,
+            blockchain: getProtocolBlockchainForChain(config.blockchain),
         });
 
         try {

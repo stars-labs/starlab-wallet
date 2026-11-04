@@ -1,25 +1,8 @@
-/**
- * Tolerant parser for `session_info` payloads received over the
- * WebSocket signal server. Mirrors TUI's behaviour in
- * `apps/tui-node/src/elm/command.rs::parse_session_info`:
- *
- * - Required fields: session_id, total, threshold.
- * - Defaulted fields (TUI fills in when absent):
- *     proposer_id → "unknown"
- *     participants → []
- *     curve_type → "secp256k1"
- *     coordination_type → "Network"
- *     session_type → "dkg"
- * - Signing-only fields pulled through if present.
- * - Extension-local `accepted_devices` synthesised as [] — TUI
- *   announcements don't carry this, but the rest of the extension
- *   code treats it as always defined.
- *
- * Returns `null` if any required field is missing or mistyped. The
- * caller (webSocketManager) logs and drops malformed payloads rather
- * than throwing.
+/** Canonical native engine session wire format. DKG is always unified;
+ * signing and refresh name the concrete algorithm they operate on.
+ * Extension-local accepted_devices is synthesized independently of wire data.
  */
-import type { SessionInfo, SessionTypeTag } from "@stars-labs/types/session";
+import type { SessionInfo } from "@stars-labs/types/session";
 
 export function parseSessionInfoFromWire(raw: unknown): SessionInfo | null {
     if (typeof raw !== "object" || raw === null) {
@@ -45,21 +28,17 @@ export function parseSessionInfoFromWire(raw: unknown): SessionInfo | null {
         ? r.participants.filter((v): v is string => typeof v === "string")
         : [];
 
-    const curve_type =
-        typeof r.curve_type === "string" ? r.curve_type : "secp256k1";
+    const curve_type = r.curve_type;
+    if (typeof curve_type !== "string" || !["unified", "secp256k1", "ed25519", "secp256k1-ecdsa"].includes(curve_type)) return null;
 
     const coordination_type =
         typeof r.coordination_type === "string" ? r.coordination_type : "Network";
 
-    // session_type on the wire is a flat lowercase string ("dkg" /
-    // "signing" / "reshare"). We accept any string but narrow to the
-    // union when the match succeeds; unknown tags degrade to undefined
-    // so consumers treat them as "legacy payload" rather than DKG.
-    const tagRaw = typeof r.session_type === "string" ? r.session_type : "dkg";
-    const session_type: SessionTypeTag | undefined =
-        tagRaw === "dkg" || tagRaw === "signing" || tagRaw === "reshare"
-            ? tagRaw
-            : undefined;
+    const session_type = r.session_type;
+    if (session_type !== "dkg" && session_type !== "signing" && session_type !== "reshare") return null;
+    if (session_type === "dkg" && curve_type !== "unified") return null;
+    if (session_type !== "dkg" && curve_type === "unified") return null;
+    if (session_type === "reshare" && curve_type === "secp256k1-ecdsa") return null;
 
     const wallet_name =
         typeof r.wallet_name === "string" ? r.wallet_name : undefined;
@@ -68,13 +47,7 @@ export function parseSessionInfoFromWire(raw: unknown): SessionInfo | null {
     const blockchain =
         typeof r.blockchain === "string" ? r.blockchain : undefined;
 
-    // TUI also accepts the legacy alias `message_hex`.
-    const signing_message_hex =
-        typeof r.signing_message_hex === "string"
-            ? r.signing_message_hex
-            : typeof r.message_hex === "string"
-              ? (r.message_hex as string)
-              : undefined;
+    const signing_message_hex = typeof r.signing_message_hex === "string" ? r.signing_message_hex : undefined;
 
     // Reshare-only: the wallet's CURRENT cohort. Required for every
     // joiner to derive consistent FROST identifiers (old indices).
@@ -121,14 +94,21 @@ export function parseSessionInfoFromWire(raw: unknown): SessionInfo | null {
  * `accepted_devices` or `status` — keep the wire lean.
  */
 export function buildWireSessionInfo(s: SessionInfo): Record<string, unknown> {
+    if (!s.session_type || !s.curve_type ||
+        !["unified","ed25519","secp256k1","secp256k1-ecdsa"].includes(s.curve_type) ||
+        (s.session_type === "dkg" && s.curve_type !== "unified") ||
+        (s.session_type !== "dkg" && s.curve_type === "unified") ||
+        (s.session_type === "reshare" && s.curve_type === "secp256k1-ecdsa")) {
+        throw new Error("Session requires an explicit supported algorithm; DKG must be unified");
+    }
     const base: Record<string, unknown> = {
         session_id: s.session_id,
         proposer_id: s.proposer_id,
         total: s.total,
         threshold: s.threshold,
         participants: s.participants,
-        session_type: s.session_type ?? "dkg",
-        curve_type: s.curve_type ?? "secp256k1",
+        session_type: s.session_type,
+        curve_type: s.curve_type,
         coordination_type: s.coordination_type ?? "Network",
     };
     if (s.session_type === "signing" || s.session_type === "reshare") {

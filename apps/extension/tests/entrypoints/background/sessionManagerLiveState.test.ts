@@ -22,7 +22,7 @@ function invite(id: string): SessionInfo {
         threshold: 2,
         participants: ["tui-alice"],
         session_type: "dkg",
-        curve_type: "secp256k1",
+        curve_type: "unified",
         coordination_type: "Network",
         accepted_devices: [],
     };

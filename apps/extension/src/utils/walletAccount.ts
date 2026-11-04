@@ -7,6 +7,8 @@ export function publicWalletState(state: Partial<AppState>) {
         dkgAddress: state.dkgAddress ?? "",
         dkgGroupPublicKey: state.dkgGroupPublicKey ?? "",
         ecdsaGroupPublicKey: state.ecdsaGroupPublicKey ?? "",
+        frostGroupPublicKeys: state.frostGroupPublicKeys,
+        walletQuorums: state.walletQuorums,
     };
 }
 

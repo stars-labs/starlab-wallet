@@ -14,7 +14,7 @@
  * those are refused with a clear error.
  */
 import type { KeyShareData } from "@stars-labs/types/keystore";
-import { dkgParticipantIdentifiers, keyShareCoreFromEngine, toEngineKeystoreJson, type KeyShareCore } from "./engineKeystore";
+import { parseEngineKeystore, keyShareCoreFromEngine, toEngineKeystoreJson, type KeyShareCore } from "./engineKeystore";
 import { engineBlobFromKeystore, keystoreFromEngineBlob } from "./frostShareBlob";
 
 export const SHARE_BACKUP_ALGORITHM = "AES-256-GCM-PBKDF2";
@@ -30,7 +30,7 @@ export interface ShareBackupMetadata {
     total_participants: number;
     participant_index: number;
     group_public_key: string;
-    /** Every shareholder's device id, sorted — FROST ids are the 1-based positions. */
+    /** Every shareholder's device id, sorted to match the share's retained FROST identifiers. */
     participants: string[];
     created_at: string;
     last_modified: string;
@@ -202,7 +202,7 @@ export async function openEcdsaShareBackup(
  * Open an engine-format share file (the engine's or ours). Checks what the
  * engine's `validate_share` checks — the payload is a FROST share for the
  * metadata's curve with the metadata's group key — and rebuilds the stored
- * key-share fields. FROST ids come from the sorted participant list.
+ * key-share fields. FROST ids come from the actual key package, including retained gaps after refresh.
  */
 export async function openShareBackup(
     fileJson: string,
@@ -240,7 +240,20 @@ export async function openShareBackup(
     if (groupPublicKey.toLowerCase() !== String(metadata.group_public_key).toLowerCase()) {
         throw new Error("Key share does not match the wallet's group public key");
     }
-    const core = keyShareCoreFromEngine(keystoreJson, groupPublicKey, dkgParticipantIdentifiers(metadata.participants));
+    const engine = parseEngineKeystore(keystoreJson);
+    const names = [...metadata.participants].sort();
+    const ids = [...engine.participant_indices].sort((a, b) => a - b);
+    if (names.some(name => typeof name !== 'string' || !name) || new Set(names).size !== names.length
+        || names.length !== ids.length || metadata.total_participants !== ids.length
+        || metadata.threshold !== engine.min_signers || metadata.participant_index !== engine.participant_index) {
+        throw new Error("FROST backup metadata does not match its key share parameters");
+    }
+    // Refresh preserves old identifiers (e.g. {1,3}); never renumber to {1,2}.
+    const identifiers = Object.fromEntries(names.map((name, i) => [name, ids[i]!]));
+    if (identifiers[metadata.device_id] !== engine.participant_index) {
+        throw new Error("FROST backup device does not match its key share identifier");
+    }
+    const core = keyShareCoreFromEngine(keystoreJson, groupPublicKey, identifiers);
     if (core.curve !== metadata.curve_type) {
         throw new Error(`Key share is ${core.curve}, metadata says ${metadata.curve_type}`);
     }

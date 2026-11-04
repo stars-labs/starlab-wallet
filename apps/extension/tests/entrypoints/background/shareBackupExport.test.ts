@@ -24,7 +24,8 @@ const keystore = {
         if (!this.hardwareVerified) throw new Error('Verify your hardware key again before exporting a backup');
     },
     getActiveWallet() { return this.wallet; },
-    async getKeyShare(id: string) { return id === this.wallet?.id ? this.keyShare : null; },
+    edShare: null as any,
+    async getKeyShare(id: string, curve?: string) { return id === this.wallet?.id ? curve === "ed25519" ? this.edShare : this.keyShare : null; },
     ecdsaShare: null as string | null,
     async getCurveShare(id: string, curve: string) { return id === this.wallet?.id && curve === "secp256k1-ecdsa" ? this.ecdsaShare : null; },
     added: [] as { id: string; data: any }[],
@@ -36,7 +37,7 @@ mock.module("../../../src/services/keystoreManager", () => ({
     KeystoreManager: { getInstance: () => keystore },
 }));
 
-import wasmInit, { FrostDkgSecp256k1, ecdsa_share_info } from "@stars-labs/core-wasm";
+import wasmInit, { FrostDkgSecp256k1, FrostDkgEd25519, derive_account_addresses, ecdsa_share_info } from "@stars-labs/core-wasm";
 import { ECDSA_WALLET } from "../../helpers/ecdsaFixture";
 import { REAL_WEBCRYPTO } from "../../setup-bun";
 import { PopupMessageHandler } from "../../../src/entrypoints/background/messageHandlers";
@@ -48,32 +49,32 @@ import { toEngineKeystoreJson } from "../../../src/utils/engineKeystore";
 import { DkgState } from "@stars-labs/types/dkg";
 
 const PASSWORD = "correct horse battery";
-const COHORT = { "cli-alice": 1, "ext-bob": 2, "tui-carol": 3 };
+const COHORT = { "device-a": 1, "device-b": 2, "device-c": 3 };
 let groupKey = "";
 let ethAddress = "";
 
-/** Real 2-of-3 secp256k1 DKG; keeps ext-bob's (index 2) share. */
-function runDkg() {
+/** Real 2-of-3 secp256k1 DKG; keeps device-b's (index 2) share. */
+function runDkg(curve: "secp256k1" | "ed25519" = "secp256k1") {
     const parts = [1, 2, 3].map((i) => {
-        const p = new FrostDkgSecp256k1();
+        const p = curve === "secp256k1" ? new FrostDkgSecp256k1() : new FrostDkgEd25519();
         p.init_dkg(i, 3, 2);
         return p;
     });
     try {
         const r1 = parts.map((p) => p.generate_round1());
         parts.forEach((p, i) => r1.forEach((pkg, j) => i !== j && p.add_round1_package(j + 1, pkg)));
-        const r2 = parts.map((p) => JSON.parse(Buffer.from(p.generate_round2(), "hex").toString()));
+        const r2 = parts.map((p) => { const raw = p.generate_round2(); return JSON.parse(raw.startsWith("{") ? raw : Buffer.from(raw, "hex").toString()); });
         r2.forEach((map, s) =>
             parts.forEach((p, r) => s !== r && p.add_round2_package(s + 1, map[String(r + 1)])),
         );
         parts.forEach((p) => p.finalize_dkg());
         const bob = parts[1];
-        groupKey = bob.get_group_public_key();
-        ethAddress = bob.get_address();
+        const key = bob.get_group_public_key();
+        if (curve === "secp256k1") { groupKey = key; ethAddress = bob.get_address(); }
         return {
-            ...keyShareCoreFromEngine(bob.export_keystore(), groupKey, COHORT),
+            ...keyShareCoreFromEngine(bob.export_keystore(), key, COHORT),
             session_id: "dkg_abc",
-            device_id: "ext-bob",
+            device_id: "device-b",
             blockchains: [],
             created_at: 1_700_000_000_000,
         };
@@ -99,7 +100,7 @@ function exportBackup(stateManager: StateManager, password = PASSWORD) {
 }
 
 async function restoredState() {
-    const stateManager = new StateManager({ deviceId: "ext-bob", dkgState: DkgState.Idle });
+    const stateManager = new StateManager({ deviceId: "device-b", chain:"ethereum", dkgState: DkgState.Idle });
     await new Promise((r) => setTimeout(r, 0));
     await restoreActiveWallet(stateManager, keystore as any);
     return stateManager;
@@ -110,6 +111,17 @@ const savedCrypto = (globalThis as any).crypto;
 beforeAll(async () => {
     await wasmInit();
     keystore.keyShare = runDkg();
+    keystore.edShare = runDkg("ed25519");
+    keystore.keyShare.ecdsa_group_public_key = ECDSA_WALLET.group_public_key;
+    keystore.keyShare.ecdsa_cohort = {participants:["device-a","device-b","device-c"],threshold:2,total:3,participantIndex:2};
+    keystore.keyShare.frost_group_public_keys = {ed25519: keystore.edShare.group_public_key, secp256k1: groupKey};
+    Object.assign(keystore.edShare,{frost_group_public_keys:keystore.keyShare.frost_group_public_keys,ecdsa_group_public_key:ECDSA_WALLET.group_public_key,ecdsa_cohort:keystore.keyShare.ecdsa_cohort});
+    const addresses = [
+        ...JSON.parse(derive_account_addresses('secp256k1',groupKey,0)),
+        ...JSON.parse(derive_account_addresses('ed25519',keystore.edShare.group_public_key,0)),
+        ...JSON.parse(derive_account_addresses('secp256k1-ecdsa',ECDSA_WALLET.group_public_key,0)),
+    ].map((entry:any)=>({blockchain:String(entry.chain).toLowerCase(),address:entry.address,derivationPath:entry.path}));
+    keystore.keyShare.blockchains=addresses;keystore.edShare.blockchains=addresses;
     keystore.wallet = {
         id: "wallet-1",
         name: "Team",
@@ -124,6 +136,7 @@ beforeAll(async () => {
 beforeEach(() => {
     (globalThis as any).crypto = REAL_WEBCRYPTO;
     keystore.locked = false;
+    keystore.ecdsaShare = ECDSA_WALLET.shares[1];
     keystore.authMode = 'password';
     keystore.hardwareVerified = false;
     keystore.added = [];
@@ -150,12 +163,12 @@ describe("exportKeystore after a restore", () => {
         try {
             const response = await exportBackup(await restoredState(), portablePassword);
             expect(response.success).toBe(true);
-            expect(response.files.map((file: any) => file.curve)).toEqual(['secp256k1', 'secp256k1-ecdsa']);
+            expect(response.files.map((file: any) => file.curve)).toEqual(['secp256k1', 'ed25519', 'secp256k1-ecdsa']);
             const frost = await openShareBackup(response.files[0].keystoreData, portablePassword);
             expect(frost.keyShare.key_package === keystore.keyShare.key_package).toBe(true);
-            const ecdsa = await openEcdsaShareBackup(response.files[1].keystoreData, portablePassword);
+            const ecdsa = await openEcdsaShareBackup(response.files[2].keystoreData, portablePassword);
             expect(ecdsa.shareJson === ECDSA_WALLET.shares[1]).toBe(true);
-            await expect(openShareBackup(response.keystoreData, PASSWORD)).rejects.toThrow();
+            await expect(openShareBackup(response.files[0].keystoreData, PASSWORD)).rejects.toThrow();
         } finally { keystore.ecdsaShare = null; }
     });
 
@@ -181,28 +194,28 @@ describe("exportKeystore after a restore", () => {
 
     it("writes an encrypted file, never the plaintext share", async () => {
         const res = await exportBackup(await restoredState());
-        const backup = JSON.parse(res.keystoreData);
+        const backup = JSON.parse(res.files[0].keystoreData);
         expect(backup.encrypted).toBe(true);
         expect(backup.algorithm).toBe("AES-256-GCM-PBKDF2");
-        expect(res.keystoreData).not.toContain(keystore.keyShare.key_package);
+        expect(res.files[0].keystoreData).not.toContain(keystore.keyShare.key_package);
     });
 
     it("writes the engine's WalletMetadata: wallet id as session_id, sorted participants, no wallet_id", async () => {
         const res = await exportBackup(await restoredState());
-        const { version, metadata } = JSON.parse(res.keystoreData);
+        const { version, metadata } = JSON.parse(res.files[0].keystoreData);
         expect(version).toBe("2.0");
         expect(Object.keys(metadata)).toEqual([
             "session_id", "device_id", "curve_type", "threshold", "total_participants",
             "participant_index", "group_public_key", "participants", "created_at", "last_modified", "label",
         ]);
         expect(metadata.session_id).toBe("wallet-1");
-        expect(metadata.participants).toEqual(["cli-alice", "ext-bob", "tui-carol"]);
+        expect(metadata.participants).toEqual(["device-a", "device-b", "device-c"]);
         expect(metadata.label).toBe("Team");
     });
 
     it("imports back to the same share, group key and address", async () => {
         const res = await exportBackup(await restoredState());
-        const { metadata, keyShare } = await openShareBackup(res.keystoreData, PASSWORD);
+        const { metadata, keyShare } = await openShareBackup(res.files[0].keystoreData, PASSWORD);
 
         expect(metadata.group_public_key).toBe(groupKey);
         expect(keyShare.participant_identifiers).toEqual(COHORT);
@@ -222,15 +235,15 @@ describe("exportKeystore after a restore", () => {
         keystore.ecdsaShare = ECDSA_WALLET.shares[1];
         try {
             const res = await exportBackup(await restoredState());
-            expect(res.files.map((f: any) => f.curve)).toEqual(["secp256k1", "secp256k1-ecdsa"]);
-            expect(res.files[0].keystoreData).toBe(res.keystoreData);
-            const ecdsaFile = res.files[1].keystoreData;
+            expect(res.files.map((f: any) => f.curve)).toEqual(["secp256k1", "ed25519", "secp256k1-ecdsa"]);
+            expect(res.files[0].keystoreData).toBe(res.files[0].keystoreData);
+            const ecdsaFile = res.files[2].keystoreData;
             expect(ecdsaFile).not.toContain("key_share");
             const { metadata, shareJson } = await openEcdsaShareBackup(ecdsaFile, PASSWORD);
             expect(shareJson).toBe(ECDSA_WALLET.shares[1]);
             expect(metadata).toMatchObject({
                 session_id: "wallet-1",
-                device_id: "ext-bob",
+                device_id: "device-b",
                 curve_type: "secp256k1-ecdsa",
                 participant_index: 2,
                 group_public_key: ECDSA_WALLET.group_public_key,
@@ -243,20 +256,23 @@ describe("exportKeystore after a restore", () => {
 
     it("cannot be opened with the wrong password", async () => {
         const res = await exportBackup(await restoredState());
-        await expect(openShareBackup(res.keystoreData, "wrong password!")).rejects.toThrow("Wrong password");
+        await expect(openShareBackup(res.files[0].keystoreData, "wrong password!")).rejects.toThrow("Wrong password");
     });
 });
 
 describe('passwordless DKG save', () => {
     function pendingState() {
-        const state = new StateManager({ deviceId: 'ext-bob' });
+        const state = new StateManager({ deviceId: 'device-b' });
         state.updateState({
-            pendingKeystoreJson: toEngineKeystoreJson(keystore.keyShare),
+            pendingFrostShares: {
+                secp256k1: {keystoreJson: toEngineKeystoreJson(keystore.keyShare), groupPublicKey: groupKey},
+                ed25519: {keystoreJson: toEngineKeystoreJson(keystore.edShare), groupPublicKey: keystore.edShare.group_public_key},
+            },
             pendingKeystoreReady: true,
             pendingEcdsaShareJson: ECDSA_WALLET.shares[1],
             ecdsaGroupPublicKey: ECDSA_WALLET.group_public_key,
             dkgLastResult: { blockchain: 'ethereum', chain: 'ethereum', groupPublicKey: groupKey,
-                sessionId: 'dkg_passwordless', participantIdentifiers: COHORT, threshold: 2, total: 3 },
+                sessionId: 'dkg_passwordless', participantIndex: 2, participantIdentifiers: COHORT, threshold: 2, total: 3 },
         } as any);
         return state;
     }
@@ -272,9 +288,9 @@ describe('passwordless DKG save', () => {
         expect(response.success).toBe(true);
         expect(keystore.added.length).toBe(1);
         expect(keystore.added[0].data.key_package === keystore.keyShare.key_package).toBe(true);
-        expect(keystore.curves[0].curve).toBe('secp256k1-ecdsa');
-        expect(keystore.curves[0].data === ECDSA_WALLET.shares[1]).toBe(true);
-        expect((state.getState() as any).pendingKeystoreJson).toBeNull();
+        expect(keystore.curves[1].curve).toBe('secp256k1-ecdsa');
+        expect(keystore.curves[1].data === ECDSA_WALLET.shares[1]).toBe(true);
+        expect((state.getState() as any).pendingFrostShares).toBeNull();
     });
     it('keeps the pending DKG intact and writes nothing when the hardware vault is locked', async () => {
         keystore.authMode = 'hardware';
@@ -284,7 +300,7 @@ describe('passwordless DKG save', () => {
         expect(response.success).toBe(false);
         expect(response.error).toContain('YubiKey');
         expect(keystore.added.length).toBe(0);
-        expect((state.getState() as any).pendingKeystoreJson).not.toBeNull();
+        expect((state.getState() as any).pendingFrostShares).not.toBeNull();
     });
     it('continues to require a password for a password-mode vault', async () => {
         const response = await save(pendingState());

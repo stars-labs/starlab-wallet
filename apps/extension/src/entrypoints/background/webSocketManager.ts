@@ -158,8 +158,13 @@ export class WebSocketManager {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
         }
+        const previousClient = this.wsClient;
+        this.wsClient = null;
+        this.appState.wsConnected = false;
+        this.stateManager?.updateWebSocketStatus(false);
+        this.broadcastToPopup({ type: "wsStatus", connected: false });
         try {
-            this.wsClient?.disconnect();
+            previousClient?.disconnect();
         } catch (e) {
             console.warn("[WebSocketManager] reconnect: error closing existing client:", e);
         }

@@ -1,18 +1,4 @@
-/**
- * Regression tests for Ext-1a: wire-format parity with TUI.
- *
- * The TUI emits `session_info` JSON blobs with TUI-specific defaults
- * (e.g. no `accepted_devices`, `session_type` as a flat string). Our
- * parser must tolerate these and synthesise sensible defaults so the
- * extension's downstream code — which assumes every SessionInfo has
- * `accepted_devices: []` at minimum — doesn't crash on TUI-originated
- * invites.
- *
- * The inverse builder (`buildWireSessionInfo`) must emit shape that
- * TUI's `parse_session_info` (command.rs line 231) accepts. If this
- * test file diverges from that Rust function, interop silently
- * breaks — so the expectations here are load-bearing.
- */
+/** Canonical native session wire contract: unified DKG, explicit concrete signing/refresh. */
 import { describe, it, expect } from "bun:test";
 import {
     parseSessionInfoFromWire,
@@ -29,7 +15,7 @@ describe("parseSessionInfoFromWire", () => {
             threshold: 2,
             participants: ["tui-node-1"],
             session_type: "dkg",
-            curve_type: "secp256k1",
+            curve_type: "unified",
             coordination_type: "Network",
         };
         const parsed = parseSessionInfoFromWire(wire);
@@ -42,24 +28,25 @@ describe("parseSessionInfoFromWire", () => {
         expect(parsed!.accepted_devices).toEqual([]);
     });
 
-    it("synthesises defaults matching TUI's parse_session_info", () => {
-        // Bare-minimum payload — only required fields. Every default
-        // here must match the TUI defaults in command.rs line 231:
-        // proposer_id "unknown", curve_type "secp256k1",
-        // coordination_type "Network", session_type "dkg",
-        // participants [].
-        const parsed = parseSessionInfoFromWire({
-            session_id: "minimal",
-            total: 2,
-            threshold: 2,
-        });
+    it("fills only optional bookkeeping for an explicit unified DKG", () => {
+        const parsed = parseSessionInfoFromWire({session_id:"minimal",total:2,threshold:2,session_type:"dkg",curve_type:"unified"});
         expect(parsed).not.toBeNull();
         expect(parsed!.proposer_id).toBe("unknown");
         expect(parsed!.participants).toEqual([]);
-        expect(parsed!.curve_type).toBe("secp256k1");
+        expect(parsed!.curve_type).toBe("unified");
         expect(parsed!.coordination_type).toBe("Network");
         expect(parsed!.session_type).toBe("dkg");
         expect(parsed!.accepted_devices).toEqual([]);
+    });
+
+    it("rejects missing session type or algorithm and single-algorithm DKG", () => {
+        const base={session_id:"strict",total:2,threshold:2};
+        expect(parseSessionInfoFromWire(base)).toBeNull();
+        expect(parseSessionInfoFromWire({...base,session_type:"dkg"})).toBeNull();
+        expect(parseSessionInfoFromWire({...base,curve_type:"unified"})).toBeNull();
+        for(const curve_type of ["ed25519","secp256k1","secp256k1-ecdsa"]){
+            expect(parseSessionInfoFromWire({...base,session_type:"dkg",curve_type})).toBeNull();
+        }
     });
 
     it("parses a TUI-shaped signing announcement with sibling fields", () => {
@@ -73,7 +60,7 @@ describe("parseSessionInfoFromWire", () => {
             threshold: 2,
             participants: ["alice", "bob", "charlie"],
             session_type: "signing",
-            curve_type: "secp256k1",
+            curve_type: "secp256k1-ecdsa",
             coordination_type: "Network",
             wallet_name: "wallet-dkg_4a3f",
             group_public_key: "02aabbcc",
@@ -89,16 +76,24 @@ describe("parseSessionInfoFromWire", () => {
         expect(parsed!.signing_message_hex).toBe("68656c6c6f");
     });
 
-    it("accepts legacy alias message_hex for signing_message_hex", () => {
-        // TUI's parser reads `message_hex` as a fallback; mirror that.
-        const parsed = parseSessionInfoFromWire({
-            session_id: "s",
-            total: 2,
-            threshold: 2,
-            session_type: "signing",
-            message_hex: "deadbeef",
-        });
-        expect(parsed!.signing_message_hex).toBe("deadbeef");
+    it("does not read the removed message_hex alias", () => {
+        const parsed=parseSessionInfoFromWire({session_id:"s",total:2,threshold:2,session_type:"signing",curve_type:"secp256k1-ecdsa",message_hex:"deadbeef"});
+        expect(parsed).not.toBeNull();
+        expect(parsed!.signing_message_hex).toBeUndefined();
+    });
+
+    it("allows only concrete signing algorithms and refreshable FROST algorithms", () => {
+        const base={session_id:"algorithm-gate",total:3,threshold:2};
+        for(const curve_type of ["ed25519","secp256k1","secp256k1-ecdsa"]){
+            expect(parseSessionInfoFromWire({...base,session_type:"signing",curve_type})).not.toBeNull();
+        }
+        expect(parseSessionInfoFromWire({...base,session_type:"signing",curve_type:"unified"})).toBeNull();
+        for(const curve_type of ["ed25519","secp256k1"]){
+            expect(parseSessionInfoFromWire({...base,session_type:"reshare",curve_type})).not.toBeNull();
+        }
+        for(const curve_type of ["unified","secp256k1-ecdsa"]){
+            expect(parseSessionInfoFromWire({...base,session_type:"reshare",curve_type})).toBeNull();
+        }
     });
 
     it("rejects payloads missing session_id", () => {
@@ -137,23 +132,13 @@ describe("parseSessionInfoFromWire", () => {
             total: 3,
             threshold: 2,
             participants: ["alice", 42, null, "bob", { weird: true }],
+            session_type: "dkg", curve_type: "unified",
         });
         expect(parsed!.participants).toEqual(["alice", "bob"]);
     });
 
-    it("degrades unknown session_type tag to undefined", () => {
-        // A payload tagged with something neither "dkg" nor "signing"
-        // shouldn't be silently treated as DKG — parser returns
-        // undefined so downstream can decide what to do (ignore /
-        // log). This guards against a future `session_type` value
-        // being mis-routed into DKG UI.
-        const parsed = parseSessionInfoFromWire({
-            session_id: "x",
-            total: 3,
-            threshold: 2,
-            session_type: "future_variant",
-        });
-        expect(parsed!.session_type).toBeUndefined();
+    it("rejects an unknown session type instead of routing it as DKG", () => {
+        expect(parseSessionInfoFromWire({session_id:"x",total:3,threshold:2,session_type:"future_variant",curve_type:"unified"})).toBeNull();
     });
 });
 
@@ -166,7 +151,7 @@ describe("buildWireSessionInfo", () => {
             threshold: 2,
             participants: ["me"],
             session_type: "dkg",
-            curve_type: "secp256k1",
+            curve_type: "unified",
             coordination_type: "Network",
             accepted_devices: [],
         };
@@ -189,7 +174,7 @@ describe("buildWireSessionInfo", () => {
             threshold: 2,
             participants: ["me"],
             session_type: "signing",
-            curve_type: "secp256k1",
+            curve_type: "secp256k1-ecdsa",
             coordination_type: "Network",
             wallet_name: "w",
             group_public_key: "02aa",
@@ -205,21 +190,27 @@ describe("buildWireSessionInfo", () => {
         expect(wire.signing_message_hex).toBe("deadbeef");
     });
 
-    it("defaults session_type, curve_type, coordination_type when unset", () => {
-        // A caller that forgot to set defaults shouldn't trip TUI's
-        // parser. We emit the same defaults TUI fills in.
-        const s: SessionInfo = {
-            session_id: "x",
-            proposer_id: "me",
-            total: 2,
-            threshold: 2,
-            participants: [],
-            accepted_devices: [],
-        };
-        const wire = buildWireSessionInfo(s);
-        expect(wire.session_type).toBe("dkg");
-        expect(wire.curve_type).toBe("secp256k1");
-        expect(wire.coordination_type).toBe("Network");
+    it("rejects missing type or algorithm instead of emitting defaults", () => {
+        const base:SessionInfo={session_id:"x",proposer_id:"me",total:2,threshold:2,participants:[],accepted_devices:[]};
+        expect(()=>buildWireSessionInfo(base)).toThrow();
+        expect(()=>buildWireSessionInfo({...base,session_type:"dkg"})).toThrow();
+        expect(()=>buildWireSessionInfo({...base,curve_type:"unified"})).toThrow();
+        expect(()=>buildWireSessionInfo({...base,session_type:"dkg",curve_type:"ed25519"})).toThrow();
+        expect(buildWireSessionInfo({...base,session_type:"dkg",curve_type:"unified"}).coordination_type).toBe("Network");
+    });
+
+    it("refuses unified signing and unsupported ECDSA refresh on outbound sessions", () => {
+        const base:SessionInfo={session_id:"strict-outbound",proposer_id:"me",total:3,threshold:2,participants:["me"],accepted_devices:[]};
+        expect(()=>buildWireSessionInfo({...base,session_type:"signing",curve_type:"unified"})).toThrow();
+        for(const curve_type of ["unified","secp256k1-ecdsa"]){
+            expect(()=>buildWireSessionInfo({...base,session_type:"reshare",curve_type})).toThrow();
+        }
+        for(const curve_type of ["ed25519","secp256k1","secp256k1-ecdsa"]){
+            expect(buildWireSessionInfo({...base,session_type:"signing",curve_type}).curve_type).toBe(curve_type);
+        }
+        for(const curve_type of ["ed25519","secp256k1"]){
+            expect(buildWireSessionInfo({...base,session_type:"reshare",curve_type}).curve_type).toBe(curve_type);
+        }
     });
 
     it("round-trips parse → build with no semantic loss for DKG", () => {
@@ -233,7 +224,7 @@ describe("buildWireSessionInfo", () => {
             threshold: 2,
             participants: ["tui-1", "tui-2"],
             session_type: "dkg",
-            curve_type: "secp256k1",
+            curve_type: "unified",
             coordination_type: "Network",
         };
         const parsed = parseSessionInfoFromWire(tuiWire)!;

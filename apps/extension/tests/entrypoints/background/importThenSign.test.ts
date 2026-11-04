@@ -13,7 +13,8 @@ mock.module("#imports", () => mockImports);
 mock.module("../../../src/entrypoints/background/index", () => ({ checkAndRestoreKeystores: async () => {} }));
 
 import wasmInit, { derive_account_addresses, ecdsa_share_info } from "@stars-labs/core-wasm";
-import { encryptEcdsaShareBackup } from "../../../src/utils/shareBackup";
+import { frostShare } from "../../helpers/frostShare";
+import { encryptShareBackup, encryptEcdsaShareBackup } from "../../../src/utils/shareBackup";
 import { ECDSA_WALLET } from "../../helpers/ecdsaFixture";
 import { REAL_WEBCRYPTO } from "../../setup-bun";
 import { KeystoreService } from "../../../src/services/keystoreService";
@@ -58,6 +59,7 @@ function background() {
     let state: any = { deviceId: "device-a", invites: [], sessionInfo: null, blockchain: "ethereum" };
     const stateManager: any = {
         getState: () => state,
+        getChain: () => "ethereum",
         updateState: (patch: any) => { state = { ...state, ...patch }; },
         updateStateProperty: (k: string, v: any) => { state = { ...state, [k]: v }; },
         broadcastCurrentState: () => {},
@@ -92,7 +94,7 @@ function background() {
 describe("import an engine backup, then sign from the popup", () => {
     it("announces the wallet's whole cohort, sorted, with its threshold", async () => {
         const bg = background();
-        // A secp256k1 wallet backs up as two files: FROST + its Ethereum (ECDSA) share.
+        const edFile = await encryptShareBackup(frostShare("ed25519", ["device-a","device-b","device-c"]), {id:"w-transfer",name:"Team"} as any, PASSWORD);
         const ecdsaFile = await encryptEcdsaShareBackup(
             ECDSA_WALLET.shares[0],
             JSON.parse(ecdsa_share_info(ECDSA_WALLET.shares[0])),
@@ -101,7 +103,7 @@ describe("import an engine backup, then sign from the popup", () => {
         );
         const imported = await new Promise<any>((resolve) =>
             (bg.handler as any).handleImportKeystoreMessage(
-                { type: "importKeystore", keystoreFiles: [ecdsaFile, FILE], password: PASSWORD, chain: "ethereum" },
+                { type: "importKeystore", keystoreFiles: [ecdsaFile, edFile, FILE], password: PASSWORD, chain: "ethereum" },
                 resolve,
             ),
         );
@@ -134,24 +136,51 @@ describe("import an engine backup, then sign from the popup", () => {
         const reloaded = KeystoreManager.getInstance();
         await reloaded.initialize("device-a");
         expect(await reloaded.unlock(PASSWORD)).toBe(true);
+        expect((await reloaded.getKeyShare("w-transfer", "ed25519"))?.curve).toBe("ed25519");
+        expect((await reloaded.getKeyShare("w-transfer", "secp256k1"))?.curve).toBe("secp256k1");
+        expect(await reloaded.getCurveShare("w-transfer", "secp256k1-ecdsa")).toBe(ECDSA_WALLET.shares[0]);
         expect(reloaded.getWallets().find((wallet) => wallet.id === "w-transfer")).toMatchObject({
             blockchain: "ethereum", address: restored.address,
         });
     }, 30000);
 
-    it("an Ethereum signing needs the wallet's ECDSA share file too", async () => {
+    it("restores all algorithms into a passwordless vault and unlocks them after cold restart", async () => {
+        const assertion = {
+            credentialId: Buffer.from('fixture-credential').toString('base64url'),
+            prfSalt: Buffer.alloc(32, 1).toString('base64url'),
+            prfOutput: Buffer.alloc(32, 2).toString('base64url'),
+        };
+        const manager = KeystoreManager.getInstance();
+        await manager.initialize('device-a');
+        await manager.createHardwareKeystore(assertion, 'device-a');
+        const edShare = frostShare('ed25519',['device-a','device-b','device-c']);
+        const edFile = await encryptShareBackup(edShare,{id:'w-transfer',name:'Team'} as any,PASSWORD);
+        const ecdsaFile = await encryptEcdsaShareBackup(ECDSA_WALLET.shares[0],JSON.parse(ecdsa_share_info(ECDSA_WALLET.shares[0])),{id:'w-transfer',deviceId:'device-a'},PASSWORD);
         const bg = background();
-        await new Promise<any>((resolve) =>
-            (bg.handler as any).handleImportKeystoreMessage(
-                { type: "importKeystore", keystoreData: FILE, password: PASSWORD, chain: "ethereum" },
-                resolve,
-            ),
-        );
-        const signed = await new Promise<any>((resolve) =>
-            (bg.handler as any).handleCreateSigningSessionRequest({ walletId: "w-transfer", message: "hello" }, resolve),
-        );
-        expect(signed.success).toBe(false);
-        expect(signed.error).toContain("ECDSA");
+        const restored = await new Promise<any>(resolve => (bg.handler as any).handleImportKeystoreMessage({type:'importKeystore',keystoreFiles:[FILE,edFile,ecdsaFile],password:PASSWORD},resolve));
+        expect(restored.success).toBe(true);
+        await manager.lock();
+        (KeystoreManager as any).instance = null;
+        KeystoreService.resetInstance();
+        (KeystoreService as any).testMode = false;
+        const cold = KeystoreManager.getInstance();
+        await cold.initialize('device-a');
+        expect(cold.isLocked()).toBe(true);
+        await cold.unlockHardwareKeystore(assertion);
+        expect(cold.isLocked()).toBe(false);
+        expect((await cold.getKeyShare('w-transfer','ed25519'))?.key_package).toBe(edShare.key_package);
+        expect((await cold.getKeyShare('w-transfer','secp256k1'))?.curve).toBe('secp256k1');
+        expect(await cold.getCurveShare('w-transfer','secp256k1-ecdsa')).toBe(ECDSA_WALLET.shares[0]);
+        expect(await cold.unlock(PASSWORD)).toBe(false);
+    });
+
+    it("rejects incomplete backup inventories without publishing any wallet", async () => {
+        const bg = background();
+        const imported = await new Promise<any>(resolve => (bg.handler as any).handleImportKeystoreMessage(
+            {type:"importKeystore",keystoreFiles:[FILE],password:PASSWORD},resolve));
+        expect(imported.success).toBe(false);
+        expect(imported.error).toContain("three backup files");
+        expect(KeystoreManager.getInstance().getWallets()).toHaveLength(0);
         expect(bg.announces).toHaveLength(0);
-    }, 30000);
+    });
 });

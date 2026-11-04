@@ -206,6 +206,7 @@
     }
     // Panels always use the selected account on the selected chain.
     $: displayAddress = addressForChain(accountAddresses, appState.chain) ?? "";
+    $: walletQuorum = appState.walletQuorums?.[isEvmChain(appState.chain) ? "secp256k1-ecdsa" : getRequiredCurve(isSupportedChain(appState.chain) ? appState.chain : "ethereum")];
 
     // Onboarding wizard dismissal (#26) — session-scoped; the wizard also
     // disappears permanently once a wallet exists.
@@ -584,7 +585,6 @@
     
     // UI state flags
     let acceptingSession = false; // Prevent multiple session accept clicks
-    let selectedDevices: Set<string> = new Set(); // Track selected devices for session proposal
     
     // Signature request tracking
     let signatureRequests: Array<{
@@ -652,14 +652,12 @@
         locked: boolean;
         wallets: import("@stars-labs/types/keystore").ExtensionWalletMetadata[];
         activeWallet: import("@stars-labs/types/keystore").ExtensionWalletMetadata | null;
-        pendingImport: boolean;
         authMode?: "unconfigured" | "password" | "hardware";
     } = {
         initialized: false,
         locked: true,
         wallets: [],
-        activeWallet: null,
-        pendingImport: false
+        activeWallet: null
     };
     // Invitations worth showing: finished DKGs linger on the signal server.
     $: shownInvites = openInvites(
@@ -1677,59 +1675,6 @@
         });
     }
 
-    function proposeSession() {
-        // Convert Set to Array for selected devices
-        const selectedDevicesList = Array.from(selectedDevices);
-        
-        // Validate selection
-        if (selectedDevicesList.length !== appState.totalParticipants - 1) {
-            console.error(
-                `Please select exactly ${appState.totalParticipants - 1} devices for a ${appState.totalParticipants}-participant session. Currently selected: ${selectedDevicesList.length}`,
-            );
-            alert(`Please select exactly ${appState.totalParticipants - 1} devices for a ${appState.totalParticipants}-participant session`);
-            return;
-        }
-
-        if (appState.threshold > appState.totalParticipants) {
-            console.error(
-                "Threshold cannot be greater than total participants",
-            );
-            return;
-        }
-
-        if (appState.threshold < 1) {
-            console.error("Threshold must be at least 1");
-            return;
-        }
-
-        // Include self and selected devices
-        const allParticipants = [appState.deviceId, ...selectedDevicesList];
-
-        const sessionId =
-            (appState.proposedSessionIdInput ?? "").trim() ||
-            `wallet_${appState.threshold}of${appState.totalParticipants}_${Date.now()}`;
-
-        chrome.runtime.sendMessage({
-            type: "proposeSession",
-            session_id: sessionId,
-            total: appState.totalParticipants,
-            threshold: appState.threshold,
-            participants: allParticipants,
-            blockchain: protocolChainFor(appState.chain), // legacy protocol blockchain
-        });
-        console.log(
-            "[UI] Proposing session:",
-            sessionId,
-            `(${appState.threshold}-of-${appState.totalParticipants})`,
-            "with participants:",
-            allParticipants,
-        );
-        
-        // Clear selection after proposing
-        selectedDevices.clear();
-        selectedDevices = selectedDevices; // Trigger reactivity
-    }
-
     function acceptInvite(sessionId: string) {
         // Prevent multiple clicks
         if (acceptingSession) {
@@ -1931,8 +1876,6 @@
                 // unlocks on demand via the header unlock (🔓) button, or when
                 // an action that needs the key prompts for it.
 
-                // Check for pending imports
-                checkPendingImports();
             }
         });
     }
@@ -1997,7 +1940,6 @@
                 console.log("[UI] Keystore unlocked successfully");
                 
                 // Check for pending imports after unlock
-                checkPendingImports();
             } else {
                 passwordPromptError = response?.error ?? "Incorrect password. Try again.";
                 // Keep the modal open so the password can be corrected.
@@ -2025,35 +1967,6 @@
                 checkKeystoreStatus();
             } else {
                 passwordPromptError = response?.error ?? "Could not create this wallet. Try again.";
-            }
-        });
-    }
-    
-    async function checkPendingImports() {
-        const result = await chrome.storage.local.get(['mpc_pending_import']);
-        if (result.mpc_pending_import && !keystoreStatus.locked) {
-            // Prompt for migration
-            if (confirm("You have imported keystores waiting to be migrated. Would you like to migrate them now?")) {
-                migrateKeystores();
-            }
-        }
-    }
-    
-    async function migrateKeystores() {
-        chrome.runtime.sendMessage({ 
-            type: MESSAGE_TYPES.MIGRATE_KEYSTORES,
-            password: "" // Will be prompted in background if needed
-        }, (response) => {
-            if (chrome.runtime.lastError) {
-                console.error("[UI] Error migrating keystores:", chrome.runtime.lastError.message);
-                return;
-            }
-            if (response && response.success) {
-                console.log(`[UI] Migrated ${response.migratedCount} keystores`);
-                keystoreStatus.wallets = response.wallets;
-                chrome.storage.local.remove(['mpc_pending_import']);
-            } else {
-                console.error("[UI] Failed to migrate keystores:", response?.error);
             }
         });
     }
@@ -2160,12 +2073,6 @@
                     appState.chain = detail.chain;
                     appState.blockchain = getProtocolBlockchainForChain(detail.chain);
                 }
-                if (
-                    detail.curve === "secp256k1" ||
-                    detail.curve === "ed25519"
-                ) {
-                    appState.curve = detail.curve;
-                }
                 appState.showSettings = false;
                 appState = { ...appState };
             }}
@@ -2183,7 +2090,6 @@
             </p>
         {/if}
         <CreateWalletForm
-            deviceId={appState.deviceId}
             wsConnected={appState.wsConnected}
             room={signalRoom}
             on:created={({ detail }) => {
@@ -2192,12 +2098,6 @@
                     detail.sessionId,
                 );
                 createdDkgSessionId = detail.sessionId;
-                if (isSupportedChain(detail.chain)) {
-                    appState.chain = detail.chain;
-                    appState.blockchain = getProtocolBlockchainForChain(detail.chain);
-                    appState.curve = getRequiredCurve(detail.chain);
-                    appState = { ...appState };
-                }
                 showCreateWallet = false;
             }}
             on:cancel={() => {
@@ -2284,10 +2184,8 @@
                             <ChainIcon chain={String(appState.chain)} size={22} /> {chainLabel(appState.chain)}
                         </span>
                         <AccountPicker
-                            groupPublicKey={appState.dkgGroupPublicKey || ""}
+                            frostGroupPublicKeys={appState.frostGroupPublicKeys ?? {ed25519: "", secp256k1: ""}}
                             ecdsaGroupPublicKey={appState.ecdsaGroupPublicKey || ""}
-                            curve={appState.curve ??
-                                getRequiredCurve(isSupportedChain(appState.chain) ? appState.chain : "ethereum")}
                             chain={isSupportedChain(appState.chain) ? appState.chain : "ethereum"}
                             selected={selectedAccount}
                             on:select={onAccountSelect}
@@ -2300,12 +2198,11 @@
                             {appState.sessionInfo.threshold}-of-{appState
                                 .sessionInfo.total}
                         </span>
-                    {:else if appState.dkgLastResult}
+                    {:else if walletQuorum}
                         <span
                             class="rounded-full bg-primary-soft px-2 py-0.5 text-xs font-semibold"
                         >
-                            {appState.dkgLastResult.threshold}-of-{appState
-                                .dkgLastResult.total}
+                            {walletQuorum.threshold}-of-{walletQuorum.total}
                         </span>
                     {/if}
                 </div>
@@ -3373,36 +3270,11 @@
                             {@const webrtcStatus =
                                 appState.webrtcConnections[peer]}
                             {@const isOwnDevice = peer === appState.deviceId}
-                            {@const showCheckbox =
-                                !isOwnDevice &&
-                                !shownInvites.length &&
-                                !appState.sessionInfo}
                             {@const isInSession =
                                 appState.sessionInfo &&
                                 appState.sessionInfo.participants.includes(peer)}
                             <li class="list-row py-1.5 text-xs">
                                 <div class="flex min-w-0 items-center gap-2">
-                                    {#if showCheckbox}
-                                        <input
-                                            type="checkbox"
-                                            checked={selectedDevices.has(peer)}
-                                            disabled={!selectedDevices.has(
-                                                peer,
-                                            ) &&
-                                                selectedDevices.size >=
-                                                    appState.totalParticipants -
-                                                        1}
-                                            on:change={(e) => {
-                                                if (e.currentTarget.checked) {
-                                                    selectedDevices.add(peer);
-                                                } else {
-                                                    selectedDevices.delete(peer);
-                                                }
-                                                selectedDevices = selectedDevices;
-                                            }}
-                                            class="h-4 w-4 accent-[var(--c-primary)]"
-                                        />
-                                    {/if}
                                     <code class="mono truncate">{peer}</code>
                                     {#if isOwnDevice}
                                         <span class="badge badge-primary">You</span>
@@ -3436,12 +3308,6 @@
                             </li>
                         {/each}
                     </ul>
-                    {#if selectedDevices.size > 0 && !shownInvites.length && !appState.sessionInfo}
-                        <p class="mt-2 text-xs text-primary">
-                            Selected {selectedDevices.size} of {appState.totalParticipants -
-                                1} required
-                        </p>
-                    {/if}
                 {:else}
                     <p class="py-2 text-center text-xs text-muted">
                         No devices connected
@@ -3449,100 +3315,6 @@
                 {/if}
             </div>
 
-            <!-- Manual session + keystore import/export -->
-            {#if !appState.sessionInfo && !shownInvites.length}
-                <div class="divider"></div>
-
-                <div class="space-y-2">
-
-
-                </div>
-
-                <div class="space-y-2">
-                    <span class="label">Create session manually</span>
-                    <input
-                        id="session-id-input"
-                        type="text"
-                        bind:value={appState.proposedSessionIdInput}
-                        class="input"
-                        placeholder="Session ID (auto-generated if empty)"
-                    />
-                    <div class="grid grid-cols-2 gap-2">
-                        <div>
-                            <label class="label" for="total-participants"
-                                >Total</label
-                            >
-                            <input
-                                id="total-participants"
-                                type="number"
-                                bind:value={appState.totalParticipants}
-                                min="2"
-                                max={appState.connecteddevices.length}
-                                class="input"
-                                on:change={() => {
-                                    selectedDevices.clear();
-                                    selectedDevices = selectedDevices;
-                                }}
-                            />
-                        </div>
-                        <div>
-                            <label class="label" for="threshold-input"
-                                >Threshold</label
-                            >
-                            <input
-                                id="threshold-input"
-                                type="number"
-                                bind:value={appState.threshold}
-                                min="1"
-                                max={appState.totalParticipants}
-                                class="input"
-                            />
-                        </div>
-                    </div>
-                    <Button
-                        block
-                        on:click={proposeSession}
-                        disabled={!appState.wsConnected ||
-                            selectedDevices.size !==
-                                appState.totalParticipants - 1 ||
-                            appState.threshold > appState.totalParticipants ||
-                            appState.threshold < 1}
-                    >
-                        Propose ({appState.threshold}-of-{appState.totalParticipants})
-                    </Button>
-                    {#if !appState.wsConnected}
-                        <p
-                            class="text-center text-xs {hasSignalRoom
-                                ? 'text-danger-fg'
-                                : 'text-warning-fg'}"
-                        >
-                            {hasSignalRoom
-                                ? "Not connected to the signal server"
-                                : "Generate and save a signal room first"}
-                        </p>
-                    {:else if appState.connecteddevices.filter((p) => p !== appState.deviceId).length < appState.totalParticipants - 1}
-                        <p class="text-center text-xs text-muted">
-                            Need at least {appState.totalParticipants - 1} other device{appState.totalParticipants -
-                                1 >
-                            1
-                                ? "s"
-                                : ""}
-                        </p>
-                    {:else if appState.threshold > appState.totalParticipants || appState.threshold < 1}
-                        <p class="text-center text-xs text-danger-fg">
-                            Threshold must be between 1 and {appState.totalParticipants}
-                        </p>
-                    {:else if selectedDevices.size !== appState.totalParticipants - 1}
-                        <p class="text-center text-xs text-warning-fg">
-                            Select {appState.totalParticipants - 1} device{appState.totalParticipants -
-                                1 >
-                            1
-                                ? "s"
-                                : ""} above to include
-                        </p>
-                    {/if}
-                </div>
-            {/if}
         </div>
     </Collapsible>
 

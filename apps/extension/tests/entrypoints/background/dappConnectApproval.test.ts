@@ -20,9 +20,8 @@ mock.module("../../../src/services/keystoreManager", () => ({
     KeystoreManager: {
         getInstance: () => ({
             getWallets: () => [
-                { id: "evm1", name: "Main", address: EVM_A, blockchain: "ethereum" },
-                { id: "sol1", name: "Sol main", address: SOL_1, blockchain: "solana" },
-                { id: "sol2", name: "Sol spare", address: SOL_2, blockchain: "solana" },
+                { id: "sol1", name: "Sol main", address: SOL_1, blockchain: "solana", chainAddresses:{ethereum:EVM_A,solana:SOL_1} },
+                { id: "sol2", name: "Sol spare", address: EVM_B, blockchain: "ethereum", chainAddresses:{ethereum:EVM_B,solana:SOL_2} },
             ],
             getKeyShareData: () => undefined,
         }),
@@ -57,10 +56,10 @@ async function makeRpc() {
     (rpc as any).permissionService = permissions;
     (rpc as any).accountService = {
         ensureInitialized: async () => {},
-        getAccountsByBlockchain: () => [
-            { id: "a", name: "Account 1", address: EVM_A },
-            { id: "b", name: "Account 2", address: EVM_B },
-            { id: "c", name: "Account 3", address: EVM_C },
+        getAccounts: () => [
+            { id: "a", name: "Account 1", address: EVM_A, type:"hardware", blockchain:"ethereum" },
+            { id: "b", name: "Account 2", address: EVM_B, type:"hardware", blockchain:"ethereum" },
+            { id: "c", name: "Account 3", address: EVM_C, type:"hardware", blockchain:"ethereum" },
         ],
         getCurrentAccount: () => ({ id: "b", name: "Account 2", address: EVM_B }),
         ensureDefaultAccount: async () => null,
@@ -266,7 +265,7 @@ describe("solana_connect connect approval", () => {
         await pending;
 
         expect(env.permissions.getConnectedAccounts(ORIGIN).sort()).toEqual(
-            [EVM_A.toLowerCase(), SOL_1.toLowerCase()].sort(),
+            [EVM_A.toLowerCase(), SOL_1].sort(),
         );
     });
 

@@ -72,7 +72,7 @@ describe("SessionManager.createDkgWallet", () => {
             return mgr.createDkgWallet({
                 total: 3,
                 threshold: 2,
-                curve: "secp256k1",
+
             });
         })();
         expect(res.success).toBe(false);
@@ -86,7 +86,7 @@ describe("SessionManager.createDkgWallet", () => {
                 await mgr.createDkgWallet({
                     total: 1,
                     threshold: 2,
-                    curve: "secp256k1",
+
                 })
             ).success,
         ).toBe(false);
@@ -95,7 +95,7 @@ describe("SessionManager.createDkgWallet", () => {
                 await mgr.createDkgWallet({
                     total: 3,
                     threshold: 4,
-                    curve: "secp256k1",
+
                 })
             ).success,
         ).toBe(false);
@@ -104,7 +104,7 @@ describe("SessionManager.createDkgWallet", () => {
                 await mgr.createDkgWallet({
                     total: 3,
                     threshold: 0,
-                    curve: "secp256k1",
+
                 })
             ).success,
         ).toBe(false);
@@ -115,7 +115,7 @@ describe("SessionManager.createDkgWallet", () => {
         const res = await mgr.createDkgWallet({
             total: 3,
             threshold: 2,
-            curve: "secp256k1",
+
         });
 
         expect(res.success).toBe(true);
@@ -130,7 +130,7 @@ describe("SessionManager.createDkgWallet", () => {
         expect(payload.total).toBe(3);
         expect(payload.threshold).toBe(2);
         expect(payload.session_type).toBe("dkg");
-        expect(payload.curve_type).toBe("secp256k1");
+        expect(payload.curve_type).toBe("unified");
         expect(payload.coordination_type).toBe("Network");
         expect(payload.proposer_id).toBe(appState.deviceId);
         // Creator only lists themselves; joiners append.
@@ -145,9 +145,9 @@ describe("SessionManager.createDkgWallet", () => {
         await mgr.createDkgWallet({
             total: 2,
             threshold: 2,
-            curve: "ed25519",
+
         });
-        expect(announcedPayloads[0].curve_type).toBe("ed25519");
+        expect(announcedPayloads[0].curve_type).toBe("unified");
     });
 
     it("stashes creating_wallet state so the UI can show waiting state", async () => {
@@ -155,7 +155,7 @@ describe("SessionManager.createDkgWallet", () => {
         const res = await mgr.createDkgWallet({
             total: 3,
             threshold: 2,
-            curve: "secp256k1",
+
         });
         expect(appState.sessionInfo).not.toBeNull();
         expect(res.sessionId).toBeDefined();
@@ -174,7 +174,7 @@ describe("SessionManager.createDkgWallet", () => {
         await mgr.createDkgWallet({
             total: 3,
             threshold: 2,
-            curve: "secp256k1",
+
         });
         expect(broadcastToPopup).toHaveBeenCalled();
         const calls = (broadcastToPopup as any).mock.calls as any[];
@@ -191,7 +191,7 @@ describe("SessionManager.createDkgWallet", () => {
             const res = await mgr.createDkgWallet({
                 total: 3,
                 threshold: 2,
-                curve: "secp256k1",
+
             });
             if (res.sessionId) ids.add(res.sessionId);
         }

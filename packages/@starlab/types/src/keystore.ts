@@ -1,4 +1,4 @@
-import type { SupportedChain } from './appstate';
+import type { SupportedChain } from './appstate.js';
 
 // ===================================================================
 // KEYSTORE TYPES - FROST KEY SHARE STORAGE
@@ -55,10 +55,6 @@ export interface WalletMetadata {
     
     /** List of blockchains supported by this wallet */
     blockchains: BlockchainInfo[];
-    
-    /** Legacy fields for backward compatibility */
-    blockchain?: string;
-    public_address?: string;
     
     /** Minimum number of participants required to sign */
     threshold: number;
@@ -132,15 +128,19 @@ export interface KeyShareData {
     participant_identifiers: Record<string, number>;
     
     // Blockchain specific
-    curve: 'secp256k1' | 'ed25519'; // Ethereum or Solana
+    curve: 'secp256k1' | 'ed25519'; // This entry's FROST algorithm
     blockchains: BlockchainInfo[]; // Multi-chain support
     
     /** secp256k1 wallets: root group key (SEC1 hex) of the wallet's
      *  threshold-ECDSA key, whose share is stored as its own keystore
      *  entry (curve `secp256k1-ecdsa`). Ethereum accounts derive from it. */
     ecdsa_group_public_key?: string;
+    /** Immutable ECDSA signing cohort, independent of later FROST refresh. */
+    ecdsa_cohort?: {participants: string[]; threshold: number; total: number; participantIndex: number};
 
-    // Legacy support
+    /** Public roots of the unified wallet's two FROST shares. */
+    frost_group_public_keys?: { ed25519: string; secp256k1: string };
+
     ethereum_address?: string; // Derived Ethereum address
     solana_address?: string; // Derived Solana address
     
@@ -157,7 +157,9 @@ export interface ExtensionWalletMetadata {
     id: string; // Unique wallet ID (matches account ID)
     name: string; // User-friendly name
     blockchain: string; // Primary blockchain
-    address: string; // The primary address
+    address: string; // The primary display address
+    /** Account-zero addresses, independent of the currently viewed chain. */
+    chainAddresses?: Partial<Record<SupportedChain, string>>;
     session_id: string; // Links to KeyShareData
 
     // Visual
@@ -169,9 +171,7 @@ export interface ExtensionWalletMetadata {
     hasBackup: boolean; // Whether user has backed up this wallet
 
     // Timing
-    /** Unix timestamp (ms) when this wallet was added. Optional for
-     *  backward-compat with older stored metadata that predates the
-     *  field — code should default to `wallet.createdAt ?? 0`. */
+    /** Unix timestamp (ms) when this wallet was added. */
     createdAt?: number;
     /** Unix timestamp (ms) of the last time this wallet was used
      *  for a signing operation. Updates lazily on signingComplete. */
@@ -246,18 +246,6 @@ export interface KeyDerivationParams {
     memory?: number; // For Argon2
     parallelism?: number; // For Argon2
     keyLength: number; // Output key size
-}
-
-// Session info for creating new accounts
-export interface NewAccountSession {
-    session_id: string;
-    name: string;
-    blockchain: SupportedChain;
-    threshold: number;
-    total_participants: number;
-    participants: string[];
-    status: 'proposing' | 'waiting_acceptance' | 'dkg_in_progress' | 'completed' | 'failed';
-    created_at: number;
 }
 
 // Events emitted by keystore

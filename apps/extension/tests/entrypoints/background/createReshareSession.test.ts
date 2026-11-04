@@ -38,6 +38,7 @@ function makeSessionManager() {
     const sendToOffscreen = jest.fn(async () => ({ success: true }));
     const stateManager = {
         getState: () => appState,
+        getChain: () => appState.chain ?? "ethereum",
         updateState: jest.fn((patch: Partial<AppState>) => {
             Object.assign(appState, patch);
         }),

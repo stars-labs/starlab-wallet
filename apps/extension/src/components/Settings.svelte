@@ -10,11 +10,6 @@
     import type { SupportedChain } from "@stars-labs/types/appstate";
     import {
         CHAIN_METADATA,
-        getProtocolBlockchainForChain,
-        EVM_CHAINS,
-        LIMITED_CHAINS,
-        getCompatibleChains,
-        getRequiredCurve,
         isEvmChain,
         isSupportedChain,
     } from "@stars-labs/types/appstate";
@@ -328,18 +323,15 @@
                     backupStatus = "Could not export the backup. Try again.";
                     return;
                 }
-                if (response?.success && response.keystoreData) {
-                    // One file per key, named like the engine's export
-                    // (`<stem>-<curve>.json` when a wallet has several).
-                    const files: { curve: string; keystoreData: string }[] =
-                        response.files ?? [{ curve: chain, keystoreData: response.keystoreData }];
-                    const stem = `starlab-share-backup-${chain}-${Date.now()}`;
+                if (response?.success && Array.isArray(response.files) && response.files.length === 3) {
+                    const files: { curve: string; keystoreData: string }[] = response.files;
+                    const stem = `starlab-wallet-backup-${Date.now()}`;
                     for (const f of files) {
                         const blob = new Blob([f.keystoreData], { type: "application/json" });
                         const url = URL.createObjectURL(blob);
                         const a = document.createElement("a");
                         a.href = url;
-                        a.download = files.length > 1 ? `${stem}-${f.curve}.json` : `${stem}.json`;
+                        a.download = `${stem}-${f.curve}.json`;
                         document.body.appendChild(a);
                         a.click();
                         document.body.removeChild(a);
@@ -347,14 +339,12 @@
                     }
                     backupPassword = "";
                     backupPasswordConfirm = "";
-                    backupStatus =
-                        files.length > 1
-                            ? `Encrypted backup saved as ${files.length} files (one per key) — keep them together, offline.`
-                            : "Encrypted backup saved. Store it offline, away from this device.";
+                    backupStatus = "Encrypted backup saved as three files. Keep them together and store them offline.";
                 } else {
                     backupError = true;
                     backupStatus = authMode === "hardware" && /verify|locked/i.test(response?.error ?? "")
                         ? "Verify your YubiKey again, then return to Settings and export within one minute."
+                        : response?.success ? "Incomplete backup: all three wallet files are required."
                         : `Export failed: ${response?.error ?? "unknown error"}`;
                 }
             },
@@ -393,7 +383,7 @@
         }
     }
     const dispatch = createEventDispatcher<{
-        backToWallet: { chain: string; curve: string };
+        backToWallet: { chain: string };
     }>();
 
     // Theme is managed by the shared store (system | light | dark) so it
@@ -407,8 +397,8 @@
     ];
 
     // Wallet configuration
-    let curve: "secp256k1" | "ed25519" = "secp256k1";
     let chain: SupportedChain = "ethereum";
+    const chainOptions = Object.values(CHAIN_METADATA).filter(option => option.enabled);
     let networks: Chain[] = [];
     let currentNetwork: Chain | undefined;
     let networkService: NetworkService;
@@ -432,16 +422,10 @@
             const message = await chrome.runtime.sendMessage({
                 type: "getState",
             });
-            const incomingChain = message?.chain ?? message?.blockchain;
+            const incomingChain = message?.chain;
             if (isSupportedChain(incomingChain)) {
                 chain = incomingChain;
-                // Get curve from state if available, otherwise use sensible default
-                if (message.curve) {
-                    curve = message.curve;
-                } else {
-                    // Legacy support: default curve for existing chain selection
-                    curve = getRequiredCurve(chain);
-                }
+
             }
 
             await networkService.setCurrentChain(chain).catch((error) => {
@@ -468,31 +452,9 @@
         }
     });
 
-    // Handle curve change - validate compatibility and set sensible defaults
-    function handleCurveChange() {
-        console.log("[Settings] Curve changed to:", curve);
-
-        // Check if current chain is compatible with new curve
-        const compatibleChains = getCompatibleChains(curve);
-        if (!compatibleChains.includes(chain)) {
-            // Current chain is not compatible, switch to the first compatible chain
-            chain = compatibleChains[0];
-            console.log("[Settings] Switched to compatible chain:", chain);
-        }
-
-        void handleChainChange();
-    }
-
     // Handle chain change - validate compatibility and set sensible defaults
     async function handleChainChange() {
         console.log("[Settings] Chain changed to:", chain);
-
-        // Ensure curve is compatible with the selected chain
-        const requiredCurve = getRequiredCurve(chain);
-        if (curve !== requiredCurve) {
-            curve = requiredCurve;
-            console.log("[Settings] Updated curve to compatible:", curve);
-        }
 
         void updateBlockchainSelection();
 
@@ -662,7 +624,7 @@
         <Button
             variant="secondary"
             size="sm"
-            on:click={() => dispatch("backToWallet", { chain, curve })}
+            on:click={() => dispatch("backToWallet", { chain })}
         >
             Done
         </Button>
@@ -796,11 +758,10 @@
     <div class="card card-pad space-y-2">
         <h3 class="section-title"><span class="section-icon"><Icon name="download" size={17} /></span>Backup</h3>
         <p class="text-xs text-muted">
-            Exports <strong>this device's key share</strong> as a password-encrypted
-            file (CLI-compatible).
-            One share alone can never sign — the threshold protects you — but treat
-            the file like a secret: store it offline, never paste it anywhere.
-            Restore your device from this file when needed.
+            Exports <strong>this device's complete multi-chain wallet backup</strong>
+            as three encrypted files. Keep all three together. This device alone
+            cannot sign — your threshold still applies. Store the files offline,
+            never paste them anywhere, and use the complete set to restore this device.
         </p>
         {#if authMode === "hardware"}
             <div class="rounded-xl bg-surface-2 p-3 space-y-2">
@@ -812,7 +773,7 @@
         {/if}
         <label class="flex items-center gap-2 text-xs">
             <input type="checkbox" bind:checked={backupAcknowledged} />
-            I understand this file contains key material
+            I understand these files contain key material
         </label>
         <input
             type="password"
@@ -836,7 +797,7 @@
         {#if backupStatus}
             <p class={backupError ? "text-xs text-danger-fg" : "text-xs text-muted"} role={backupError ? "alert" : "status"}>{backupStatus}</p>
         {/if}
-        <WalletRestore chain={getProtocolBlockchainForChain(chain)} />
+        <WalletRestore />
     </div>
 
     <!-- Devices / Reshare (M3 #23): rotate shares or retire a device -->
@@ -934,31 +895,19 @@
         <h3 class="section-title flex items-center gap-2"><ChainIcon chain={String(chain)} />Network</h3>
 
         <div>
-            <label class="label" for="chain-select">Blockchain</label>
+            <label class="label" for="chain-select">Viewing chain</label>
             <select
                 id="chain-select"
                 bind:value={chain}
                 on:change={handleChainChange}
                 class="select"
             >
-                <optgroup label="Ethereum / EVM (secp256k1)">
-                    {#each EVM_CHAINS as chainId}
-                        <option value={chainId}>{CHAIN_METADATA[chainId].label}</option>
-                    {/each}
-                </optgroup>
-                <optgroup label="ed25519">
-                    <option value="solana">Solana</option>
-                </optgroup>
-                <optgroup label="Address + threshold signing">
-                    {#each LIMITED_CHAINS as chainId}
-                        <option value={chainId}>
-                            {CHAIN_METADATA[chainId].label} — limited
-                        </option>
-                    {/each}
-                </optgroup>
+                {#each chainOptions as option}
+                    <option value={option.id}>{option.label}{option.status === "limited" ? " — limited" : ""}</option>
+                {/each}
             </select>
             <p class="mt-1 text-xs text-muted">
-                {CHAIN_METADATA[chain].family} network
+                Switching chains changes the view and network, not your wallet keys.
             </p>
             {#if CHAIN_METADATA[chain].status === "limited"}
                 <p class="mt-1 text-xs text-muted">{CHAIN_METADATA[chain].note}</p>
@@ -967,7 +916,7 @@
 
         {#if isEvmChain(chain) && networks.length > 0}
             <div>
-                <label class="label" for="network-select">Network</label>
+                <label class="label" for="network-select">RPC network</label>
                 <select
                     id="network-select"
                     on:change={handleNetworkChange}
@@ -1004,24 +953,7 @@
             {/if}
         {/if}
 
-        <!-- Advanced: curve (technical) -->
-        <details class="text-sm">
-            <summary class="cursor-pointer text-xs font-semibold text-muted"
-                >Advanced</summary
-            >
-            <div class="mt-2">
-                <label class="label" for="curve-select">Signature curve</label>
-                <select
-                    id="curve-select"
-                    bind:value={curve}
-                    on:change={handleCurveChange}
-                    class="select"
-                >
-                    <option value="secp256k1">secp256k1</option>
-                    <option value="ed25519">ed25519</option>
-                </select>
-            </div>
-        </details>
+
     </div>
 
     <!-- Add Custom Network -->

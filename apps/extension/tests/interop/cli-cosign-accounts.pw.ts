@@ -8,14 +8,13 @@ import { test, expect } from "./fixtures";
 import { execFileSync } from "node:child_process";
 import { recoverAddress } from "viem";
 import { startPeers, runCli, CLI_BIN } from "./cli-peers";
-import { acceptInvitation, approveSigningRequest, dkgResult, saveWallet } from "./extension-actions";
-import { setupExtension, CURVE, PASSWORD, CLI_TIMEOUT_S, specTimeout, extensionEthereumAddress, type Env } from "./scenario";
+import { acceptInvitation, approveSigningRequest, waitForDkg, saveWallet } from "./extension-actions";
+import { setupExtension, PASSWORD, CLI_TIMEOUT_S, specTimeout, extensionEthereumAddress, type Env } from "./scenario";
 import { schnorrVerify, segwitV1Program } from "../helpers/bip340";
 import type { Page } from "@playwright/test";
 
 test.describe.configure({ timeout: specTimeout(1) + 300_000 });
 // secp256k1 accounts only (ethereum / bitcoin): runs in the secp256k1 job.
-test.skip(CURVE !== "secp256k1", "secp256k1 accounts");
 
 const walletIdOf = (out: string) => /Wallet ID:\s+(\S+)/.exec(out)?.[1];
 
@@ -31,15 +30,15 @@ for (const threshold of [2, 3]) {
     let env: Env | undefined;
     try {
       env = await setupExtension(page, context, extensionId);
-      env.peers = startPeers({ count: 1, signal: env.signal, room: env.room, curve: "secp256k1", password: PASSWORD });
+      env.peers = startPeers({ count: 1, signal: env.signal, room: env.room, password: PASSWORD });
       const cli = { deviceId: "interop-creator", signal: env.signal, room: env.room, password: PASSWORD };
       const creator = runCli({
         ...cli,
-        args: ["wallet", "create", "--threshold", String(threshold), "--total", "3", "--curve", "secp256k1", "--timeout", CLI_TIMEOUT_S],
+        args: ["wallet", "create", "--threshold", String(threshold), "--total", "3", "--curve", "unified", "--timeout", CLI_TIMEOUT_S],
       });
       await acceptInvitation(page);
       const walletId = walletIdOf(await creator.done)!;
-      await dkgResult(page);
+      await waitForDkg(page);
       await saveWallet(page, PASSWORD);
       const ethAddress = await extensionEthereumAddress(page);
       // Public derivation, no password / network: the CLI's account-0 list.

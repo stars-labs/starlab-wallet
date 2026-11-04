@@ -1,4 +1,4 @@
-import type { SupportedChain } from './appstate';
+import type { SupportedChain } from './appstate.js';
 
 // ===================================================================
 // ACCOUNT AND WALLET TYPES

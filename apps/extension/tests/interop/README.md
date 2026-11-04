@@ -4,7 +4,7 @@ The highest-value, highest-cost test layer: it crosses the **Rust-core ↔
 independent-TypeScript/WASM** boundary. The extension acts as the DKG initiator;
 `starlab-cli serve` nodes act as the other co-signers. We assert the
 cross-implementation invariant from `docs/cli-conformance-testing.md` §5.4:
-**all participants agree on the group public key**, and a threshold signature
+**all participants agree on all three group public keys**, and a threshold signature
 produced with the extension in the mesh **verifies**.
 
 ```
@@ -36,7 +36,7 @@ checkout (`../starlab-mpc`; override with `STARLAB_MPC_DIR`).
 # in starlab-mpc
 cargo build --release -p starlab-cli -p starlab-signal-server
 # in this repo
-bun run build                                  # produces apps/extension/.output/chrome-mv3
+WXT_INSECURE_TEST_PRIMES=1 bun run build         # isolated test build only
 ```
 
 ## Run
@@ -48,14 +48,13 @@ bun run test:interop:smoke
 
 # Full interop on a private local signal server (recommended, self-contained):
 INTEROP_SIGNAL=local bun run test:interop
-INTEROP_SIGNAL=local INTEROP_CURVE=ed25519 bun run test:interop
 # …or against a shared server:
 INTEROP_SIGNAL=wss://panda.qzz.io bun run test:interop
 ```
 
 Env knobs: `INTEROP_SIGNAL` (`local` = spawn a fresh `starlab-signal-server`
-per test), `INTEROP_CURVE` (secp256k1|ed25519), `INTEROP_PW`,
-`STARLAB_MPC_DIR`, `PLAYWRIGHT_CHROME_PATH`, `INTEROP_BROWSER_LOG=1` to
+per test), `INTEROP_PW`,
+`STARLAB_MPC_DIR`, `STARLAB_CLI_BIN`, `STARLAB_SIGNAL_BIN`, `STARLAB_EXTENSION_DIR`, `PLAYWRIGHT_CHROME_PATH`, `INTEROP_BROWSER_LOG=1` to
 mirror the offscreen document (WebRTC + FROST rounds) and background
 (signal-server traffic, sessions) consoles into the test output, and
 `INTEROP_CLI_LOG` / `SERVE_LOG_LEVEL` (e.g. `info`) for the one-shot CLI
@@ -93,9 +92,26 @@ nix shell nixpkgs#xvfb-run nixpkgs#chromium -c unshare --user --map-root-user --
 The dummy interface and default route are required: webrtc-rs skips loopback,
 and its mDNS multicast join fails with `ENODEV` when there is no route.
 
-## Status
+## Validation scope
 
-All specs pass on secp256k1 and ed25519: extension- and CLI-initiated DKG,
-signing (including more than threshold signers online — the proposer fixes
-the signer set with `SIGN_SET`) and reshare; recovery from a signal-server
-outage; with `INTEROP_NETNS=1`, recovery from a WebRTC (UDP) outage.
+The unified suite replaces the previous single-curve matrix. Current test and
+artifact results belong to the associated pull request; a successful collection
+or typecheck alone is not a completed DKG or signing test. The outage cases
+require their documented private server or network namespace.
+
+## Unified wallet contract
+
+Every creation uses `--curve unified` (no single-algorithm creation mode).
+Both initiator directions compare the ed25519, Taproot secp256k1 and ECDSA
+public keys against the native encrypted-file headers, without decrypting or
+logging private shares. Existing signing cases select their chain explicitly;
+FROST refresh does not refresh or retire the ECDSA key.
+
+`keystore-persistence.pw.ts` creates one real 2-of-3 unified wallet, closes the
+browser and both native peers, rejects a wrong unlock password, then signs
+Solana, Sui, Bitcoin and Ethereum account 1 with fresh native processes and
+the restored extension. The third device stays offline. It then exports exactly
+three encrypted native-format files and restores them in a fresh browser
+profile, comparing every public group key, then really co-signs Ethereum account 1
+again with the restored device identity. Test prime fixtures are intentionally
+insecure; these profiles and wallets must never hold funds.

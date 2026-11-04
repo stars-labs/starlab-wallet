@@ -58,10 +58,10 @@ backup, signing and refresh, rather than merely adding another DKG class.
 
 ## Acceptance evidence
 
-PASS on the final candidate (2026-11-04):
+Local validation (2026-11-04):
 
-- Bun 1.4.4 / Node 26.13.0: 1,008 tests across 118 files, zero failures,
-  3,351 assertions in 284.77 seconds. Svelte check: zero errors/warnings.
+- Bun 1.4.4 / Node 26.13.0: 1,022 tests across 119 files, zero failures,
+  3,421 assertions in 268.45 seconds. Svelte check: zero errors/warnings.
   Ordinary production build, ZIP, native ESM import and diff checks passed.
 - Real Chromium/native interop: 3/3 cases passed in 4.3 minutes. Extension and
   native creators produce matching ed25519, Taproot FROST and ECDSA roots and
@@ -105,3 +105,17 @@ A manual signal reconnect detaches the previous client before closing it.
 Late or synchronous close callbacks from that client cannot schedule a retry
 that repeatedly tears down the healthy replacement; unexpected active-client
 closures retain exponential backoff.
+
+## Curve-specific share refresh
+
+Unified creation still requires all three algorithms. Refresh is a separate
+ceremony for one concrete FROST curve (ed25519 or Taproot secp256k1); ECDSA
+refresh remains unsupported. Both invitation entry points enforce that boundary
+and continue rejecting the removed single-algorithm DKG paths.
+
+The native engine selects both metadata and encrypted files by wallet ID and
+curve when loading and saving a refresh. This prevents selecting the first
+same-ID entry and overwriting a sibling curve. Regression tests reproduce the
+old deserialization failure, decrypt the refreshed file, preserve sibling
+ciphertexts and reject a missing curve before state changes. The consumer engine
+pin is `712f0364c6800e038fb4878b9768de01aacb62c4`; crypto and WASM sources are unchanged.

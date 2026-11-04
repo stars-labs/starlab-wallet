@@ -14,6 +14,6 @@
   "files": [
     "pkg"
   ],
-  "starlabEngineRevision": "cea7b03ab42483dbd5f5c3a1d6a695a7bfeb5489",
+  "starlabEngineRevision": "712f0364c6800e038fb4878b9768de01aacb62c4",
   "starlabWasmSha256": "96b470dd7da31da20c74899932267a503af3b49c16e3b84519d2767f23725673"
 }

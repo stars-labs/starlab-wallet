@@ -282,8 +282,9 @@ export class SessionManager {
         const session = invites[sessionIndex];
         console.log(`[SessionManager] Found session to accept:`, session);
 
-        if (session.session_type !== "signing" && session.curve_type !== "unified") {
-            return { success: false, error: "Only unified DKG sessions are supported. Recreate this test wallet." };
+        if ((session.session_type === "dkg" && session.curve_type !== "unified") ||
+            (session.session_type === "reshare" && session.curve_type !== "ed25519" && session.curve_type !== "secp256k1")) {
+            return { success: false, error: "DKG requires a unified wallet; share refresh requires Bitcoin, Solana or Sui shares." };
         }
         const chain = isSupportedChain(session.blockchain) ? session.blockchain : this.appState.chain ?? "ethereum";
         blockchain = getProtocolBlockchainForChain(chain);
@@ -534,8 +535,9 @@ export class SessionManager {
                 new Set([...(invite.accepted_devices ?? []), currentDeviceId]),
             ),
         };
-        if (local.session_type !== "signing" && local.curve_type !== "unified") {
-            return { success: false, error: "Only unified DKG sessions are supported. Recreate this test wallet." };
+        if ((local.session_type === "dkg" && local.curve_type !== "unified") ||
+            (local.session_type === "reshare" && local.curve_type !== "ed25519" && local.curve_type !== "secp256k1")) {
+            return { success: false, error: "DKG requires a unified wallet; share refresh requires Bitcoin, Solana or Sui shares." };
         }
         const chain = isSupportedChain(local.blockchain) ? local.blockchain : this.appState.chain ?? "ethereum";
         // dkgState tracks key generation / the wallet's readiness. A

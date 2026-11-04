@@ -9,8 +9,8 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@v7.0.1
+      - uses: oven-sh/setup-bun@v2.2.0
       # The extension's postinstall (`wxt prepare`) imports @stars-labs/types,
       # whose dist/ is gitignored — build it before running install scripts.
       - run: bun install --frozen-lockfile --ignore-scripts
@@ -40,23 +40,23 @@ jobs:
       matrix:
         curve: [secp256k1, ed25519]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       # starlab-mpc main with threshold ECDSA (#138); the vendored core-wasm
       # pkg was built from the same engine code.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           repository: stars-labs/starlab-mpc
           ref: 63336972abc60b5cedc2026c039efcdf8e4f2dd8
           path: starlab-mpc
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           workspaces: starlab-mpc
       - run: sudo apt-get update && sudo apt-get install -y pkg-config xvfb nftables
       - run: cargo build --release --locked -p starlab-cli -p starlab-signal-server
         working-directory: starlab-mpc
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@v2.2.0
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run build:types
       # Test build: carries the INSECURE fixed-ECDSA-primes hook the specs use
@@ -88,7 +88,7 @@ jobs:
             INTEROP_NETNS=1 INTEROP_SIGNAL=local xvfb-run -a bun run test:interop -g "WebRTC outage"'
 
       - if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: interop-results-${{ matrix.curve }}
           path: apps/extension/test-results

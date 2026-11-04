@@ -14,5 +14,6 @@
     "build:firefox": "bun run build:types && cd apps/extension && bun run build:firefox",
     "check": "bun run build:types && cd apps/extension && bun run check",
     "test": "cd apps/extension && bun test"
-  }
+  },
+  "packageManager": "bun@1.4.4"
 }

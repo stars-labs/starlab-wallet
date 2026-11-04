@@ -4,9 +4,10 @@
  * lifecycle, and that signMessage / signTransaction route to the bridge with
  * the right bytes — is pure given a fake bridge, so that's what's asserted.
  */
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from "bun:test";
 import {
   Keypair,
+  type Blockhash,
   VersionedTransaction,
   TransactionMessage,
   SystemProgram,
@@ -20,8 +21,17 @@ import {
 } from "../../../src/entrypoints/injected/solana/wallet";
 
 // A deterministic account to act as "the wallet".
-const KP = Keypair.generate();
-const ADDRESS = KP.publicKey.toBase58();
+import { REAL_WEBCRYPTO } from "../../setup-bun";
+const previousCrypto = globalThis.crypto;
+let KP: Keypair;
+let ADDRESS: string;
+beforeAll(async () => {
+  (globalThis as any).crypto = REAL_WEBCRYPTO;
+  KP = await Keypair.generate();
+  ADDRESS = KP.publicKey.toBase58();
+});
+beforeEach(() => { (globalThis as any).crypto = REAL_WEBCRYPTO; });
+afterEach(() => { (globalThis as any).crypto = previousCrypto; });
 
 function fakeBridge(overrides: Partial<SolanaBridge> = {}): SolanaBridge {
   return {
@@ -104,6 +114,35 @@ describe("createStarlabSolanaWallet", () => {
     expect(out.signature.length).toBe(64);
   });
 
+  it("background v3 transaction serialization preserves a real Ed25519 signature", async () => {
+    const { RpcHandler } = await import("../../../src/entrypoints/background/rpcHandler");
+    const message = new TransactionMessage({
+      payerKey: KP.publicKey,
+      recentBlockhash: bs58.encode(new Uint8Array(32).fill(1)) as Blockhash,
+      instructions: [SystemProgram.transfer({
+        fromPubkey: KP.publicKey,
+        toPubkey: new PublicKey("11111111111111111111111111111111"),
+        lamports: 1,
+      })],
+    }).compileToV0Message();
+    const unsigned = new VersionedTransaction(message).serialize();
+    const handler = Object.create(RpcHandler.prototype);
+    handler.handleSolanaSignBytes = async ([address, hex]: string[]) => {
+      expect(address).toBe(ADDRESS);
+      const bytes = Uint8Array.from(Buffer.from(hex.replace(/^0x/, ""), "hex"));
+      expect([...bytes]).toEqual([...message.serialize()]);
+      const signature = await REAL_WEBCRYPTO.subtle.sign("Ed25519", KP.keyPair.privateKey, bytes);
+      return Buffer.from(signature).toString("hex");
+    };
+    const signedHex = await handler.handleSolanaSignTransaction([
+      ADDRESS, Buffer.from(unsigned).toString("hex"),
+    ]);
+    const signed = VersionedTransaction.deserialize(Uint8Array.from(Buffer.from(signedHex.replace(/^0x/, ""), "hex")));
+    expect(signed.message.serialize()).toEqual(message.serialize());
+    expect(await REAL_WEBCRYPTO.subtle.verify("Ed25519", KP.keyPair.publicKey,
+      signed.signatures[0], signed.message.serialize())).toBe(true);
+  });
+
   it("signTransaction forwards the serialized tx to the bridge (background owns web3.js)", async () => {
     // A real serialized v0 tx, just to have realistic bytes to forward.
     const ix = SystemProgram.transfer({
@@ -113,7 +152,7 @@ describe("createStarlabSolanaWallet", () => {
     });
     const msg = new TransactionMessage({
       payerKey: KP.publicKey,
-      recentBlockhash: bs58.encode(new Uint8Array(32).fill(1)),
+      recentBlockhash: bs58.encode(new Uint8Array(32).fill(1)) as Blockhash,
       instructions: [ix],
     }).compileToV0Message();
     const serialized = new VersionedTransaction(msg).serialize();

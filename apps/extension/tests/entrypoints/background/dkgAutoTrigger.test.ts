@@ -19,8 +19,7 @@
  * 6. Dispatched payload has the wire shape the existing offscreen
  *    `sessionAllAccepted` handler expects: `{sessionInfo,
  *    blockchain}` with `accepted_devices` fully populated.
- * 7. Blockchain is derived from `curve_type` (ed25519 → solana,
- *    secp256k1 → ethereum).
+ * 7. DKG always remains unified, independently of the viewed chain.
  */
 import { describe, it, expect, beforeEach, jest } from "bun:test";
 import { WebSocketManager } from "../../../src/entrypoints/background/webSocketManager";
@@ -88,7 +87,7 @@ function inviteReady(
         threshold,
         participants,
         session_type: "dkg",
-        curve_type: "secp256k1",
+        curve_type: "unified",
         coordination_type: "Network",
         accepted_devices: [],
     };
@@ -144,20 +143,24 @@ describe("WebSocketManager: DKG auto-trigger on all-joined", () => {
         expect(dispatched.accepted_devices).toEqual(dispatched.participants);
     });
 
-    it("picks blockchain from curve_type", () => {
-        // ed25519 → solana
-        const sol = inviteReady("dkg_sol", "ext-bob");
-        sol.curve_type = "ed25519";
-        env.appState.sessionInfo = { ...sol, participants: ["ext-bob"] };
-        (env.mgr as any).handleWebSocketMessage(frame(sol));
-        expect(env.sentToOffscreen[0].msg.blockchain).toBe("solana");
+    it("starts unified DKG independently of the current chain view", () => {
+        const session=inviteReady("dkg_unified","ext-bob");
+        env.appState.blockchain="solana";
+        env.appState.sessionInfo={...session,participants:["ext-bob"]};
+        (env.mgr as any).handleWebSocketMessage(frame(session));
+        expect(env.sentToOffscreen[0].msg.sessionInfo.curve_type).toBe("unified");
+        expect(env.sentToOffscreen[0].msg.blockchain).toBe("ethereum");
+    });
 
-        // secp256k1 → ethereum (default)
-        const env2 = makeManager({ deviceId: "ext-bob" });
-        const eth = inviteReady("dkg_eth", "ext-bob");
-        env2.appState.sessionInfo = { ...eth, participants: ["ext-bob"] };
-        (env2.mgr as any).handleWebSocketMessage(frame(eth));
-        expect(env2.sentToOffscreen[0].msg.blockchain).toBe("ethereum");
+    it("does not accept a single-algorithm DKG announcement", () => {
+        for(const curve of ["ed25519","secp256k1","secp256k1-ecdsa"]){
+            const isolated=makeManager({deviceId:"ext-bob"});
+            const session=inviteReady(`dkg_invalid_${curve}`,"ext-bob");
+            session.curve_type=curve;
+            isolated.appState.sessionInfo={...session,participants:["ext-bob"]};
+            (isolated.mgr as any).handleWebSocketMessage(frame(session));
+            expect(isolated.sentToOffscreen).toEqual([]);
+        }
     });
 
     it("does NOT trigger when session_id doesn't match our active session", () => {

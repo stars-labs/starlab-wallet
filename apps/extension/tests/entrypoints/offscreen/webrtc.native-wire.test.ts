@@ -36,27 +36,6 @@ function manager(participants: string[]) {
 }
 
 describe("WebRTCManager native wire frames", () => {
-    it("sends round 1 as DKG_ROUND1:<base64 FROST binary>", async () => {
-        const { mgr, sent, encoded } = manager(["cli-b", "ext-a"]);
-        (mgr as any).frostDkg = { generate_round1: () => toHex('{"r1":1}') };
-        await (mgr as any)._generateAndBroadcastRound1();
-        expect(encoded).toEqual([["round1", toHex('{"r1":1}')]]);
-        expect(sent).toEqual([
-            { to: "cli-b", msg: { webrtc_msg_type: "SimpleMessage", text: `DKG_ROUND1:${b64(toHex("bin:round1"))}` } },
-        ]);
-    });
-
-    it("sends each recipient its round 2 package as DKG_ROUND2:<base64>", async () => {
-        const { mgr, sent, encoded } = manager(["cli-b", "ext-a"]);
-        // cli-b sorts first → FROST id 1
-        (mgr as any).frostDkg = { generate_round2: () => toHex(JSON.stringify({ "1": toHex('{"r2":1}') })) };
-        await (mgr as any)._generateAndBroadcastRound2();
-        expect(encoded).toEqual([["round2", toHex('{"r2":1}')]]);
-        expect(sent).toEqual([
-            { to: "cli-b", msg: { webrtc_msg_type: "SimpleMessage", text: `DKG_ROUND2:${b64(toHex("bin:round2"))}` } },
-        ]);
-    });
-
     it("routes a CLI SIGN_COMMIT frame into the active signing ceremony", () => {
         const { mgr } = manager(["cli-b", "ext-a"]);
         const seen: any[] = [];

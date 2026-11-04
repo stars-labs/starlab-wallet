@@ -8,6 +8,9 @@
 // ===================================================================
 
 import { KeystoreService } from './keystoreService';
+import { getHardwareVault, sealHardwareVault, openHardwareVault, encodeBytes, HARDWARE_VAULT_KEY, type HardwareAssertion, type HardwareVaultRecord } from './hardwareVault';
+
+export interface KeystoreAuthStatus { mode: 'unconfigured' | 'password' | 'hardware'; credential?: HardwareVaultRecord; }
 import type { KeyShareData, ExtensionWalletMetadata, EncryptedKeyShare } from "@stars-labs/types/keystore";
 
 interface KeystoreSession {
@@ -15,13 +18,15 @@ interface KeystoreSession {
     unlockedAt?: number;
     deviceId: string;
     sessionTimeout: number; // in milliseconds
-    expiresAt?: number; // Unix timestamp when session expires
 }
 
 export class KeystoreManager {
     private static instance: KeystoreManager;
     private keystoreService: KeystoreService;
     private session: KeystoreSession | null = null;
+    private hardwareVerifiedAt: number | null = null;
+    private authenticationBusy = false;
+    private lockEpoch = 0;
     private lockTimer: ReturnType<typeof setTimeout> | null = null;
     
     // Default session timeout: 15 minutes
@@ -78,6 +83,9 @@ export class KeystoreManager {
                 sessionTimeout: this.DEFAULT_SESSION_TIMEOUT
             };
             await this.saveSession();
+        } else if (this.session.deviceId !== deviceId && this.getWallets().length === 0) {
+            this.session = {...this.session,deviceId};
+            await this.saveSession();
         }
     }
     
@@ -90,9 +98,83 @@ export class KeystoreManager {
         // set this session. The locked session initialize() writes on every
         // startup does not count — it would skip first-run password setup.
         const wallets = this.keystoreService.getWallets();
-        return wallets.length > 0 || this.session?.unlocked === true;
+        return (await getHardwareVault()) !== null || wallets.length > 0 || this.session?.unlocked === true;
     }
     
+    public async getAuthStatus(): Promise<KeystoreAuthStatus> {
+        await this.keystoreService.ready();
+        const credential = await getHardwareVault();
+        if (credential) return { mode: 'hardware', credential };
+        return { mode: await this.isInitialized() ? 'password' : 'unconfigured' };
+    }
+
+    /** Enroll only an empty vault; never replace existing wallet encryption. */
+    public async createHardwareKeystore(assertion: HardwareAssertion, deviceId?: string): Promise<void> {
+        return this.authenticate(async epoch => {
+            await this.keystoreService.ready();
+            if (await this.isInitialized()) throw new Error('A vault already exists on this device');
+            const secret = encodeBytes(crypto.getRandomValues(new Uint8Array(32)));
+            const record = await sealHardwareVault(assertion, secret);
+            const resolvedDeviceId = deviceId || this.session?.deviceId || 'default';
+            await this.keystoreService.initialize(resolvedDeviceId);
+            this.requireCurrentAuthentication(epoch);
+            // Persist the authenticated empty-vault marker before reporting setup complete.
+            await chrome.storage.local.set({ [HARDWARE_VAULT_KEY]: record });
+            this.requireCurrentAuthentication(epoch);
+            await this.unlockVaultSecret(secret, resolvedDeviceId, epoch);
+        });
+    }
+
+    public async unlockHardwareKeystore(assertion: HardwareAssertion): Promise<void> {
+        return this.authenticate(async epoch => {
+            const record = await getHardwareVault();
+            if (!record) throw new Error('No hardware vault is configured');
+            const secret = await openHardwareVault(record, assertion);
+            this.requireCurrentAuthentication(epoch);
+            await this.unlockVaultSecret(secret, this.session?.deviceId || 'default', epoch);
+        }, true);
+    }
+
+    private async unlockVaultSecret(secret: string, deviceId: string, epoch: number): Promise<void> {
+        if (!await this.keystoreService.unlock(secret)) throw new Error('Hardware vault could not decrypt the wallet');
+        this.requireCurrentAuthentication(epoch);
+        this.session = { unlocked: true, unlockedAt: Date.now(), deviceId, sessionTimeout: this.DEFAULT_SESSION_TIMEOUT };
+        await this.saveSession();
+        this.requireCurrentAuthentication(epoch);
+        this.setupAutoLockTimer(this.DEFAULT_SESSION_TIMEOUT);
+        this.hardwareVerifiedAt = Date.now();
+    }
+
+    private requireCurrentAuthentication(epoch: number): void {
+        if (epoch !== this.lockEpoch) throw new Error('Wallet was locked during authentication. Try again.');
+    }
+
+    /** Serialize changes to the one in-memory vault secret; a later lock wins. */
+    private async authenticate<T>(operation: (epoch: number) => Promise<T>, lockFirst = false): Promise<T> {
+        if (this.authenticationBusy) throw new Error('Another authentication operation is finishing. Try again.');
+        this.authenticationBusy = true;
+        if (lockFirst) this.lock();
+        const epoch = this.lockEpoch;
+        try {
+            const result = await operation(epoch);
+            this.requireCurrentAuthentication(epoch);
+            return result;
+        } catch (error) {
+            this.lock();
+            throw error;
+        } finally { this.authenticationBusy = false; }
+    }
+
+    /** Fresh hardware touch authorizes a portable backup, without exposing the vault secret. */
+    public hasRecentHardwareVerification(): boolean {
+        return !this.isLocked() && this.hardwareVerifiedAt !== null
+            && Date.now() >= this.hardwareVerifiedAt && Date.now() - this.hardwareVerifiedAt < 60_000;
+    }
+
+    public assertHardwareExportAuthorized(): void {
+        if (!this.hasRecentHardwareVerification()) throw new Error('Verify your hardware key again before exporting a backup');
+    }
+
     /**
      * Check if keystore is locked
      */
@@ -109,29 +191,34 @@ export class KeystoreManager {
      */
     public async createKeystore(password: string, deviceId?: string): Promise<boolean> {
         try {
-            const resolvedDeviceId =
-                deviceId || this.session?.deviceId || 'default';
-            // Initialize keystore service
-            await this.keystoreService.initialize(resolvedDeviceId);
+            return await this.authenticate(async epoch => {
+                if (await getHardwareVault()) throw new Error('Use your hardware key to unlock this vault');
+                const resolvedDeviceId =
+                    deviceId || this.session?.deviceId || 'default';
+                // Initialize keystore service
+                await this.keystoreService.initialize(resolvedDeviceId);
 
-            // Set the password and unlock
-            const success = await this.keystoreService.unlock(password);
+                // Set the password and unlock
+                const success = await this.keystoreService.unlock(password);
+                this.requireCurrentAuthentication(epoch);
 
-            if (success) {
-                this.session = {
-                    unlocked: true,
-                    unlockedAt: Date.now(),
-                    deviceId: resolvedDeviceId,
-                    sessionTimeout: this.DEFAULT_SESSION_TIMEOUT
-                };
+                if (success) {
+                    this.session = {
+                        unlocked: true,
+                        unlockedAt: Date.now(),
+                        deviceId: resolvedDeviceId,
+                        sessionTimeout: this.DEFAULT_SESSION_TIMEOUT
+                    };
+
+                    await this.saveSession();
+                    this.requireCurrentAuthentication(epoch);
+                    this.setupAutoLockTimer(this.session.sessionTimeout);
+
+                    return true;
+                }
                 
-                await this.saveSession();
-                this.setupAutoLockTimer(this.session.sessionTimeout);
-                
-                return true;
-            }
-            
-            return false;
+                return false;
+            });
         } catch (error) {
             console.error('[KeystoreManager] Create keystore failed:', error);
             return false;
@@ -143,44 +230,39 @@ export class KeystoreManager {
      */
     public async unlock(password: string, rememberDuration?: number): Promise<boolean> {
         try {
-            const success = await this.keystoreService.unlock(password);
-            
-            if (success) {
-                if (!this.session) {
-                    this.session = {
-                        unlocked: true,
-                        unlockedAt: Date.now(),
-                        deviceId: 'default',
-                        sessionTimeout: rememberDuration || this.DEFAULT_SESSION_TIMEOUT
-                    };
-                } else {
-                    this.session.unlocked = true;
-                    this.session.unlockedAt = Date.now();
-                    if (rememberDuration) {
-                        this.session.sessionTimeout = rememberDuration;
+            return await this.authenticate(async epoch => {
+                if (await getHardwareVault()) { this.lock(); return false; }
+                const success = await this.keystoreService.unlock(password);
+                this.requireCurrentAuthentication(epoch);
+                
+                if (success) {
+                    if (!this.session) {
+                        this.session = {
+                            unlocked: true,
+                            unlockedAt: Date.now(),
+                            deviceId: 'default',
+                            sessionTimeout: rememberDuration || this.DEFAULT_SESSION_TIMEOUT
+                        };
+                    } else {
+                        this.session.unlocked = true;
+                        this.session.unlockedAt = Date.now();
+                        if (rememberDuration) {
+                            this.session.sessionTimeout = rememberDuration;
+                        }
                     }
-                }
-                
-                await this.saveSession();
-                this.setupAutoLockTimer(this.session.sessionTimeout);
-                
-                // Store password hash for auto-unlock (optional, for better UX)
-                if (rememberDuration && rememberDuration > this.DEFAULT_SESSION_TIMEOUT) {
-                    await this.storePasswordHash(password);
-                }
-                
-                // Set session expiry
-                if (this.session && rememberDuration) {
-                    this.session.expiresAt = Date.now() + (rememberDuration * 1000);
+
                     await this.saveSession();
+                    this.requireCurrentAuthentication(epoch);
+                    this.setupAutoLockTimer(this.session.sessionTimeout);
+
+                    return true;
                 }
                 
-                return true;
-            }
-            
-            return false;
+                return false;
+            });
         } catch (error) {
             console.error('[KeystoreManager] Unlock failed:', error);
+            this.lock();
             return false;
         }
     }
@@ -189,6 +271,8 @@ export class KeystoreManager {
      * Lock keystore
      */
     public lock(): void {
+        this.lockEpoch++;
+        this.hardwareVerifiedAt = null;
         this.keystoreService.lock();
         
         if (this.session) {
@@ -297,25 +381,14 @@ export class KeystoreManager {
      */
     public getActiveWallet(): ExtensionWalletMetadata | null {
         const wallets = this.getWallets();
-        return wallets.find(w => w.isActive) || wallets[0] || null;
+        return wallets.find(w => w.isActive) ?? null;
     }
     
     /**
      * Set active wallet
      */
     public async setActiveWallet(walletId: string): Promise<boolean> {
-        const wallets = this.getWallets();
-        
-        // Update all wallets' active status
-        for (const wallet of wallets) {
-            wallet.isActive = wallet.id === walletId;
-        }
-        
-        // Save updated index
-        await chrome.storage.local.set({
-            'mpc_active_wallet_id': walletId
-        });
-        
+        await this.keystoreService.setActiveWallet(walletId);
         return true;
     }
     
@@ -327,43 +400,29 @@ export class KeystoreManager {
     }
     
     /**
-     * Export wallet for backup
-     */
-    public async exportWallet(walletId: string, password: string): Promise<any> {
-        if (!await this.unlock(password)) {
-            throw new Error('Invalid password');
-        }
-        
-        return await this.keystoreService.exportWallet(walletId);
-    }
-    
-    /**
-     * Import wallet from backup
-     */
-    public async importWallet(backup: any, password: string): Promise<boolean> {
-        if (!await this.unlock(password)) {
-            throw new Error('Invalid password');
-        }
-        
-        try {
-            await this.keystoreService.importWallet(backup, password);
-            return true;
-        } catch (error) {
-            console.error('[KeystoreManager] Import failed:', error);
-            return false;
-        }
-    }
-    
-    /**
      * Get key share for signing
      */
-    public async getKeyShare(walletId: string): Promise<KeyShareData | null> {
+    public async getKeyShare(walletId: string, curve?: "secp256k1" | "ed25519"): Promise<KeyShareData | null> {
         if (this.isLocked()) {
             console.error('[KeystoreManager] Cannot get key share - keystore is locked');
             return null;
         }
         
-        return await this.keystoreService.getKeyShare(walletId);
+        const root = await this.keystoreService.getKeyShare(walletId);
+        if (!root || !curve) return root;
+        if (root.curve !== "secp256k1" || !root.key_package || !root.public_key_package || !root.frost_group_public_keys?.ed25519 || !root.frost_group_public_keys.secp256k1 || !root.ecdsa_group_public_key) {
+            throw new Error("Incomplete test wallet. Recreate it using unified DKG.");
+        }
+        const json = await this.keystoreService.getCurveShare(walletId, "ed25519");
+        const ecdsa = await this.keystoreService.getCurveShare(walletId, "secp256k1-ecdsa");
+        if (!json || !ecdsa) throw new Error("Unified wallet is missing an encrypted algorithm share");
+        const share = JSON.parse(json) as KeyShareData;
+        if (share.curve !== "ed25519" || !share.key_package || !share.public_key_package ||
+            share.group_public_key !== root.frost_group_public_keys.ed25519 ||
+            root.group_public_key !== root.frost_group_public_keys.secp256k1) {
+            throw new Error(`Invalid algorithm share for wallet ${walletId}`);
+        }
+        return curve === "ed25519" ? share : root;
     }
 
     public async updateWalletAddress(walletId: string, address: string, blockchain?: string): Promise<void> {
@@ -399,7 +458,7 @@ export class KeystoreManager {
     private async saveSession(): Promise<void> {
         if (this.session) {
             await chrome.storage.session.set({
-                keystore_session: this.session
+                keystoreSession: this.session
             });
         }
     }
@@ -415,102 +474,4 @@ export class KeystoreManager {
         }, timeout);
     }
     
-    private async storePasswordHash(password: string): Promise<void> {
-        // In production, use a proper password hashing algorithm
-        // This is simplified for demonstration
-        const encoder = new TextEncoder();
-        const data = encoder.encode(password);
-        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-        
-        await chrome.storage.local.set({
-            keystorePasswordHash: hashHex
-        });
-    }
-    
-    /**
-     * Migrate imported keystores from chrome.storage.local
-     */
-    public async migrateFromChromeStorage(password: string): Promise<number> {
-        if (!await this.unlock(password)) {
-            throw new Error('Invalid password');
-        }
-        
-        let migratedCount = 0;
-        
-        try {
-            // Get all stored keystores
-            const storage = await chrome.storage.local.get(null);
-            const keystoreKeys = Object.keys(storage).filter(key => 
-                key.startsWith('mpc_imported_keystore_')
-            );
-            
-            for (const key of keystoreKeys) {
-                const importedData = storage[key] as any;
-                if (importedData && importedData.keystoreData) {
-                    try {
-                        // Parse the keystore data
-                        const keystoreData = JSON.parse(importedData.keystoreData);
-                        
-                        // Create key share data
-                        const keyShareData: KeyShareData = {
-                            key_package: keystoreData.key_package || '',
-                            public_key_package: keystoreData.public_key_package || '',
-                            group_public_key: importedData.sessionInfo.group_public_key || '',
-                            session_id: importedData.sessionInfo.session_id,
-                            device_id: importedData.sessionInfo.device_id,
-                            participant_index: importedData.sessionInfo.participant_index,
-                            threshold: importedData.sessionInfo.threshold,
-                            total_participants: importedData.sessionInfo.total_participants,
-                            participants: [importedData.sessionInfo.device_id],
-                            participant_identifiers: {
-                                [importedData.sessionInfo.device_id]: importedData.sessionInfo.participant_index,
-                            },
-                            curve: importedData.sessionInfo.curve_type as 'secp256k1' | 'ed25519',
-                            blockchains: importedData.sessionInfo.blockchains || [],
-                            ethereum_address: importedData.addresses?.ethereum,
-                            solana_address: importedData.addresses?.solana,
-                            created_at: importedData.importedAt || Date.now()
-                        };
-                        
-                        // Create wallet metadata
-                        const metadata: ExtensionWalletMetadata = {
-                            id: importedData.sessionInfo.session_id,
-                            name: `Imported Wallet ${migratedCount + 1}`,
-                            blockchain: importedData.chain || 'ethereum',
-                            address: importedData.addresses?.[importedData.chain] || '',
-                            session_id: importedData.sessionInfo.session_id,
-                            isActive: migratedCount === 0, // First wallet is active
-                            hasBackup: true
-                        };
-                        
-                        // Add to keystore
-                        await this.keystoreService.addWallet(
-                            importedData.sessionInfo.session_id,
-                            keyShareData,
-                            metadata
-                        );
-                        
-                        migratedCount++;
-                        
-                        // Remove from chrome.storage
-                        await chrome.storage.local.remove([key]);
-                    } catch (error) {
-                        console.error(`[KeystoreManager] Failed to migrate ${key}:`, error);
-                    }
-                }
-            }
-            
-            // Clean up other migration-related keys
-            await chrome.storage.local.remove(['mpc_active_keystore_id']);
-            
-            console.log(`[KeystoreManager] Migrated ${migratedCount} keystores`);
-        } catch (error) {
-            console.error('[KeystoreManager] Migration failed:', error);
-            throw error;
-        }
-        
-        return migratedCount;
-    }
 }

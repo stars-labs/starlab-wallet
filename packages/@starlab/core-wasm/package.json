@@ -14,5 +14,6 @@
   "files": [
     "pkg"
   ],
-  "//": "Vendored artifact. The Rust source lives in stars-labs/starlab-mpc (packages/@starlab/core-wasm). To refresh: in starlab-mpc run `bun run build:wasm`, then copy its pkg/ here. Proper fix: publish @stars-labs/core-wasm to npm and depend on the published version."
+  "starlabEngineRevision": "712f0364c6800e038fb4878b9768de01aacb62c4",
+  "starlabWasmSha256": "96b470dd7da31da20c74899932267a503af3b49c16e3b84519d2767f23725673"
 }

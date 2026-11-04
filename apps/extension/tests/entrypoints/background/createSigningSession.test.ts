@@ -47,6 +47,7 @@ function makeSessionManager() {
     );
     const stateManager = {
         getState: () => appState,
+        getChain: () => appState.chain ?? "ethereum",
         updateState: jest.fn((patch: Partial<AppState>) => {
             Object.assign(appState, patch);
         }),
@@ -65,12 +66,14 @@ const DIGEST = "ab".repeat(32);
 const keyShare = () =>
     ({
         group_public_key: "02cafe",
+        frost_group_public_keys: { ed25519: "ed-root", secp256k1: "02cafe" },
         threshold: 2,
         total_participants: 3,
         // Stored order is not the wire order: the announce sorts.
         participants: ["tui", "ext-alice", "desktop"],
         participant_identifiers: { desktop: 1, "ext-alice": 2, tui: 3 },
         ecdsa_group_public_key: "03ec05a0",
+        ecdsa_cohort: {participants:["desktop","ext-alice","tui"],threshold:2,total:3,participantIndex:2},
         curve: "secp256k1",
     }) as any;
 
@@ -108,7 +111,7 @@ describe("SessionManager.createSigningSession", () => {
     it("refuses a wallet whose cohort doesn't include this device", async () => {
         const res = await env.mgr.createSigningSession({
             ...validConfig(),
-            keyShare: { ...keyShare(), participants: ["tui", "desktop"], participant_identifiers: { desktop: 1, tui: 2 } },
+            keyShare: { ...keyShare(), ecdsa_cohort: {...keyShare().ecdsa_cohort,participants:["tui","desktop"]} },
         });
         expect(res.success).toBe(false);
         expect(env.announces).toHaveLength(0);
@@ -117,7 +120,7 @@ describe("SessionManager.createSigningSession", () => {
     it("refuses a share that names only part of the cohort (never announces self-only)", async () => {
         const res = await env.mgr.createSigningSession({
             ...validConfig(),
-            keyShare: { ...keyShare(), participants: ["ext-alice"], participant_identifiers: { "ext-alice": 2 } },
+            keyShare: { ...keyShare(), ecdsa_cohort: {...keyShare().ecdsa_cohort,participants:["ext-alice"]} },
         });
         expect(res.success).toBe(false);
         expect(res.error).toContain("1 of its 3");
@@ -129,7 +132,7 @@ describe("SessionManager.createSigningSession", () => {
         const res = await env.mgr.createSigningSession({
             ...validConfig(),
             blockchain: "solana",
-            keyShare: { ...keyShare(), curve: "ed25519" },
+            keyShare: { ...keyShare(), curve: "ed25519", group_public_key: "ed-root" },
         });
         expect(res.success).toBe(false);
         expect(env.announces).toHaveLength(0);
@@ -141,8 +144,23 @@ describe("SessionManager.createSigningSession", () => {
             keyShare: { ...keyShare(), ecdsa_group_public_key: undefined },
         });
         expect(res.success).toBe(false);
-        expect(res.error).toContain("ECDSA");
+        expect(res.error).toContain("unified");
         expect(env.announces).toHaveLength(0);
+    });
+
+    it("refuses incomplete multi-algorithm metadata for FROST signing too", async () => {
+        const res = await env.mgr.createSigningSession({ ...validConfig(), blockchain: 'solana', keyShare: { ...keyShare(), curve: 'ed25519', group_public_key: 'ed-root', frost_group_public_keys: undefined } });
+        expect(res.success).toBe(false);
+        expect(res.error).toContain('unified');
+        expect(env.announces).toHaveLength(0);
+    });
+
+    it('announces the immutable ECDSA cohort after a FROST-only device removal', async () => {
+        const result=await env.mgr.createSigningSession({...validConfig(),keyShare:{...keyShare(),participants:['ext-alice','tui'],participant_identifiers:{'ext-alice':2,tui:3},total_participants:2,threshold:2}});
+        expect(result.success).toBe(true);
+        expect(env.announces[0].participants).toEqual(['desktop','ext-alice','tui']);
+        expect(env.announces[0].total).toBe(3);
+        expect(env.announces[0].threshold).toBe(2);
     });
 
     it("refuses an Ethereum payload that is not a 32-byte hash", async () => {
@@ -197,7 +215,7 @@ describe("SessionManager.createSigningSession", () => {
         await env.mgr.createSigningSession({
             ...validConfig(),
             blockchain: "solana",
-            keyShare: { ...keyShare(), curve: "ed25519" },
+            keyShare: { ...keyShare(), curve: "ed25519", group_public_key: "ed-root" },
         });
         expect(env.announces[0].curve_type).toBe("ed25519");
         expect(env.announces[0].blockchain).toBe("solana");

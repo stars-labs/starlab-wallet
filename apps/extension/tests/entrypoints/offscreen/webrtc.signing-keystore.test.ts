@@ -39,58 +39,42 @@ const DEVICES = ["dev-a", "dev-b", "dev-c"]; // sorted → FROST ids 1,2,3
 
 type Chain = "ethereum" | "solana";
 
-/** Run a real DKG and finalize each share through WebRTCManager._finalizeDkg. */
+/** Real unified network FROST, followed by a test-only ECDSA fixture worker. */
 async function dkgThroughManagers(chain: Chain, t = 2): Promise<any[]> {
     const wasm = await import("@stars-labs/core-wasm");
-    const Dkg = chain === "ethereum" ? wasm.FrostDkgSecp256k1 : wasm.FrostDkgEd25519;
-    const n = 3;
-    const dkgs = [1, 2, 3].map((i) => {
-        const d = new Dkg();
-        d.init_dkg(i, n, t);
-        return d;
+    (globalThis as any).FrostDkgUnified = wasm.FrostDkgUnified;
+    const frames: Array<{ from: string; to: string; message: any }> = [];
+    const payloads = new Map<string, any>();
+    const managers = DEVICES.map((id, i) => {
+        const manager = new WebRTCManager(id, () => {});
+        manager.sessionInfo = { session_id: 'dkg-session', proposer_id: DEVICES[0], total: 3, threshold: t,
+            participants: ['dev-c','dev-a','dev-b'], accepted_devices: DEVICES, session_type: 'dkg', curve_type: 'unified' } as any;
+        manager.sendWebRTCAppMessage = (to, message) => frames.push({from: id, to, message});
+        manager.onDkgComplete = result => payloads.set(id, result);
+        stubEcdsaDkg(manager, i);
+        return manager;
     });
-    const r1 = dkgs.map((d) => d.generate_round1());
-    for (let i = 0; i < n; i++)
-        for (let j = 0; j < n; j++)
-            if (i !== j) dkgs[i].add_round1_package(j + 1, r1[j]);
-    const r2 = dkgs.map((d) => JSON.parse(Buffer.from(d.generate_round2(), "hex").toString()));
-    for (let i = 0; i < n; i++)
-        for (let j = 0; j < n; j++)
-            if (i !== j) dkgs[i].add_round2_package(j + 1, r2[j][String(i + 1)]);
-
-    const payloads: any[] = [];
-    for (const [i, id] of DEVICES.entries()) {
-        const mgr = new WebRTCManager(id, () => {});
-        mgr.setBlockchain(chain);
-        mgr.sessionInfo = {
-            session_id: "dkg-session",
-            proposer_id: "dev-a",
-            total: 3,
-            threshold: t,
-            // Join order, unsorted — ids must still follow sorted order.
-            participants: ["dev-c", "dev-a", "dev-b"],
-            accepted_devices: DEVICES,
-        } as any;
-        (mgr as any).frostDkg = dkgs[i];
-        (mgr as any).participantIndex = i + 1;
-        (mgr as any).receivedRound2Packages = new Set(DEVICES);
-        mgr.onDkgComplete = (p) => payloads.push(p);
-        // secp256k1: the ECDSA key follows FROST (fixture share here).
-        stubEcdsaDkg(mgr, i);
-        await (mgr as any)._finalizeDkg();
-        await waitFor(() => mgr.dkgState !== DkgState.Finalizing);
-        expect(mgr.dkgState).toBe(DkgState.Complete);
-    }
-    dkgs.forEach((d) => d.free());
-    return payloads;
+    try {
+        for (const manager of managers) expect(await manager.initializeDkg(chain)).toBe(true);
+        while (frames.length) {
+            const frame = frames.shift()!;
+            managers[DEVICES.indexOf(frame.to)]!.handleWebRTCAppMessage(frame.from, frame.message);
+        }
+        await waitFor(() => payloads.size === 3);
+        for (const manager of managers) expect(manager.dkgState).toBe(DkgState.Complete);
+        return DEVICES.map(id => {
+            const payload = payloads.get(id);
+            return { ...payload, selectedFrost: payload.frost[chain === 'ethereum' ? 'secp256k1' : 'ed25519'] };
+        });
+    } finally { for (const manager of managers) manager.resetDkgState(); }
 }
 
 /** What handleSaveDkgWalletRequest persists (minus address bookkeeping). */
 function storedShare(payload: any, deviceId: string): KeyShareData {
     return {
         ...keyShareCoreFromEngine(
-            payload.keystoreJson,
-            payload.groupPublicKey,
+            payload.selectedFrost.keystoreJson,
+            payload.selectedFrost.groupPublicKey,
             payload.participantIdentifiers,
         ),
         session_id: "dkg-session",
@@ -107,7 +91,7 @@ describe("secp256k1 DKG → the threshold-ECDSA key completes the wallet", () =>
         const { ecdsa_ethereum_address } = await import("@stars-labs/core-wasm");
         expect(payloads[1].ecdsa.shareJson).toBe(ECDSA_WALLET.shares[1]);
         expect(payloads[1].ecdsa.groupPublicKey).toBe(ECDSA_WALLET.group_public_key);
-        expect(payloads[1].address).toBe(ecdsa_ethereum_address(ECDSA_WALLET.group_public_key, 0));
+        expect(payloads[1].addresses.ethereum).toBe(ecdsa_ethereum_address(ECDSA_WALLET.group_public_key, 0));
     }, 30000);
 
     it("fails the DKG when the ECDSA key generation fails", async () => {
@@ -121,7 +105,8 @@ describe("secp256k1 DKG → the threshold-ECDSA key completes the wallet", () =>
         (mgr.ecdsa as any).runDkg = async () => {
             throw new Error("peer vanished");
         };
-        await (mgr as any)._runEcdsaDkg("{}");
+        (mgr as any)._updateDkgState(DkgState.Finalizing);
+        await (mgr as any)._runEcdsaDkg({} as any, 's', (mgr as any).dkgEpoch);
         expect(mgr.dkgState).toBe(DkgState.Failed);
         expect(completed).toEqual([]);
     });
@@ -136,14 +121,14 @@ for (const chain of ["ethereum", "solana"] as const) {
             const payloads = await dkgThroughManagers(chain);
             const share = storedShare(payloads[0], "dev-a");
 
-            expect(payloads[0].groupPublicKey).toMatch(/^[0-9a-f]+$/);
-            expect(share.group_public_key).toBe(payloads[0].groupPublicKey);
+            expect(payloads[0].selectedFrost.groupPublicKey).toMatch(/^[0-9a-f]+$/);
+            expect(share.group_public_key).toBe(payloads[0].selectedFrost.groupPublicKey);
             expect(share.group_public_key).not.toContain(share.key_package);
             expect(share.public_key_package.length).toBeGreaterThan(0);
             expect(share.participant_identifiers).toEqual({ "dev-a": 1, "dev-b": 2, "dev-c": 3 });
             // Lossless: rebuilding the engine JSON reproduces finalize_dkg's output.
             expect(JSON.parse(toEngineKeystoreJson(share))).toEqual(
-                JSON.parse(payloads[0].keystoreJson),
+                JSON.parse(payloads[0].selectedFrost.keystoreJson),
             );
         }, 30000);
 
@@ -254,7 +239,7 @@ describe("co-signing a bitcoin account session (real WASM)", () => {
             const sigs = await coSign(payloads, [...signers], { chain: "bitcoin", account: 0 }, sighash);
             const sig = sigs.get(signers[1])!;
             expect(new Set(sigs.values()).size).toBe(1);
-            const key = await bitcoinOutputKey(payloads[0].groupPublicKey);
+            const key = await bitcoinOutputKey(payloads[0].selectedFrost.groupPublicKey);
             expect(schnorrVerify(key, Buffer.from(sighash, "hex"), Buffer.from(sig, "hex"))).toBe(true);
         }, 30000);
     }

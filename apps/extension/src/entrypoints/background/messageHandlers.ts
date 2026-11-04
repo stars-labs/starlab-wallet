@@ -16,6 +16,7 @@ import type {
 } from "@stars-labs/types/messages";
 import { MESSAGE_TYPES, isRpcMessage, isAccountManagement, isNetworkManagement, isUIRequest } from "@stars-labs/types/messages";
 import { StateManager, withoutSecrets } from "./stateManager";
+import { DEVICE_ID_STORAGE_KEY } from "../../config/device";
 import { redactForLog } from "../../utils/redact";
 import { walletIdFromSession, ECDSA_CURVE, isEcdsaChain } from "../../utils/wallet-id";
 import { OffscreenManager } from "./offscreenManager";
@@ -206,11 +207,6 @@ export class PopupMessageHandler {
                 // Session restore removed - sessions are ephemeral for security
                 // case "requestSessionRestore": removed
 
-                case MESSAGE_TYPES.PROPOSE_SESSION:
-                    console.log("🔐 [PopupMessageHandler] PROPOSE_SESSION: Creating new MPC session");
-                    await this.handleProposeSessionRequest(message, sendResponse);
-                    break;
-
                 case MESSAGE_TYPES.CREATE_DKG_WALLET:
                     console.log("🔐 [PopupMessageHandler] CREATE_DKG_WALLET: Creating new MPC wallet via DKG (TUI-compat announce)");
                     await this.handleCreateDkgWalletRequest(message, sendResponse);
@@ -325,11 +321,6 @@ export class PopupMessageHandler {
                 case MESSAGE_TYPES.SWITCH_WALLET:
                     console.log("🔄 [PopupMessageHandler] SWITCH_WALLET: Switching active wallet");
                     await this.handleSwitchWalletMessage(message, sendResponse);
-                    break;
-
-                case MESSAGE_TYPES.MIGRATE_KEYSTORES:
-                    console.log("📦 [PopupMessageHandler] MIGRATE_KEYSTORES: Migrating keystores");
-                    await this.handleMigrateKeystoresMessage(message, sendResponse);
                     break;
 
                 case "getActiveKeystore":
@@ -690,26 +681,6 @@ export class PopupMessageHandler {
 
     // Session restore removed - sessions are ephemeral for security
 
-    private async handleProposeSessionRequest(message: any, sendResponse: (response: any) => void): Promise<void> {
-        if ('session_id' in message && 'total' in message && 'threshold' in message && 'participants' in message) {
-            console.log("[PopupMessageHandler] Proposing session:", message.session_id);
-
-            const blockchain = message.blockchain || "solana";
-
-            const result = await this.sessionManager.proposeSession(
-                message.session_id,
-                message.total,
-                message.threshold,
-                message.participants,
-                blockchain
-            );
-
-            sendResponse(result);
-        } else {
-            sendResponse({ success: false, error: "Invalid session proposal" });
-        }
-    }
-
     /**
      * Ext-1b popup→background handler: user clicked "Create Wallet" in
      * the popup with (name, total, threshold, curve). We delegate to
@@ -724,10 +695,6 @@ export class PopupMessageHandler {
     ): Promise<void> {
         const total = Number(message.total);
         const threshold = Number(message.threshold);
-        const curve = message.curve === "ed25519" ? "ed25519" : "secp256k1";
-        const chain = isSupportedChain(message.chain)
-            ? message.chain
-            : getDefaultChainForCurve(curve);
         if (!Number.isFinite(total) || !Number.isFinite(threshold)) {
             sendResponse({
                 success: false,
@@ -739,8 +706,6 @@ export class PopupMessageHandler {
             name: typeof message.name === "string" ? message.name : undefined,
             total,
             threshold,
-            curve,
-            chain,
         });
         sendResponse(result);
     }
@@ -896,14 +861,12 @@ export class PopupMessageHandler {
                 });
                 return;
             }
-            const walletChain: SupportedChain = isSupportedChain((wallet as any).blockchain)
-                ? (wallet as any).blockchain
-                : "ethereum";
-            const blockchain = getProtocolBlockchainForChain(walletChain);
+            const walletChain = this.stateManager.getChain();
+            const blockchain = isEvmChain(walletChain) ? "ethereum" : walletChain;
 
             // The signing announce needs the group key and cohort shape,
             // which live on the stored key share (not the wallet metadata).
-            const keyShare = await km.getKeyShare(walletId);
+            const keyShare = await km.getKeyShare(walletId, getRequiredCurve(walletChain));
             if (!keyShare) {
                 sendResponse({
                     success: false,
@@ -985,7 +948,7 @@ export class PopupMessageHandler {
                 });
                 return;
             }
-            const keyShare: any = await km.getKeyShare(walletId);
+            const keyShare: any = await km.getKeyShare(walletId, getRequiredCurve(this.stateManager.getChain()));
             if (!keyShare) {
                 sendResponse({
                     success: false,
@@ -1089,7 +1052,7 @@ export class PopupMessageHandler {
                 sendResponse({ success: false, error: "Keystore is locked" });
                 return;
             }
-            const keyShare: any = await km.getKeyShare(walletId);
+            const keyShare: any = await km.getKeyShare(walletId, getRequiredCurve(this.stateManager.getChain()));
             if (!keyShare) {
                 sendResponse({
                     success: false,
@@ -1139,7 +1102,7 @@ export class PopupMessageHandler {
                 sendResponse({ success: false, error: "Keystore is locked" });
                 return;
             }
-            const keyShare = await keystoreManager.getKeyShare(walletId);
+            const keyShare = await keystoreManager.getKeyShare(walletId, message.curve === "ed25519" ? "ed25519" : "secp256k1");
             if (!keyShare) {
                 sendResponse({
                     success: false,
@@ -1171,7 +1134,7 @@ export class PopupMessageHandler {
      * Ext-1d save flow: called from the popup after DKG finished
      * and the user entered a password. Walks through:
      *
-     *   1. Validate: we actually have a pendingKeystoreJson in
+     *   1. Validate: we actually have a pendingFrostShares in
      *      appState (i.e. DKG did complete recently in this SW
      *      lifetime — session data is intentionally ephemeral so a
      *      SW restart forces the user to redo DKG).
@@ -1184,7 +1147,7 @@ export class PopupMessageHandler {
      *   4. Build a KeyShareData + ExtensionWalletMetadata and call
      *      KeystoreManager.addWallet — that layer does the
      *      PBKDF2+AES-GCM persistence via keystoreService.
-     *   5. Clear pendingKeystoreJson + broadcast walletSaved so the
+     *   5. Clear pendingFrostShares + broadcast walletSaved so the
      *      popup can pivot to the wallet-list view.
      */
     private async handleSaveDkgWalletRequest(
@@ -1192,9 +1155,15 @@ export class PopupMessageHandler {
         sendResponse: (response: any) => void,
     ): Promise<void> {
         try {
+            const keystoreManager = KeystoreManager.getInstance();
+            const hardware = (await keystoreManager.getAuthStatus()).mode === 'hardware';
             const password = message.password;
-            if (typeof password !== "string" || password.length < 1) {
+            if (!hardware && (typeof password !== "string" || password.length < 1)) {
                 sendResponse({ success: false, error: "Password required" });
+                return;
+            }
+            if (hardware && keystoreManager.isLocked()) {
+                sendResponse({ success: false, error: 'Unlock with your YubiKey before saving this wallet' });
                 return;
             }
             const walletName =
@@ -1203,9 +1172,10 @@ export class PopupMessageHandler {
                     : undefined;
 
             const state = this.stateManager.getState() as any;
-            const pendingJson: string | null = state.pendingKeystoreJson ?? null;
+            const pendingFrost = state.pendingFrostShares;
+            const pendingJson: string | null = pendingFrost?.secp256k1?.keystoreJson ?? null;
             const lastResult = state.dkgLastResult;
-            if (!pendingJson || !lastResult) {
+            if (!pendingJson || !pendingFrost?.ed25519?.keystoreJson || !lastResult) {
                 sendResponse({
                     success: false,
                     error:
@@ -1218,7 +1188,7 @@ export class PopupMessageHandler {
             try {
                 keyShareCore = keyShareCoreFromEngine(
                     pendingJson,
-                    lastResult.groupPublicKey ?? "",
+                    pendingFrost.secp256k1.groupPublicKey,
                     lastResult.participantIdentifiers ?? {},
                 );
             } catch (coreErr) {
@@ -1229,8 +1199,15 @@ export class PopupMessageHandler {
                 return;
             }
 
-            const curve: "secp256k1" | "ed25519" =
-                lastResult.blockchain === "ethereum" ? "secp256k1" : "ed25519";
+            const curve = "secp256k1" as const;
+            const edCore = keyShareCoreFromEngine(pendingFrost.ed25519.keystoreJson, pendingFrost.ed25519.groupPublicKey, lastResult.participantIdentifiers ?? {});
+            for (const share of [keyShareCore, edCore]) {
+                if (share.threshold !== lastResult.threshold || share.total_participants !== lastResult.total ||
+                    share.participant_index !== lastResult.participantIndex ||
+                    share.participant_identifiers[state.deviceId] !== share.participant_index) {
+                    throw new Error("Unified DKG share parameters do not match the completed ceremony");
+                }
+            }
             const deviceId = state.deviceId;
             const primaryChain: SupportedChain = isSupportedChain(lastResult.chain)
                 ? lastResult.chain
@@ -1239,23 +1216,30 @@ export class PopupMessageHandler {
             // secp256k1: the DKG also made the threshold-ECDSA key (Ethereum).
             const ecdsaShareJson: string | null = state.pendingEcdsaShareJson ?? null;
             const ecdsaGroupPublicKey: string | undefined = state.ecdsaGroupPublicKey || undefined;
-            if (curve === "secp256k1" && (!ecdsaShareJson || !ecdsaGroupPublicKey)) {
+            if (!ecdsaShareJson || !ecdsaGroupPublicKey) {
                 sendResponse({
                     success: false,
                     error: "The wallet's Ethereum (ECDSA) key is missing — the DKG didn't finish. Run it again.",
                 });
                 return;
             }
-            const { blockchains, addressFor, primaryAddress } = await this.deriveWalletAddresses(
-                curve,
-                lastResult.groupPublicKey ?? "",
-                primaryChain,
-                lastResult.address ?? undefined,
-                curve === "secp256k1" ? ecdsaGroupPublicKey : undefined,
-            );
+            const ecdsaInfo = await this.ecdsaShareInfo(ecdsaShareJson);
+            const expectedParticipants = [...keyShareCore.participants].sort();
+            if (ecdsaInfo.group_public_key !== ecdsaGroupPublicKey || ecdsaInfo.threshold !== keyShareCore.threshold ||
+                ecdsaInfo.n !== keyShareCore.total_participants || ecdsaInfo.index + 1 !== keyShareCore.participant_index ||
+                JSON.stringify([...ecdsaInfo.participants].sort()) !== JSON.stringify(expectedParticipants)) {
+                throw new Error("ECDSA share does not match the unified DKG ceremony");
+            }
+            const { blockchains, addressFor, primaryAddress } = await this.deriveWalletAddresses({
+                ed25519: pendingFrost.ed25519.groupPublicKey,
+                secp256k1: pendingFrost.secp256k1.groupPublicKey,
+                ecdsa: ecdsaGroupPublicKey,
+            }, primaryChain);
 
             const keyShareData: KeyShareData = {
-                ...(curve === "secp256k1" ? { ecdsa_group_public_key: ecdsaGroupPublicKey } : {}),
+                ecdsa_group_public_key: ecdsaGroupPublicKey,
+                ecdsa_cohort: {participants:[...ecdsaInfo.participants],threshold:ecdsaInfo.threshold,total:ecdsaInfo.n,participantIndex:ecdsaInfo.index+1},
+                frost_group_public_keys: {ed25519: edCore.group_public_key, secp256k1: keyShareCore.group_public_key},
                 // Canonical FROST material: engine keystore fields +
                 // hex group key + explicit device→FROST-id map.
                 ...keyShareCore,
@@ -1275,9 +1259,10 @@ export class PopupMessageHandler {
                 id: walletId,
                 name:
                     walletName ??
-                    `${lastResult.threshold}-of-${lastResult.total} ${curve}`,
+                    `${lastResult.threshold}-of-${lastResult.total} shared wallet`,
                 blockchain: primaryChain,
                 address: primaryAddress,
+                chainAddresses: Object.fromEntries(blockchains.map(entry => [entry.blockchain,entry.address])),
                 session_id: keyShareData.session_id,
                 isActive: true,
                 hasBackup: false,
@@ -1287,11 +1272,9 @@ export class PopupMessageHandler {
             // unlock on subsequent saves. The SAME password is used
             // for both the keystore master password AND per-wallet
             // encryption — matches the existing UX where there's
-            // only one user-visible password.
-            const { KeystoreManager } = await import(
-                "../../services/keystoreManager"
-            );
-            const km = KeystoreManager.getInstance();
+            // only one user-visible password in password mode. Hardware
+            // mode already holds its random vault secret in the service.
+            const km = keystoreManager;
             const isInit = await km.isInitialized();
             if (!isInit) {
                 console.log(
@@ -1312,6 +1295,9 @@ export class PopupMessageHandler {
                 }
             }
 
+            // Publish the wallet index only after every encrypted algorithm share exists.
+            await km.setCurveShare(walletId, "ed25519", JSON.stringify({...keyShareData, ...edCore}));
+            await km.setCurveShare(walletId, ECDSA_CURVE, ecdsaShareJson);
             const added = await km.addWallet(walletId, keyShareData, metadata);
             if (!added) {
                 sendResponse({
@@ -1320,10 +1306,6 @@ export class PopupMessageHandler {
                 });
                 return;
             }
-            if (curve === "secp256k1" && ecdsaShareJson) {
-                // The ECDSA share: its own curve entry, same password.
-                await km.setCurveShare(walletId, ECDSA_CURVE, ecdsaShareJson);
-            }
 
             // Save succeeded. Drop the in-memory key material + flip
             // UI state so popup moves to a "wallet ready" view. The DKG
@@ -1331,7 +1313,7 @@ export class PopupMessageHandler {
             // which is hidden while a session is active.
             this.stateManager.updateState({
                 // @ts-ignore — off-type fields, same pattern as elsewhere
-                pendingKeystoreJson: null,
+                pendingFrostShares: null,
                 pendingKeystoreReady: false,
                 pendingEcdsaShareJson: null,
                 sessionInfo: null,
@@ -1363,106 +1345,37 @@ export class PopupMessageHandler {
      * wasm) as the stored `blockchains` entries, plus the primary address.
      */
     private async deriveWalletAddresses(
-        curve: "secp256k1" | "ed25519",
-        groupPublicKey: string,
+        keys: {ed25519: string; secp256k1: string; ecdsa: string},
         primaryChain: SupportedChain,
-        fallbackAddress?: string,
-        /** secp256k1 wallets: the threshold-ECDSA root key (Ethereum accounts). */
-        ecdsaGroupPublicKey?: string,
-    ): Promise<{ blockchains: any[]; addressFor: (chain: SupportedChain) => string | undefined; primaryAddress: string }> {
-        const chainIds: Partial<Record<SupportedChain, number>> = {
-            ethereum: 1,
-            polygon: 137,
-            arbitrum: 42161,
-            optimism: 10,
-            base: 8453,
-        };
-        const addressFormats: Partial<Record<SupportedChain, string>> = {
-            ethereum: "EIP-55",
-            polygon: "EIP-55",
-            arbitrum: "EIP-55",
-            optimism: "EIP-55",
-            base: "EIP-55",
-            bitcoin: "bech32",
-            solana: "base58",
-            sui: "hex",
-        };
-        let derivedAddresses: Array<{ chain: SupportedChain; path: string; address: string; curve: string }> = [];
-        try {
-            // Ethereum comes from the ECDSA key; the FROST key covers the rest.
-            const keys: Array<[string, string]> = [];
-            if (ecdsaGroupPublicKey) keys.push([ECDSA_CURVE, ecdsaGroupPublicKey]);
-            if (groupPublicKey) keys.push([curve, groupPublicKey]);
-            for (const [keyCurve, key] of keys) {
-                const derived = await this.offscreenManager.sendToOffscreen(
-                    {
-                        type: "deriveAccounts",
-                        curve: keyCurve,
-                        groupPublicKey: key,
-                        count: 1,
-                    } as any,
-                    "Derive wallet account 0 addresses",
-                );
-                if (derived?.success && Array.isArray(derived.accounts?.[0]?.addresses)) {
-                    derivedAddresses.push(
-                        ...derived.accounts[0].addresses
-                            .map((addr: any) => {
-                                const chain = normalizeDerivedAddressChain(addr.chain);
-                                return chain && typeof addr.address === "string"
-                                    ? { chain, path: String(addr.path ?? ""), address: addr.address, curve: keyCurve }
-                                    : null;
-                            })
-                            .filter(Boolean),
-                    );
+    ): Promise<{blockchains: any[]; addressFor: (chain: SupportedChain) => string | undefined; primaryAddress: string}> {
+        const derived: Array<{chain: SupportedChain; path: string; address: string; curve: string}> = [];
+        for (const [curve, key] of [["ed25519",keys.ed25519],["secp256k1",keys.secp256k1],[ECDSA_CURVE,keys.ecdsa]]) {
+            if (!key) throw new Error(`Missing ${curve} public key`);
+            const result = await this.offscreenManager.sendToOffscreen({type:"deriveAccounts",curve,groupPublicKey:key,count:1} as any);
+            const addresses = result?.accounts?.[0]?.addresses;
+            if (!result?.success || !Array.isArray(addresses)) throw new Error(`Could not derive ${curve} accounts`);
+            for (const entry of addresses) {
+                const chain = normalizeDerivedAddressChain(entry.chain);
+                const correct = curve === "ed25519" ? chain === "solana" || chain === "sui" :
+                    curve === "secp256k1" ? chain === "bitcoin" : chain === "ethereum";
+                if (chain && correct && typeof entry.address === "string" && entry.address) {
+                    derived.push({chain,path:entry.path,address:entry.address,curve});
                 }
             }
-        } catch (deriveErr) {
-            console.warn(
-                "[PopupMessageHandler] Failed to derive multi-chain addresses while saving wallet:",
-                deriveErr,
-            );
         }
-        const addressFor = (chain: SupportedChain): string | undefined => {
-            const exact = derivedAddresses.find((addr) => addr.chain === chain)?.address;
-            if (exact) return exact;
-            const protocol = getProtocolBlockchainForChain(chain);
-            return derivedAddresses.find((addr) => addr.chain === protocol)?.address;
-        };
-        const primaryAddress =
-            addressFor(primaryChain) ??
-            fallbackAddress ??
-            // e.g. a secp256k1 share imported without its Ethereum (ECDSA)
-            // file: show the Bitcoin address rather than none.
-            derivedAddresses[0]?.address ??
-            "";
-        const blockchainEntries = new Map<string, any>();
-        const addBlockchainEntry = (
-            chain: SupportedChain,
-            address: string | undefined,
-            enabled = chain === primaryChain,
-            path = "",
-            keyCurve: string = curve,
-        ) => {
-            if (!address) return;
-            blockchainEntries.set(chain, {
-                blockchain: chain,
-                network: "mainnet",
-                ...(chainIds[chain] ? { chain_id: chainIds[chain] } : {}),
-                address,
-                address_format: addressFormats[chain] ?? "unknown",
-                enabled,
-                metadata: {
-                    curve: keyCurve,
-                    label: getChainLabel(chain),
-                    derivation_path: path,
-                },
-            });
-        };
-        for (const addr of derivedAddresses) {
-            addBlockchainEntry(addr.chain, addr.address, addr.chain === primaryChain, addr.path, addr.curve);
+        for (const chain of ["ethereum","bitcoin","solana","sui"]) {
+            if (!derived.some(entry => entry.chain === chain)) throw new Error(`Unified wallet is missing its ${chain} account`);
         }
-        if (!blockchainEntries.has(primaryChain)) addBlockchainEntry(primaryChain, primaryAddress, true);
-        return { blockchains: Array.from(blockchainEntries.values()), addressFor, primaryAddress };
+        const addressFor = (chain: SupportedChain) => derived.find(entry => entry.chain === (isEvmChain(chain) ? "ethereum" : chain))?.address;
+        const primaryAddress = addressFor(primaryChain);
+        if (!primaryAddress) throw new Error(`No account for ${primaryChain}`);
+        const blockchains = derived.map(entry => ({
+            blockchain:entry.chain, network:"mainnet", address:entry.address,
+            address_format:isEvmChain(entry.chain) ? "EIP-55" : entry.chain === "bitcoin" ? "bech32m" : entry.chain === "solana" ? "base58" : "hex",
+            enabled:entry.chain === primaryChain,
+            metadata:{curve:entry.curve,label:getChainLabel(entry.chain),derivation_path:entry.path},
+        }));
+        return {blockchains,addressFor,primaryAddress};
     }
 
     private async handleAcceptSessionRequest(message: any, sendResponse: (response: any) => void): Promise<void> {
@@ -1498,7 +1411,7 @@ export class PopupMessageHandler {
     }
 
     private async handleSendDirectMessageRequest(message: any, sendResponse: (response: any) => void): Promise<void> {
-        console.log("[PopupMessageHandler] Received sendDirectMessage request:", message);
+        console.log("[PopupMessageHandler] Received sendDirectMessage request:", redactForLog(message));
 
         if ('todeviceId' in message && 'message' in message &&
             typeof message.todeviceId === 'string' && typeof message.message === 'string') {
@@ -1643,7 +1556,7 @@ export class PopupMessageHandler {
     }
 
     private async handleRequestSigningMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
-        console.log("[PopupMessageHandler] Received requestSigning:", message);
+        console.log("[PopupMessageHandler] Received requestSigning:", redactForLog(message));
 
         if ('signingId' in message && 'transactionData' in message && 'requiredSigners' in message) {
             // Forward signing request to offscreen document
@@ -1679,153 +1592,91 @@ export class PopupMessageHandler {
         return res.info as EcdsaShareInfo;
     }
 
-    /**
-     * Import a wallet backup: one engine share file, or a wallet's files
-     * (`keystoreFiles`: one per curve — the FROST share plus, for a
-     * secp256k1 wallet, its Ethereum `secp256k1-ecdsa` share). An ECDSA
-     * file attaches to its wallet (imported first, or already here).
-     */
+    /** Restore one complete native-compatible unified wallet (one file per algorithm). */
     private async handleImportKeystoreMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
         try {
-            const files: string[] = Array.isArray(message.keystoreFiles)
-                ? message.keystoreFiles.filter((f: unknown): f is string => typeof f === "string")
-                : typeof message.keystoreData === "string"
-                  ? [message.keystoreData]
-                  : [];
-            if (files.length === 0 || typeof message.password !== "string") {
-                sendResponse({ success: false, error: "Missing key share file or password" });
-                return;
+            const files = message.keystoreFiles;
+            if (!Array.isArray(files) || files.length !== 3 || files.some(file => typeof file !== "string") || typeof message.password !== "string") {
+                throw new Error("Select all three backup files for this wallet: ed25519, secp256k1 and secp256k1-ecdsa");
             }
-            const frost = files.filter((f) => shareBackupCurve(f) !== ECDSA_CURVE);
-            const ecdsa = files.filter((f) => shareBackupCurve(f) === ECDSA_CURVE);
-            if (frost.length > 1) {
-                sendResponse({ success: false, error: "Import one wallet at a time" });
-                return;
+            const byCurve = new Map<string, string>();
+            for (const file of files) {
+                const curve = shareBackupCurve(file);
+                if (!curve) throw new Error("Unrecognized backup algorithm");
+                if (byCurve.has(curve)) throw new Error(`Duplicate ${curve} backup file`);
+                byCurve.set(curve, file);
             }
-            let result: any = { success: true };
-            if (frost.length === 1) {
-                result = await new Promise<any>((resolve) =>
-                    this.importFrostShareFile(frost[0], message.password, message.chain, resolve),
-                );
-                if (!result.success) {
-                    sendResponse(result);
-                    return;
+            if (!["ed25519", "secp256k1", ECDSA_CURVE].every(curve => byCurve.has(curve))) {
+                throw new Error("A complete wallet requires all three algorithm backup files");
+            }
+            const secp = await openShareBackup(byCurve.get("secp256k1")!, message.password);
+            const ed = await openShareBackup(byCurve.get("ed25519")!, message.password);
+            const ecdsa = await openEcdsaShareBackup(byCurve.get(ECDSA_CURVE)!, message.password);
+            const walletId = secp.metadata.session_id;
+            for (const part of [ed, ecdsa]) {
+                if (part.metadata.session_id !== walletId || part.metadata.device_id !== secp.metadata.device_id) {
+                    throw new Error("Backup files must belong to the same wallet and device");
                 }
             }
-            for (const file of ecdsa) {
-                const attached = await this.importEcdsaShareFile(file, message.password, message.chain);
-                result = { ...result, walletId: attached.walletId, address: attached.address ?? result.address };
+            const info = await this.ecdsaShareInfo(ecdsa.shareJson);
+            if (info.group_public_key.toLowerCase() !== ecdsa.metadata.group_public_key.toLowerCase()) throw new Error("ECDSA public key does not match backup");
+            // Each algorithm has its own cohort after a FROST-only refresh.
+            // Bind ECDSA metadata to the actual share without equating it to FROST.
+            if (JSON.stringify(ecdsa.metadata.participants) !== JSON.stringify(info.participants)
+                || ecdsa.metadata.participant_index !== info.index + 1
+                || ecdsa.metadata.threshold !== info.threshold
+                || ecdsa.metadata.total_participants !== info.n
+                || info.participants[info.index] !== ecdsa.metadata.device_id) {
+                throw new Error("ECDSA backup metadata does not match its key share cohort");
             }
+            const km = KeystoreManager.getInstance();
+            await km.initialize(this.stateManager.getState().deviceId);
+            if (km.getWallets().some(wallet => wallet.id === walletId)) throw new Error(`Wallet ${walletId} already exists`);
+            // Authenticate every source file before writing any target vault data.
+            if (!await km.isInitialized()) {
+                if (!await km.createKeystore(message.password, this.stateManager.getState().deviceId)) throw new Error("Could not initialize local vault");
+            } else if (km.isLocked()) throw new Error("Unlock your local vault before restoring a wallet");
+            const backupDeviceId = secp.metadata.device_id;
+            const current = this.stateManager.getState();
+            const adoptIdentity = backupDeviceId !== current.deviceId;
+            if (adoptIdentity && (km.getWallets().length > 0 || current.sessionInfo || current.pendingKeystoreReady)) {
+                throw new Error("Restore this device's backup into an empty profile with no active ceremony");
+            }
+            const primaryChain = this.stateManager.getChain();
+            const {blockchains, addressFor, primaryAddress} = await this.deriveWalletAddresses(
+                {secp256k1:secp.keyShare.group_public_key,ed25519:ed.keyShare.group_public_key,ecdsa:info.group_public_key}, primaryChain,
+            );
+            const common = {
+                blockchains, ethereum_address: addressFor("ethereum"), solana_address: addressFor("solana"),
+                ecdsa_group_public_key: info.group_public_key,
+                ecdsa_cohort: {participants:[...info.participants],threshold:info.threshold,total:info.n,participantIndex:info.index+1},
+                frost_group_public_keys: {ed25519: ed.keyShare.group_public_key, secp256k1: secp.keyShare.group_public_key},
+                created_at: Date.parse(secp.metadata.created_at) || Date.now(),
+            };
+            const root: KeyShareData = {...secp.keyShare, ...common};
+            const edShare: KeyShareData = {...ed.keyShare, ...common};
+            if (adoptIdentity) {
+                // A recovered share retains its original participant identity.
+                // Adopt it only in an empty profile; never alias multiple devices.
+                await chrome.storage.local.set({[DEVICE_ID_STORAGE_KEY]:backupDeviceId});
+                this.stateManager.updateState({deviceId:backupDeviceId,invites:[]});
+                await km.initialize(backupDeviceId);
+                const initialized = await this.offscreenManager.sendInitData(backupDeviceId);
+                if (!initialized?.success) throw new Error("Could not initialize the restored device identity");
+                await this.webSocketManager.reconnect();
+            }
+            await km.setCurveShare(walletId, "ed25519", JSON.stringify(edShare));
+            await km.setCurveShare(walletId, ECDSA_CURVE, ecdsa.shareJson);
+            if (!await km.addWallet(walletId, root, {
+                id: walletId, name: secp.metadata.label ?? walletId, blockchain: primaryChain,
+                address: primaryAddress, chainAddresses:Object.fromEntries(blockchains.map(entry => [entry.blockchain,entry.address])), session_id: root.session_id, isActive: true, hasBackup: true,
+            })) throw new Error("Could not persist restored wallet");
+            await km.setActiveWallet(walletId);
             await checkAndRestoreKeystores();
             syncEcdsaPrimes();
-            sendResponse(result);
+            sendResponse({success: true, walletId, address: primaryAddress});
         } catch (error) {
-            console.error("[PopupMessageHandler] Error importing keystore:", error);
-            sendResponse({ success: false, error: (error as Error).message });
-        }
-    }
-
-    /** Attach an ECDSA share file to its (FROST) wallet in this keystore. */
-    private async importEcdsaShareFile(fileJson: string, password: string, requestedChain?: unknown): Promise<{ walletId: string; address?: string }> {
-        const { metadata, shareJson } = await openEcdsaShareBackup(fileJson, password);
-        const info = await this.ecdsaShareInfo(shareJson);
-        if (info.group_public_key.toLowerCase() !== String(metadata.group_public_key).toLowerCase()) {
-            throw new Error("ECDSA key share does not match the file's group public key");
-        }
-        const km = KeystoreManager.getInstance();
-        if (km.isLocked() && !(await km.unlock(password))) {
-            throw new Error("Unlock the wallet first (the file's password doesn't open this keystore)");
-        }
-        const walletId = metadata.session_id;
-        const keyShare = await km.getKeyShare(walletId);
-        const wallet = km.getWallets().find((w) => w.id === walletId);
-        if (!keyShare || !wallet) {
-            throw new Error(`Import wallet ${walletId}'s main share file first (or together with this one)`);
-        }
-        if (keyShare.curve !== "secp256k1") throw new Error(`Wallet ${walletId} is not a secp256k1 wallet`);
-        if (keyShare.ecdsa_group_public_key && keyShare.ecdsa_group_public_key !== info.group_public_key) {
-            throw new Error(`Wallet ${walletId} already has a different Ethereum key`);
-        }
-        await km.setCurveShare(walletId, ECDSA_CURVE, shareJson);
-        const primaryChain: SupportedChain = isSupportedChain(requestedChain) &&
-            (isEcdsaChain(requestedChain) || getRequiredCurve(requestedChain) === keyShare.curve)
-            ? requestedChain
-            : isSupportedChain(wallet.blockchain) ? wallet.blockchain : "ethereum";
-        const { blockchains, addressFor, primaryAddress } = await this.deriveWalletAddresses(
-            "secp256k1",
-            keyShare.group_public_key,
-            primaryChain,
-            undefined,
-            info.group_public_key,
-        );
-        await km.updateWalletKeyShare(walletId, {
-            ...keyShare,
-            ecdsa_group_public_key: info.group_public_key,
-            blockchains,
-            ethereum_address: addressFor("ethereum"),
-        });
-        await km.updateWalletAddress(walletId, primaryAddress, primaryChain);
-        return { walletId, address: primaryAddress };
-    }
-
-    private async importFrostShareFile(
-        keystoreData: string,
-        password: string,
-        chain: unknown,
-        sendResponse: (response: any) => void,
-    ): Promise<void> {
-        const message = { keystoreData, password, chain };
-        try {
-            const { metadata, keyShare } = await openShareBackup(message.keystoreData, message.password);
-
-            const km = KeystoreManager.getInstance();
-            if (!(await km.isInitialized())) {
-                await km.createKeystore(message.password, this.stateManager.getState().deviceId);
-            } else if (km.isLocked() && !(await km.unlock(message.password))) {
-                sendResponse({ success: false, error: "Unlock the wallet first (the file's password doesn't open this keystore)" });
-                return;
-            }
-            if (km.getWallets().some((w) => w.id === metadata.session_id)) {
-                sendResponse({ success: false, error: `Wallet ${metadata.session_id} is already in this keystore` });
-                return;
-            }
-
-            const curve = keyShare.curve;
-            const primaryChain: SupportedChain =
-                isSupportedChain(message.chain) && getRequiredCurve(message.chain) === curve
-                    ? message.chain
-                    : getDefaultChainForCurve(curve);
-            const { blockchains, addressFor, primaryAddress } = await this.deriveWalletAddresses(
-                curve,
-                keyShare.group_public_key,
-                primaryChain,
-            );
-            const keyShareData: KeyShareData = {
-                ...keyShare,
-                blockchains,
-                ethereum_address: addressFor("ethereum"),
-                solana_address: addressFor("solana"),
-                created_at: Date.parse(metadata.created_at) || Date.now(),
-            };
-            const added = await km.addWallet(metadata.session_id, keyShareData, {
-                id: metadata.session_id,
-                name: metadata.label ?? metadata.session_id,
-                blockchain: primaryChain,
-                address: primaryAddress,
-                session_id: metadata.session_id,
-                isActive: true,
-                hasBackup: true,
-            });
-            if (!added) {
-                sendResponse({ success: false, error: "Saving the imported wallet failed" });
-                return;
-            }
-            await km.setActiveWallet(metadata.session_id);
-            await checkAndRestoreKeystores();
-            sendResponse({ success: true, walletId: metadata.session_id, address: primaryAddress });
-        } catch (error) {
-            console.error("[PopupMessageHandler] Error importing keystore:", error);
-            sendResponse({ success: false, error: (error as Error).message });
+            sendResponse({success: false, error: (error as Error).message});
         }
     }
 
@@ -1850,6 +1701,9 @@ export class PopupMessageHandler {
                 sendResponse({ success: false, error: "Backup password must be at least 8 characters" });
                 return;
             }
+            if ((await keystoreManager.getAuthStatus()).mode === 'hardware') {
+                keystoreManager.assertHardwareExportAuthorized();
+            }
             const keyShare = await keystoreManager.getKeyShare(wallet.id);
             if (!keyShare) {
                 sendResponse({ success: false, error: `No key share stored for wallet ${wallet.id}` });
@@ -1859,8 +1713,12 @@ export class PopupMessageHandler {
             // One file per curve, like the engine's export: a secp256k1
             // wallet's Ethereum (ECDSA) share is its own file.
             const files: { curve: string; keystoreData: string }[] = [{ curve: keyShare.curve, keystoreData }];
+            const edShare = await keystoreManager.getKeyShare(wallet.id, "ed25519");
+            if (!edShare || !keyShare.frost_group_public_keys) throw new Error("Incomplete test wallet: recreate it using unified DKG");
+            files.push({curve: "ed25519", keystoreData: await encryptShareBackup(edShare, wallet, message.password)});
             const ecdsaShare = await keystoreManager.getCurveShare(wallet.id, ECDSA_CURVE);
-            if (ecdsaShare) {
+            if (!ecdsaShare) throw new Error("Wallet is missing its ECDSA share");
+            {
                 const info = await this.ecdsaShareInfo(ecdsaShare);
                 files.push({
                     curve: ECDSA_CURVE,
@@ -1872,7 +1730,7 @@ export class PopupMessageHandler {
                     ),
                 });
             }
-            sendResponse({ success: true, keystoreData, files });
+            sendResponse({ success: true, files });
         } catch (error) {
             console.error("[PopupMessageHandler] Error exporting keystore:", error);
             sendResponse({ success: false, error: (error as Error).message });
@@ -1956,7 +1814,8 @@ export class PopupMessageHandler {
             const keystoreManager = KeystoreManager.getInstance();
             const deviceId = this.stateManager.getState().deviceId;
             
-            await keystoreManager.createKeystore(message.password, deviceId);
+            const created = await keystoreManager.createKeystore(message.password, deviceId);
+            if (!created) throw new Error('Could not create the vault. Check the unlock method and try again.');
             // Onboarding done: start on the ECDSA primes a first wallet needs.
             syncEcdsaPrimes();
 
@@ -1978,6 +1837,7 @@ export class PopupMessageHandler {
             
             const status = {
                 initialized: await keystoreManager.isInitialized(),
+                authMode: (await keystoreManager.getAuthStatus()).mode,
                 locked: keystoreManager.isLocked(),
                 wallets: keystoreManager.getWallets(),
                 activeWallet: keystoreManager.getActiveWallet()
@@ -2024,37 +1884,6 @@ export class PopupMessageHandler {
         }
     }
 
-    /**
-     * Handle migrate keystores request
-     */
-    private async handleMigrateKeystoresMessage(message: any, sendResponse: (response: any) => void): Promise<void> {
-        console.log("[PopupMessageHandler] Processing migrate keystores request");
-        
-        try {
-            if (!message.password) {
-                sendResponse({ success: false, error: "Password required" });
-                return;
-            }
-            
-            const keystoreManager = KeystoreManager.getInstance();
-            const migratedCount = await keystoreManager.migrateFromChromeStorage(message.password);
-            
-            sendResponse({ 
-                success: true, 
-                migratedCount,
-                wallets: keystoreManager.getWallets()
-            });
-            
-            // Restore wallet state after migration
-            if (migratedCount > 0) {
-                await checkAndRestoreKeystores();
-            }
-        } catch (error) {
-            console.error("[PopupMessageHandler] Error migrating keystores:", error);
-            sendResponse({ success: false, error: (error as Error).message });
-        }
-    }
-    
     /**
      * Handle get active keystore request
      */
@@ -2206,7 +2035,7 @@ export class OffscreenMessageHandler {
      * Handle messages from offscreen document
      */
     async handleOffscreenMessage(payload: OffscreenToBackgroundMessage): Promise<void> {
-        console.log("[OffscreenMessageHandler] Handling offscreen message:", payload);
+        console.log("[OffscreenMessageHandler] Handling offscreen message:", redactForLog(payload));
 
         switch (payload.type) {
             case "relayViaWs":
@@ -2216,18 +2045,6 @@ export class OffscreenMessageHandler {
             case "log":
                 this.handleLogMessage(payload);
                 break;
-
-            // NOTE: signingComplete, dkgComplete and dkgStateUpdate are
-            // INTENTIONALLY not matched here. The corresponding stateManager
-            // handler (StateManager.handleOffscreenStateUpdate, via
-            // the default branch below) is the canonical path — it
-            // stashes pendingKeystoreJson + broadcasts to popup for
-            // the Ext-1d save-wallet flow. The local
-            // handleDkgComplete / handleDkgStateUpdate methods in
-            // this file are legacy dead code that reads a stale
-            // payload shape (payload.payload.keyShareData) not
-            // emitted by the current webrtc.ts. Kept as private
-            // methods for reference but not dispatched to.
 
             // Threshold-ECDSA safe primes (offscreen PrimePool ↔ encrypted cache).
             case "ecdsaPrimesProgress" as any:
@@ -2300,90 +2117,8 @@ export class OffscreenMessageHandler {
             const source = payload.payload.source || 'offscreen';
             console.log(`📄 [OffscreenMessageHandler] LOG from ${source}: ${payload.payload.message}`);
         } else {
-            console.log("[OffscreenMessageHandler] LOG:", payload);
+            console.log("[OffscreenMessageHandler] LOG:", redactForLog(payload));
         }
     }
 
-    private async handleDkgComplete(payload: any): Promise<void> {
-        console.log("[OffscreenMessageHandler] DKG complete:", payload);
-        
-        // Update DKG state to Complete
-        this.stateManager.updateStateProperty('dkgState', DkgState.Complete);
-        
-        if (payload.payload && payload.payload.keyShareData) {
-            const keyShareData = payload.payload.keyShareData;
-            const sessionId = keyShareData.session_id;
-            
-            // Get the appropriate address based on blockchain
-            const address = keyShareData.curve === 'secp256k1' 
-                ? keyShareData.ethereum_address 
-                : keyShareData.solana_address;
-            
-            // Store addresses in chrome.storage.local for immediate access
-            if (keyShareData.ethereum_address) {
-                chrome.storage.local.set({ 
-                    'mpc_ethereum_address': keyShareData.ethereum_address 
-                }, () => {
-                    console.log("[OffscreenMessageHandler] Stored Ethereum address in chrome.storage.local:", keyShareData.ethereum_address);
-                });
-            }
-            
-            if (keyShareData.solana_address) {
-                chrome.storage.local.set({ 
-                    'mpc_solana_address': keyShareData.solana_address 
-                }, () => {
-                    console.log("[OffscreenMessageHandler] Stored Solana address in chrome.storage.local:", keyShareData.solana_address);
-                });
-            }
-            
-            if (address && sessionId) {
-                try {
-                    // Complete account creation
-                    const accountService = AccountService.getInstance();
-                    const newAccount = await accountService.completeAccountCreation(
-                        sessionId,
-                        address,
-                        keyShareData
-                    );
-                    
-                    if (newAccount) {
-                        console.log("[OffscreenMessageHandler] Account created for session:", sessionId);
-                        
-                        // Notify popup to refresh accounts
-                        this.stateManager.broadcastToPopupPorts({
-                            type: 'accountsUpdated',
-                            blockchain: getProtocolBlockchainForChain(newAccount.blockchain),
-                            accounts: accountService.getAccountsByBlockchain(newAccount.blockchain)
-                        });
-                    } else {
-                        console.warn("[OffscreenMessageHandler] Account creation returned null, but DKG is still complete");
-                    }
-                } catch (error) {
-                    console.error("[OffscreenMessageHandler] Error during account creation:", error);
-                    // Even if account creation fails, DKG is still complete
-                    // The user can still use the wallet for signing
-                }
-            }
-        }
-        
-        // Ensure DKG state remains Complete regardless of account creation outcome
-        this.stateManager.updateStateProperty('dkgState', DkgState.Complete);
-    }
-
-    private handleDkgStateUpdate(payload: any): void {
-        console.log("[OffscreenMessageHandler] DKG state update:", payload);
-        
-        if (payload.payload && typeof payload.payload.state === 'number') {
-            const newState = payload.payload.state;
-            // Only update state if it's not going backwards from Complete
-            const currentState = this.stateManager.getState().dkgState;
-            
-            if (currentState === DkgState.Complete && newState === DkgState.Idle) {
-                console.log("[OffscreenMessageHandler] Ignoring attempt to reset DKG state from Complete to Idle");
-                return;
-            }
-            
-            this.stateManager.updateStateProperty('dkgState', newState);
-        }
-    }
 }

@@ -15,6 +15,7 @@ import WalletController from "../../services/walletController";
 import { getPermissionService } from '../../services/permissionService';
 import { toHex } from 'viem';
 import { completeEvmTransaction } from '../../services/txBroadcast';
+import { isEvmChain } from "@stars-labs/types/appstate";
 import type { JsonRpcRequest } from "@stars-labs/types/messages";
 import { checkOrigin } from '../../services/phishingService';
 import type { SessionManager } from './sessionManager';
@@ -157,9 +158,9 @@ export class RpcHandler {
                 case 'eth_sendTransaction':
                     return await this.handleSendTransactionRequest(request.params as unknown[]);
 
-                case 'eth_signMessage':
+                case 'eth_sign':
                 case 'personal_sign':
-                    return await this.handleSignMessageRequest(request.params as unknown[]);
+                    return await this.handleSignMessageRequest(request.method, request.params as unknown[]);
 
                 case 'eth_signTypedData':
                 case 'eth_signTypedData_v3':
@@ -197,18 +198,34 @@ export class RpcHandler {
         }
     }
 
-    /**
-     * eth_accounts: the EVM accounts this origin is already connected to.
-     * Never prompts. Internal callers (no origin, e.g. the popup) get the
-     * current account.
-     */
+    /** Unified account-zero addresses plus registered external EVM accounts. */
+    private async listEvmAccounts(): Promise<{address: string; name: string}[]> {
+        await this.accountService.ensureInitialized();
+        const { KeystoreManager } = await import('../../services/keystoreManager');
+        const wallets = [...KeystoreManager.getInstance().getWallets()]
+            .sort((a, b) => Number(b.isActive) - Number(a.isActive));
+        const unified = wallets.flatMap(wallet => {
+            const address = wallet.chainAddresses?.ethereum;
+            return typeof address === 'string' && isEvmAddress(address) ? [{address, name: wallet.name}] : [];
+        });
+        const external = this.accountService.getAccounts()
+            .filter(account => (account.type === 'hardware' || account.type === 'watch-only') && isEvmChain(account.blockchain) && isEvmAddress(account.address))
+            .map(account => ({address: account.address, name: account.name}));
+        return [...new Map([...unified, ...external].map(account => [account.address.toLowerCase(), account])).values()];
+    }
+
+    /** Never prompts. Public origins only receive their approved, available addresses. */
     private async handleEthAccounts(origin: string): Promise<string[]> {
+        const accounts = await this.listEvmAccounts();
         if (!origin) {
-            const currentAccount = this.accountService.getCurrentAccount();
-            return currentAccount ? [currentAccount.address] : [];
+            const current = this.accountService.getCurrentAccount();
+            const selected = accounts.find(account => current && account.address.toLowerCase() === current.address.toLowerCase());
+            return selected ? [selected.address] : accounts.slice(0, 1).map(account => account.address);
         }
         await this.permissionService.ensureInitialized();
-        return this.permissionService.getConnectedAccounts(origin).filter(isEvmAddress);
+        const available = new Set(accounts.map(account => account.address.toLowerCase()));
+        return this.permissionService.getConnectedAccounts(origin)
+            .filter(address => isEvmAddress(address) && available.has(address.toLowerCase()));
     }
 
     /**
@@ -224,21 +241,17 @@ export class RpcHandler {
         const warning = this.phishingGate(origin);
 
         await this.permissionService.ensureInitialized();
-        const connected = this.permissionService.getConnectedAccounts(origin).filter(isEvmAddress);
+        const accounts = await this.listEvmAccounts();
+        const available = new Set(accounts.map(account => account.address.toLowerCase()));
+        const connected = this.permissionService.getConnectedAccounts(origin)
+            .filter(address => isEvmAddress(address) && available.has(address.toLowerCase()));
         if (connected.length > 0) {
             console.log(`[RpcHandler] Returning existing connections for ${origin}`);
             return connected;
         }
 
-        await this.accountService.ensureInitialized();
-        let accounts = this.accountService.getAccountsByBlockchain('ethereum');
         if (accounts.length === 0) {
-            console.log('[RpcHandler] No accounts exist, creating default account');
-            const defaultAccount = await this.accountService.ensureDefaultAccount();
-            if (!defaultAccount) {
-                throw new Error('Failed to create default account');
-            }
-            accounts = [defaultAccount];
+            throw new Error('No Ethereum account available. Create or unlock a unified wallet, or add an external account.');
         }
 
         const current = this.accountService.getCurrentAccount();
@@ -374,10 +387,11 @@ export class RpcHandler {
             return { success: true };
         }
 
-        const offered = new Map(pending.view.accounts.map((a) => [a.address.toLowerCase(), a.address]));
+        const accountKey = (address: string) => pending.view.blockchain === 'ethereum' ? address.toLowerCase() : address;
+        const offered = new Map(pending.view.accounts.map((a) => [accountKey(a.address), a.address]));
         const chosen: string[] = [];
         for (const address of selectedAddresses) {
-            const match = offered.get(address.toLowerCase());
+            const match = offered.get(accountKey(address));
             if (!match) {
                 return { success: false, error: `Account ${address} was not offered to ${pending.view.origin}` };
             }
@@ -569,11 +583,12 @@ export class RpcHandler {
 
     /** The keystore EVM wallet whose (ECDSA) address is `address`. */
     private async findEvmWallet(address: string): Promise<unknown | undefined> {
+        if (!isEvmAddress(address)) return undefined;
         const { KeystoreManager } = await import('../../services/keystoreManager');
-        const norm = address.toLowerCase();
-        return KeystoreManager.getInstance()
-            .getWallets()
-            .find((w: any) => w.blockchain !== 'solana' && typeof w.address === 'string' && w.address.toLowerCase() === norm);
+        const normalized = address.toLowerCase();
+        return KeystoreManager.getInstance().getWallets().find(wallet =>
+            wallet.chainAddresses?.ethereum?.toLowerCase() === normalized,
+        );
     }
 
     /** Start the threshold signing right away (an internal, already-approved
@@ -586,7 +601,7 @@ export class RpcHandler {
     }): Promise<string> {
         if (!this.sessionManager) throw new Error('SessionManager not initialized');
         const { KeystoreManager } = await import('../../services/keystoreManager');
-        const keyShare = await KeystoreManager.getInstance().getKeyShare(ctx.walletId);
+        const keyShare = await KeystoreManager.getInstance().getKeyShare(ctx.walletId, ctx.blockchain === 'solana' ? 'ed25519' : 'secp256k1');
         if (!keyShare) throw new Error('Unlock the wallet to sign');
         const result = await this.sessionManager.createSigningSession({ ...ctx, keyShare, signingMessageHex: ctx.messageHex });
         if (!result.success || !result.sessionId) throw new Error(result.error ?? 'Failed to create signing session');
@@ -632,7 +647,7 @@ export class RpcHandler {
      *      the dApp origin to the user (existing UI hook reused for
      *      origin display).
      */
-    private async handleSignMessageRequest(params: unknown[]): Promise<string> {
+    private async handleSignMessageRequest(method: 'eth_sign' | 'personal_sign', params: unknown[]): Promise<string> {
         if (!params || params.length < 1) {
             throw new Error('Missing message parameter');
         }
@@ -643,34 +658,11 @@ export class RpcHandler {
             );
         }
 
-        let message: string;
-        let address: string;
-
-        // Handle different parameter formats for eth_sign vs personal_sign
-        // personal_sign: [message, address]
-        // eth_sign: [address, message]
-        if (params.length >= 2) {
-            const param0 = params[0] as string;
-            const param1 = params[1] as string;
-
-            if (param0.startsWith('0x') && param0.length === 42) {
-                // eth_sign format: [address, message]
-                address = param0;
-                message = param1;
-            } else {
-                // personal_sign format: [message, address]
-                message = param0;
-                address = param1;
-            }
-        } else {
-            // Single param: message only, use current account.
-            message = params[0] as string;
-            const currentAccount = this.accountService.getCurrentAccount();
-            if (!currentAccount) {
-                throw new Error('No account selected');
-            }
-            address = currentAccount.address;
+        if (!Array.isArray(params) || params.length !== 2 || typeof params[0] !== 'string' || typeof params[1] !== 'string') {
+            throw new Error(`${method}: expected ${method === 'eth_sign' ? '[address, message]' : '[message, address]'}`);
         }
+        const [address, message] = method === 'eth_sign' ? [params[0], params[1]] : [params[1], params[0]];
+        if (!isEvmAddress(address)) throw new Error(`${method}: invalid Ethereum address`);
 
         // YubiKey: if this address is backed by a hardware account, sign
         // on the card directly. This is single-party + instant, so it
@@ -680,49 +672,16 @@ export class RpcHandler {
             return await this.signWithYubiKey(yubiSigner, message);
         }
 
-        // Look up the wallet backing this address. KeystoreManager's
-        // wallets carry `address` from the save-wallet flow (Ext-1d).
-        // Case-insensitive compare — dApps frequently lowercase
-        // addresses but our storage uses checksummed-or-mixed case.
-        const { KeystoreManager } = await import('../../services/keystoreManager');
-        const km = KeystoreManager.getInstance();
-        const wallets = km.getWallets();
-        const normalized = address.toLowerCase();
-        const wallet = wallets.find(
-            (w: any) => typeof w.address === 'string' && w.address.toLowerCase() === normalized,
-        );
+        const wallet = await this.findEvmWallet(address);
         if (!wallet) {
-            throw new Error(
-                `No wallet found for address ${address}. Unlock a wallet in the extension that owns this address before signing.`,
-            );
+            throw new Error(`No wallet found for address ${address}. Unlock the wallet that owns this address before signing.`);
         }
-
-        const blockchain: 'ethereum' | 'solana' =
-            (wallet as any).blockchain === 'solana' ? 'solana' : 'ethereum';
-
-
-        // EIP-191 wrap for secp256k1, raw UTF-8 bytes for ed25519.
-        // Mirrors handleCreateSigningSessionRequest in messageHandlers.
-        let messageHex: string;
-        if (blockchain === 'ethereum') {
-            const { hashMessage } = await import('viem');
-            // `message` may already be 0x-hex bytes (dApp convention)
-            // or raw UTF-8 text. hashMessage accepts string and treats
-            // 0x-prefixed hex as raw bytes only if wrapped in `{raw}`.
-            // For personal_sign, the standard treats the param as raw
-            // bytes if 0x-prefixed. Match that:
-            const isHex = /^0x[0-9a-fA-F]*$/.test(message);
-            const hash = isHex
-                ? hashMessage({ raw: message as `0x${string}` })
-                : hashMessage(message);
-            messageHex = hash.startsWith('0x') ? hash.slice(2) : hash;
-        } else {
-            const encoder = new TextEncoder();
-            const bytes = encoder.encode(message);
-            messageHex = Array.from(bytes, (b) =>
-                b.toString(16).padStart(2, '0'),
-            ).join('');
-        }
+        const blockchain = 'ethereum' as const;
+        const { hashMessage } = await import('viem');
+        const hash = /^0x[0-9a-fA-F]*$/.test(message)
+            ? hashMessage({raw: message as `0x${string}`})
+            : hashMessage(message);
+        const messageHex = hash.slice(2);
 
         return this.enqueueDappSignature({
             walletId: (wallet as any).id,
@@ -754,7 +713,7 @@ export class RpcHandler {
 
         await this.permissionService.ensureInitialized();
         const connected = new Set(this.permissionService.getConnectedAccounts(origin));
-        const existing = wallets.find((w) => connected.has(w.address.toLowerCase()));
+        const existing = wallets.find((w) => connected.has(w.address));
         if (existing) {
             return existing.address;
         }
@@ -796,9 +755,6 @@ export class RpcHandler {
         if (!wallet) {
             throw new Error(`No Solana wallet found for ${address}.`);
         }
-        const { KeystoreManager } = await import('../../services/keystoreManager');
-        const km = KeystoreManager.getInstance();
-
         return this.enqueueDappSignature({
             walletId: (wallet as any).id,
             walletName: (wallet as any).name ?? (wallet as any).id,
@@ -861,22 +817,16 @@ export class RpcHandler {
     /** All Solana (ed25519) wallets in the keystore that carry an address. */
     private async listSolanaWallets(): Promise<{ id: string; name: string; address: string }[]> {
         const { KeystoreManager } = await import('../../services/keystoreManager');
-        return KeystoreManager.getInstance()
-            .getWallets()
-            .filter((w: any) => (w.blockchain === 'solana' || w.curve === 'ed25519') && typeof w.address === 'string')
-            .map((w: any) => ({ id: w.id, name: w.name ?? w.id, address: w.address }));
+        return KeystoreManager.getInstance().getWallets().flatMap(wallet => {
+            const address = wallet.chainAddresses?.solana;
+            return typeof address === 'string' && address.length > 0 ? [{id: wallet.id, name: wallet.name, address}] : [];
+        });
     }
 
-    /** Find the Solana (ed25519) keystore wallet with this address. */
+    /** Solana base58 addresses are case-sensitive. */
     private async findSolanaWallet(address: string): Promise<unknown | undefined> {
         const { KeystoreManager } = await import('../../services/keystoreManager');
-        const norm = address.toLowerCase();
-        return KeystoreManager.getInstance().getWallets().find(
-            (w: any) =>
-                (w.blockchain === 'solana' || w.curve === 'ed25519') &&
-                typeof w.address === 'string' &&
-                w.address.toLowerCase() === norm,
-        );
+        return KeystoreManager.getInstance().getWallets().find(wallet => wallet.chainAddresses?.solana === address);
     }
 
     /**
@@ -1026,17 +976,7 @@ export class RpcHandler {
             return await this.signDigestWithYubiKey(yubiSigner, messageHex);
         }
 
-        // Look up the FROST wallet backing this address (EVM/secp256k1).
-        const { KeystoreManager } = await import('../../services/keystoreManager');
-        const km = KeystoreManager.getInstance();
-        const normalized = address.toLowerCase();
-        const wallet = km
-            .getWallets()
-            .find(
-                (w: any) =>
-                    typeof w.address === 'string' &&
-                    w.address.toLowerCase() === normalized,
-            );
+        const wallet = await this.findEvmWallet(address);
         if (!wallet) {
             throw new Error(
                 `No wallet found for address ${address}. Unlock a wallet in the extension that owns this address before signing.`,
@@ -1338,7 +1278,7 @@ export class RpcHandler {
         // The announce's cohort / threshold / account key come from the
         // wallet's stored share (the keystore must be unlocked to sign).
         const { KeystoreManager } = await import('../../services/keystoreManager');
-        const keyShare = await KeystoreManager.getInstance().getKeyShare(context.walletId);
+        const keyShare = await KeystoreManager.getInstance().getKeyShare(context.walletId, context.blockchain === 'solana' ? 'ed25519' : 'secp256k1');
         if (!keyShare) {
             const error = 'Unlock the wallet to sign';
             this.handleSignatureError(requestId, error);

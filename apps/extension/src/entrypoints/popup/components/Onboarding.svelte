@@ -175,7 +175,7 @@
             </p>
             <div class="flex items-center justify-between">
                 <button class="btn btn-ghost btn-sm" on:click={() => (step = 2)}>Back</button>
-                <button class="btn btn-primary btn-sm" on:click={finish}>Open the create form</button>
+                <button class="btn btn-primary btn-sm" on:click={finish}>Create wallet</button>
             </div>
         {:else if mode === "join"}
             <p class="text-xs text-muted">

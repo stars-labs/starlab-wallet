@@ -5,11 +5,11 @@ import { expect, type Page, type Worker } from "@playwright/test";
 import { popupUrl } from "./fixtures";
 
 /**
- * How long a DKG may take: a secp256k1 wallet also creates its threshold-ECDSA
+ * How long a DKG may take: a unified wallet also creates its threshold-ECDSA
  * (Ethereum) key — aux info is ~2 min of wasm in the extension, and one-shot
  * CLI creators generate their own safe primes (~1.5 min) first.
  */
-export const DKG_MS = (process.env.INTEROP_CURVE ?? "secp256k1") === "ed25519" ? 60_000 : 12 * 60_000;
+export const DKG_MS = 12 * 60_000;
 
 export async function openPopup(page: Page, extensionId: string): Promise<void> {
   await page.goto(popupUrl(extensionId));
@@ -45,7 +45,10 @@ export async function setRoom(page: Page, room: string): Promise<void> {
 export async function onboard(page: Page, password: string): Promise<void> {
   await page.getByRole("button", { name: "Get started" }).click();
   const dialog = page.getByRole("dialog", { name: "Create Wallet" });
-  await dialog.getByRole("textbox", { name: "Password", exact: true }).fill(password);
+  // Fresh onboarding recommends a security key. These interop cases deliberately
+  // exercise the password vault; choose it through the actual user interface.
+  await dialog.getByRole("button", { name: "Password", exact: true }).click({ timeout: 10_000 });
+  await dialog.getByRole("textbox", { name: "Password", exact: true }).fill(password, { timeout: 10_000 });
   await dialog.getByRole("textbox", { name: "Confirm password" }).fill(password);
   await dialog.getByRole("button", { name: "Continue" }).click();
   await dialog.waitFor({ state: "hidden", timeout: 10_000 });
@@ -77,21 +80,23 @@ export async function closeSettings(page: Page): Promise<void> {
  * The "Create wallet — New shared wallet" shortcut is disabled until the
  * background reports the signal server connected, so waiting for it to enable
  * turns a connection failure into a clear error. The form (CreateWalletForm)
- * has stable ids; curve is chosen via the primary chain.
+ * has stable ids; every wallet creates all supported curves.
  */
 export async function createWallet(
   page: Page,
-  opts: { threshold: number; total: number; curve: string },
+  opts: { threshold: number; total: number },
 ): Promise<void> {
   await closeSettings(page);
 
-  const trigger = page.getByRole("button", { name: /Create wallet New shared wallet/ });
-  await expect(trigger).toBeEnabled({ timeout: 30_000 });
-  await trigger.click();
+  const onboarding = page.getByTestId("onboarding");
+  await onboarding.getByRole("button", { name: /^MPC shared wallet/ }).click({ timeout: 10_000 });
+  await onboarding.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(onboarding.getByPlaceholder("room id (16+ chars)")).toHaveValue(/.{16,}/);
+  await onboarding.getByRole("button", { name: "Save room & continue" }).click();
+  await onboarding.getByRole("button", { name: "Create wallet", exact: true }).click();
 
   await page.locator("#cw-total").fill(String(opts.total));
   await page.locator("#cw-threshold").fill(String(opts.threshold));
-  await page.locator("#cw-chain").selectOption(opts.curve === "ed25519" ? "solana" : "ethereum");
   await page.getByRole("button", { name: "Create wallet", exact: true }).click();
 }
 
@@ -106,14 +111,11 @@ export async function approveSigningRequest(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Review & join" }).click({ timeout: 60_000 });
 }
 
-/** The extension's DKG result, read from the background state. */
-export async function dkgResult(page: Page, timeout = DKG_MS): Promise<{ groupPublicKey: string; address: string | null }> {
-  await expect
-    .poll(() => page.evaluate(() => chrome.runtime.sendMessage({ type: "getState" }).then((s) => !!s?.dkgLastResult)), {
-      timeout,
-    })
-    .toBe(true);
-  return page.evaluate(() => chrome.runtime.sendMessage({ type: "getState" }).then((s) => s.dkgLastResult));
+/** Completion requires all three public keys; no single-curve display alias. */
+export async function waitForDkg(page: Page, timeout = DKG_MS): Promise<void> {
+  await expect.poll(() => page.evaluate(() => chrome.runtime.sendMessage({ type: "getState" }).then(state =>
+    Boolean(state?.frostGroupPublicKeys?.ed25519 && state?.frostGroupPublicKeys?.secp256k1 && state?.ecdsaGroupPublicKey))),
+    { timeout }).toBe(true);
 }
 
 /** The aggregate signature the extension ended up with (hex, no 0x). */

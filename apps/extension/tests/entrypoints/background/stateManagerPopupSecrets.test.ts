@@ -1,3 +1,4 @@
+import { unifiedCompletion } from "../../helpers/unifiedCompletion";
 /**
  * The DKG keystore JSON (secret share included) sits in appState between
  * DKG completion and the wallet save. The popup never needs it, so nothing
@@ -31,7 +32,7 @@ async function loadedStateManager() {
 describe("StateManager popup broadcasts", () => {
     it("never send the pending keystore JSON", async () => {
         const mgr = await loadedStateManager();
-        (mgr as any).appState.pendingKeystoreJson = SECRET;
+        (mgr as any).appState.pendingFrostShares = {ed25519:{keystoreJson:SECRET},secp256k1:{keystoreJson:SECRET}};
         const port = fakePort();
         mgr.addPopupPort(port);
         mgr.broadcastCurrentState();
@@ -58,7 +59,7 @@ it("routes actual offscreen completions to the popup's result event names", asyn
     const messages = port.postMessage.mock.calls.map((c) => c[0]);
     expect(messages.some((m) => m.type === "signingCompleted" && m.signature === "abcd")).toBe(true);
     expect(messages.some((m) => m.type === "signingComplete")).toBe(false);
-    mgr.handleOffscreenStateUpdate({type: "dkgComplete", groupPublicKey: "public", keystoreJson: SECRET} as any);
+    mgr.handleOffscreenStateUpdate(unifiedCompletion() as any);
     expect(port.postMessage.mock.calls.some((c) => c[0].type === "dkgCompleted")).toBe(true);
     expect(sentPayloads(port)).not.toContain("SECRET_SHARE");
 });

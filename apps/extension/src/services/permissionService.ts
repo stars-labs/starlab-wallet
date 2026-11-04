@@ -18,6 +18,11 @@ export interface DAppPermission {
     icon?: string; // dApp icon if available
 }
 
+/** EVM addresses are case-insensitive; Solana base58 addresses are not. */
+function accountKey(address: string): string {
+    return /^0x[0-9a-f]{40}$/i.test(address) ? address.toLowerCase() : address;
+}
+
 export class PermissionService {
     private static instance: PermissionService;
     private permissions: Map<string, DAppPermission> = new Map();
@@ -92,7 +97,7 @@ export class PermissionService {
      */
     public isAccountConnected(origin: string, accountAddress: string): boolean {
         const connectedAccounts = this.getConnectedAccounts(origin);
-        return connectedAccounts.includes(accountAddress.toLowerCase());
+        return connectedAccounts.includes(accountKey(accountAddress));
     }
     
     /**
@@ -110,7 +115,7 @@ export class PermissionService {
             return;
         }
         
-        const normalizedAccounts = accounts.map(a => a.toLowerCase());
+        const normalizedAccounts = accounts.map(accountKey);
         const existing = this.permissions.get(origin);
         
         if (existing) {
@@ -147,7 +152,7 @@ export class PermissionService {
             return;
         }
         
-        const normalizedAccounts = accounts.map(a => a.toLowerCase());
+        const normalizedAccounts = accounts.map(accountKey);
         const existing = this.permissions.get(origin);
         
         if (existing) {
@@ -180,7 +185,7 @@ export class PermissionService {
         } else {
             const permission = this.permissions.get(origin);
             if (permission) {
-                const normalizedAccounts = accounts.map(a => a.toLowerCase());
+                const normalizedAccounts = accounts.map(accountKey);
                 permission.connectedAccounts = permission.connectedAccounts.filter(
                     account => !normalizedAccounts.includes(account)
                 );
@@ -206,7 +211,7 @@ export class PermissionService {
      * Get all connected origins for an account
      */
     public getConnectedDApps(accountAddress: string): DAppPermission[] {
-        const normalized = accountAddress.toLowerCase();
+        const normalized = accountKey(accountAddress);
         return Array.from(this.permissions.values()).filter(
             permission => permission.connectedAccounts.includes(normalized)
         );

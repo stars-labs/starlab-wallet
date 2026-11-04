@@ -15,7 +15,9 @@
 // ===================================================================
 
 import { defineBackground } from '#imports';
-import { isInternalSender } from './rpcOrigin';
+import { isInternalSender, canSendBackgroundMessage } from './rpcOrigin';
+import { SecurityKeyAuthController } from './securityKeyAuth';
+import { isSecurityKeyMessage, type SecurityKeyMessage } from '../../services/securityKeyProtocol';
 import AccountService from '../../services/accountService';
 import NetworkService from '../../services/networkService';
 import WalletClientService from '../../services/walletClient';
@@ -232,7 +234,7 @@ function initializeComponents(): void {
  */
 function setupPopupConnections(): void {
     chrome.runtime.onConnect.addListener((port) => {
-        if (port.name === "popup") {
+        if (port.name === "popup" && isInternalSender(port.sender ?? {}, chrome.runtime.id)) {
 //             console.log("🔌 [Background] Popup connected");
             lastPopupActivity = Date.now(); // auto-lock idle tracking (#35)
             port.onMessage.addListener(() => {
@@ -251,6 +253,14 @@ function setupPopupConnections(): void {
  * Handle incoming messages from popup and content scripts
  */
 function setupMessageHandlers(): void {
+    const securityKeyAuth = new SecurityKeyAuthController(
+        () => stateManager.getState().deviceId,
+        async () => {
+            try { await checkAndRestoreKeystores(); }
+            catch (error) { console.error('[Background] Could not restore the unlocked wallet:', error); }
+            syncEcdsaPrimes();
+        },
+    );
     chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
         // Enhanced logging for message routing with RPC detection
         const isOffscreenSender = sender.url?.includes('offscreen') || sender.url?.includes('offscreen.html');
@@ -267,8 +277,19 @@ function setupMessageHandlers(): void {
 
         // Validate basic message structure
         if (!validateMessage(message)) {
-            console.warn("❌ [Background] Invalid message structure:", message);
+            console.warn("❌ [Background] Invalid message structure:", redactForLog(message));
             sendResponse({ success: false, error: "Invalid message structure" });
+            return true;
+        }
+
+        if (!canSendBackgroundMessage(message, sender, chrome.runtime.id)) {
+            sendResponse({ success: false, error: 'This request must come from Starlab Wallet' });
+            return true;
+        }
+
+        if (isSecurityKeyMessage(message)) {
+            securityKeyAuth.handle(message as unknown as SecurityKeyMessage, sender)
+                .then(sendResponse, error => sendResponse({ success: false, error: error instanceof Error ? error.message : 'Security key authentication failed' }));
             return true;
         }
 
@@ -306,6 +327,12 @@ function setupMessageHandlers(): void {
             const rpcId = isRpc ? (message as any).payload?.id : null;
 
             try {
+                if (messageType === MESSAGE_TYPES.LOCK_KEYSTORE) {
+                    // Lock immediately even if cancellation metadata cannot be cleared.
+                    KeystoreManager.getInstance().lock();
+                    try { await securityKeyAuth.cancelPending(); }
+                    catch (error) { console.error('[Background] Could not clear the cancelled security key request:', error); }
+                }
                 if (isRpc) {
                     console.log(`🔄 [Background Router] Processing RPC ${rpcMethod} (ID: ${rpcId})...`);
                 } else {

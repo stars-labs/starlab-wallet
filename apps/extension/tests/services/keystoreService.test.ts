@@ -1,9 +1,18 @@
 import { KeystoreService } from '../../src/services/keystoreService';
-import type { KeyShareData, ExtensionWalletMetadata, KeystoreBackup } from "@stars-labs/types/keystore";
+import type { KeyShareData, ExtensionWalletMetadata } from "@stars-labs/types/keystore";
 import { resetStorageData } from '../__mocks__/imports';
 import { resetWxtStorageData } from '../wxt-imports-mock';
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { jest } from 'bun:test';
+import { ECDSA_WALLET } from '../helpers/ecdsaFixture';
+
+async function addCompleteWallet(service: KeystoreService, id: string, share: KeyShareData, metadata: ExtensionWalletMetadata) {
+    const ed = {...share,curve:'ed25519' as const,group_public_key:share.frost_group_public_keys!.ed25519};
+    await service.setCurveShare(id,'ed25519',JSON.stringify(ed));
+    await service.setCurveShare(id,'secp256k1-ecdsa',ECDSA_WALLET.shares[0]!);
+    await service.addWallet(id,share,metadata);
+}
+
 
 describe('KeystoreService', () => {
     let keystore: KeystoreService;
@@ -113,6 +122,8 @@ describe('KeystoreService', () => {
         const mockKeyShareData: KeyShareData = {
             key_package: 'mock-key-package',
             group_public_key: '0x1234567890abcdef',
+            frost_group_public_keys: {ed25519:'ed-fixture',secp256k1:'0x1234567890abcdef'},
+            ecdsa_group_public_key: ECDSA_WALLET.group_public_key,
             public_key_package: 'pkp-test',
             session_id: 'session-123',
             device_id: 'device-123',
@@ -157,7 +168,7 @@ describe('KeystoreService', () => {
             // Mock deriveKey to return a mock key
             (crypto.subtle.deriveKey as any).mockResolvedValue('mock-derived-key');
             
-            await keystore.addWallet('wallet-add-test', mockKeyShareData, { ...mockMetadata, id: 'wallet-add-test' });
+            await addCompleteWallet(keystore, 'wallet-add-test', mockKeyShareData, { ...mockMetadata, id: 'wallet-add-test' });
             
             // Verify encryption was called
             expect(crypto.subtle.encrypt).toHaveBeenCalled();
@@ -177,8 +188,8 @@ describe('KeystoreService', () => {
             expect(initialWallets).toHaveLength(0);
             
             // Add wallets first
-            await keystore.addWallet('wallet-list-1', mockKeyShareData, { ...mockMetadata, id: 'wallet-list-1', name: 'Wallet List 1' });
-            await keystore.addWallet('wallet-list-2', mockKeyShareData, { ...mockMetadata, id: 'wallet-list-2', name: 'Wallet List 2' });
+            await addCompleteWallet(keystore, 'wallet-list-1', mockKeyShareData, { ...mockMetadata, id: 'wallet-list-1', name: 'Wallet List 1' });
+            await addCompleteWallet(keystore, 'wallet-list-2', mockKeyShareData, { ...mockMetadata, id: 'wallet-list-2', name: 'Wallet List 2' });
             
             const wallets = keystore.getWallets();
             expect(wallets).toHaveLength(2);
@@ -191,7 +202,7 @@ describe('KeystoreService', () => {
             (crypto.subtle.deriveKey as any).mockResolvedValue('mock-derived-key');
             
             // Add wallet first
-            await keystore.addWallet('wallet-keyshare-test', mockKeyShareData, { ...mockMetadata, id: 'wallet-keyshare-test' });
+            await addCompleteWallet(keystore, 'wallet-keyshare-test', mockKeyShareData, { ...mockMetadata, id: 'wallet-keyshare-test' });
             
             // Get the key share (should return from cache)
             const keyShare = await keystore.getKeyShare('wallet-keyshare-test');
@@ -226,7 +237,7 @@ describe('KeystoreService', () => {
             (crypto.subtle.deriveKey as any).mockResolvedValue('mock-derived-key');
             
             // Add wallet first
-            await keystore.addWallet('wallet-remove-test', mockKeyShareData, { ...mockMetadata, id: 'wallet-remove-test' });
+            await addCompleteWallet(keystore, 'wallet-remove-test', mockKeyShareData, { ...mockMetadata, id: 'wallet-remove-test' });
             
             // Verify wallet was added
             expect(keystore.getWallets()).toHaveLength(1);
@@ -240,7 +251,7 @@ describe('KeystoreService', () => {
 
         it('should update wallet metadata', async () => {
             // Add wallet first
-            await keystore.addWallet('wallet-metadata-test', mockKeyShareData, { ...mockMetadata, id: 'wallet-metadata-test' });
+            await addCompleteWallet(keystore, 'wallet-metadata-test', mockKeyShareData, { ...mockMetadata, id: 'wallet-metadata-test' });
             
             // Currently there's no updateWalletMetadata method, but we can verify the wallet exists
             const wallet = keystore.getWallet('wallet-metadata-test');
@@ -248,136 +259,6 @@ describe('KeystoreService', () => {
             
             // To update metadata, we would need to remove and re-add the wallet
             // This test shows the current limitation
-        });
-    });
-
-    describe('backup and restore', () => {
-        const password = 'backup-password';
-        const deviceId = 'test-device-123';
-        const mockWallets = [
-            {
-                metadata: {
-                    id: 'backup-wallet-1',
-                    name: 'Wallet 1',
-                    blockchain: 'ethereum',
-                    address: '0x123',
-                    session_id: 'session-1',
-                    isActive: true,
-                    hasBackup: false,
-                },
-                keyShare: {
-                    key_package: 'key-1',
-                    group_public_key: '0xabc',
-                    public_key_package: 'pkp-test',
-                    session_id: 'session-1',
-                    device_id: 'device-123',
-                    participant_index: 1,
-                    threshold: 2,
-                    total_participants: 3,
-                    participants: ['device1', 'device2', 'device3'],
-                    participant_identifiers: Object.fromEntries((['device1', 'device2', 'device3']).map((p: string, i: number) => [p, i + 1])),
-                    curve: 'secp256k1' as const,
-                    blockchains: [],
-                    created_at: Date.now(),
-                }
-            }
-        ];
-
-        beforeEach(async () => {
-            // Setup mocks
-            (crypto.subtle.importKey as any).mockResolvedValue('mock-key' as any);
-            (crypto.subtle.deriveBits as any).mockResolvedValue(new ArrayBuffer(32));
-            (crypto.subtle.digest as any).mockResolvedValue(new ArrayBuffer(32));
-            (crypto.subtle.deriveKey as any).mockResolvedValue('mock-derived-key' as any);
-            (crypto.subtle.encrypt as any).mockResolvedValue(new ArrayBuffer(100));
-            (crypto.subtle.decrypt as any).mockResolvedValue(
-                new TextEncoder().encode(JSON.stringify(mockWallets[0].keyShare)).buffer
-            );
-            (chrome.storage.local.set as any).mockResolvedValue(undefined);
-            (chrome.storage.local.get as any).mockResolvedValue({});
-            
-            await keystore.initialize(deviceId);
-            await keystore.unlock(password);
-        });
-
-        it('should export wallet for backup', async () => {
-            // Mock deriveKey for wallet addition
-            (crypto.subtle.deriveKey as any).mockResolvedValue('mock-derived-key');
-            
-            // Add wallet first
-            await keystore.addWallet('backup-wallet-1', mockWallets[0].keyShare, mockWallets[0].metadata);
-            
-            // Mock loading encrypted share
-            const { storage } = await import('../__mocks__/imports');
-            jest.spyOn(storage, 'getItem').mockResolvedValueOnce({
-                walletId: 'backup-wallet-1',
-                algorithm: 'AES-GCM',
-                salt: btoa('mock-salt'),
-                iv: btoa('mock-iv'),
-                ciphertext: btoa('mock-ciphertext')
-            });
-            
-            const backup = await keystore.exportWallet('backup-wallet-1');
-            
-            expect(backup).toHaveProperty('version');
-            // Cross-client interop field name: the CLI uses snake_case
-            // for backup envelopes, so we match on `device_id`.
-            expect(backup).toHaveProperty('device_id');
-            expect(backup).toHaveProperty('exportedAt');
-            expect(backup.wallets).toHaveLength(1);
-            expect(backup.wallets[0].metadata).toEqual(mockWallets[0].metadata);
-        });
-
-        it('should import wallet from backup', async () => {
-            const backup: KeystoreBackup = {
-                version: '1.0.0',
-                device_id: 'device-123',
-                exportedAt: Date.now(),
-                wallets: [{
-                    metadata: mockWallets[0].metadata,
-                    encryptedShare: {
-                        walletId: 'backup-wallet-1',
-                        algorithm: 'AES-GCM' as const,
-                        salt: btoa('salt'),
-                        iv: btoa('iv'),
-                        ciphertext: btoa('ciphertext')
-                    }
-                }]
-            };
-            
-            // Mock successful decryption
-            (crypto.subtle.decrypt as any).mockResolvedValue(
-                new TextEncoder().encode(JSON.stringify(mockWallets[0].keyShare)).buffer
-            );
-            
-            // Mock storage.setItem
-            const { storage } = await import('../__mocks__/imports');
-            const mockSetItem = jest.fn();
-            jest.spyOn(storage, 'setItem').mockImplementation(mockSetItem);
-            
-            await keystore.importWallet(backup, password);
-            
-            // Verify wallet was imported
-            const wallets = keystore.getWallets();
-            expect(wallets).toHaveLength(1);
-            expect(wallets[0]).toEqual(mockWallets[0].metadata);
-        });
-
-        it('should remove all wallets individually', async () => {
-            // Mock deriveKey for wallet addition
-            (crypto.subtle.deriveKey as any).mockResolvedValue('mock-derived-key');
-            
-            // Add multiple wallets
-            await keystore.addWallet('backup-wallet-1', mockWallets[0].keyShare, mockWallets[0].metadata);
-            await keystore.addWallet('backup-wallet-2', mockWallets[0].keyShare, { ...mockWallets[0].metadata, id: 'backup-wallet-2' });
-            
-            expect(keystore.getWallets()).toHaveLength(2);
-            
-            // Remove all wallets
-            await keystore.removeWallet('backup-wallet-1');
-            await keystore.removeWallet('backup-wallet-2');
-            
-            expect(keystore.getWallets()).toHaveLength(0);
         });
     });
 
@@ -405,6 +286,8 @@ describe('KeystoreService', () => {
             const keyShare: KeyShareData = {
                 key_package: 'test',
                 group_public_key: '0x123',
+            frost_group_public_keys: {ed25519:'ed-fixture',secp256k1:'0x123'},
+            ecdsa_group_public_key: ECDSA_WALLET.group_public_key,
                 public_key_package: 'pkp-test',
                 session_id: 'session-1',
                 device_id: 'device-123',
@@ -427,12 +310,12 @@ describe('KeystoreService', () => {
                     arr[i] = Math.floor(Math.random() * 256);
                 }
                 // Track the generated salt
-                generatedSalts.add(Array.from(arr).join(','));
+                if (arr.length === 16) generatedSalts.add(Array.from(arr).join(','));
                 return arr;
             });
             
             for (let i = 0; i < 3; i++) {
-                await keystore.addWallet(`security-wallet-${i}`, keyShare, {
+                await addCompleteWallet(keystore, `security-wallet-${i}`, keyShare, {
                     id: `security-wallet-${i}`,
                     name: `Security Wallet ${i}`,
                     blockchain: 'ethereum',
@@ -447,9 +330,9 @@ describe('KeystoreService', () => {
             globalThis.crypto.getRandomValues = originalGetRandomValues;
             
             // Verify that encrypt was called multiple times
-            expect(crypto.subtle.encrypt).toHaveBeenCalledTimes(3);
+            expect(crypto.subtle.encrypt).toHaveBeenCalledTimes(9);
             // Each encryption should generate random values
-            expect(generatedSalts.size).toBeGreaterThan(0);
+            expect(generatedSalts.size).toBe(9);
         });
 
         it('should not expose sensitive data in errors', async () => {

@@ -22,7 +22,7 @@ async function settings(page) { await page.getByRole('button',{name:'Settings',e
 async function restore(page) {
  await settings(page);
  await page.getByText('Restore from backup',{exact:true}).click();
- await page.locator('#restore-files').setInputFiles({name:'device-backup.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({encrypted:true,data:'public-fixture'}))});
+ await page.locator('#restore-files').setInputFiles(['ed25519','secp256k1','secp256k1-ecdsa'].map(curve=>({name:`device-backup-${curve}.json`,mimeType:'application/json',buffer:Buffer.from(JSON.stringify({encrypted:true,curve,data:'public-fixture'}))})));
  await page.locator('#restore-password').fill('fixture-password');
  await page.getByRole('button',{name:'Restore wallet',exact:true}).click();
 }

@@ -1,10 +1,10 @@
-import type { SessionInfo, SessionProposal, SessionResponse } from './session';
-import type { DkgState } from './dkg';
-import type { MeshStatus } from './mesh';
-import type { AppState, ProtocolBlockchain, SupportedChain } from './appstate';
-import type { WebRTCAppMessage as DataChannelMessage } from './webrtc';
-import type { Account as WalletAccount } from './account';
-import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from './websocket';
+import type { SessionInfo, SessionProposal, SessionResponse } from './session.js';
+import type { DkgState } from './dkg.js';
+import type { MeshStatus } from './mesh.js';
+import type { AppState, ProtocolBlockchain, SupportedChain } from './appstate.js';
+import type { WebRTCAppMessage as DataChannelMessage } from './webrtc.js';
+import type { Account as WalletAccount } from './account.js';
+import { ServerMsg, ClientMsg, WebSocketMessagePayload, WebRTCSignal } from './websocket.js';
 
 // ===================================================================
 // MESSAGE TYPES WITH CLEAR DIRECTION NAMING
@@ -61,7 +61,6 @@ export type PopupToBackgroundMessage = BaseMessage & (
     | { type: 'setBlockchain'; blockchain: SupportedChain }
 
     // session management
-    | { type: 'proposeSession'; session_id: string; total: number; threshold: number; participants: string[] }
     | { type: 'acceptSession'; session_id: string; accepted: boolean; blockchain?: ProtocolBlockchain }
     
     // MPC signing operations
@@ -133,19 +132,20 @@ export type OffscreenToBackgroundMessage = BaseMessage & (
     | { type: 'webrtcMessage'; fromdeviceId: string; message: any }
     | { type: 'log'; payload: { message: string; source: string } }
     // Ext-1d: DKG ceremony finalized. Offscreen emits after FROST
-    // finalize succeeds; stateManager stashes pendingKeystoreJson
+    // finalize succeeds; stateManager stashes pendingFrostShares
     // for the save-wallet flow.
     | {
         type: 'dkgComplete';
-        groupPublicKey: string;
-        address: string | null;
-        blockchain: ProtocolBlockchain;
+        curveType: 'unified';
+        frost: { ed25519: {keystoreJson: string; groupPublicKey: string}; secp256k1: {keystoreJson: string; groupPublicKey: string} };
+        ecdsa: {shareJson: string; groupPublicKey: string};
+        addresses: Record<string, string>;
         sessionId: string | null;
         threshold: number;
         total: number;
         participants: string[];
         participantIndex: number | null;
-        keystoreJson: string | null;
+        participantIdentifiers: Record<string, number>;
       }
     // Ext-2d-progress: per-peer roster snapshot fired on every
     // signing-round milestone (commit sent/received, share
@@ -313,14 +313,6 @@ export function validateMessage(msg: unknown): msg is PopupToBackgroundMessage {
     return typeof msg === 'object' && msg !== null && 'type' in msg && typeof (msg as any).type === 'string';
 }
 
-export function validateSessionProposal(msg: PopupToBackgroundMessage): msg is PopupToBackgroundMessage & { session_id: string; total: number; threshold: number; participants: string[] } {
-    return msg.type === 'proposeSession' &&
-        'session_id' in msg && typeof msg.session_id === 'string' &&
-        'total' in msg && typeof msg.total === 'number' &&
-        'threshold' in msg && typeof msg.threshold === 'number' &&
-        'participants' in msg && Array.isArray(msg.participants);
-}
-
 export function validateSessionAcceptance(msg: PopupToBackgroundMessage): msg is PopupToBackgroundMessage & { session_id: string; accepted: boolean; blockchain?: ProtocolBlockchain } {
     return msg.type === 'acceptSession' &&
         'session_id' in msg && typeof msg.session_id === 'string' &&
@@ -336,7 +328,6 @@ export type Network = { id: number | string; name?: string;[key: string]: unknow
 export const MESSAGE_TYPES = {
     GET_STATE: "getState",
     LIST_DEVICES: "listDevices",
-    PROPOSE_SESSION: "proposeSession",
     ACCEPT_SESSION: "acceptSession",
     // Ext-1b: Create a new MPC wallet via DKG. Unlike PROPOSE_SESSION
     // (legacy per-peer relay path), this emits a TUI-compatible
@@ -353,7 +344,7 @@ export const MESSAGE_TYPES = {
     JOIN_DKG_SESSION: "joinDkgSession",
     // Ext-1d: popup → background "DKG finished, here's the password
     // to encrypt + save the keyshare". Background reads
-    // appState.pendingKeystoreJson + dkgLastResult to build a
+    // appState.pendingFrostShares + dkgLastResult to build a
     // KeyShareData and calls KeystoreManager.addWallet. If no
     // keystore exists yet, create one with this password. Payload
     // is {password, walletName?}.
@@ -407,7 +398,6 @@ export const MESSAGE_TYPES = {
     CREATE_KEYSTORE: "createKeystore",
     GET_KEYSTORE_STATUS: "getKeystoreStatus",
     SWITCH_WALLET: "switchWallet",
-    MIGRATE_KEYSTORES: "migrateKeystores",
     // Legacy support
     ACCOUNT_MANAGEMENT: "ACCOUNT_MANAGEMENT",
     NETWORK_MANAGEMENT: "NETWORK_MANAGEMENT",

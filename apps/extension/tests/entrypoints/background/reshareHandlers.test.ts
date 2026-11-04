@@ -22,6 +22,8 @@ function plantKeystoreStub(overrides: Partial<Record<string, any>> = {}) {
         getKeyShare: jest.fn(async (_id: string) => ({
             key_package: "kp-old",
             group_public_key: "02cafe",
+            frost_group_public_keys: {ed25519: "ed-root", secp256k1: "02cafe"},
+            ecdsa_group_public_key: "ecdsa-root",
             session_id: "wallet-xyz",
             device_id: "ext-alice",
             participant_index: 1,
@@ -43,6 +45,7 @@ function plantKeystoreStub(overrides: Partial<Record<string, any>> = {}) {
 function makeHandler() {
     const stateManager: any = {
         getState: () => ({ deviceId: "ext-alice", invites: [] }),
+        getChain: () => "bitcoin",
         updateState: jest.fn(),
         updateStateProperty: jest.fn(),
         getInvites: () => [],

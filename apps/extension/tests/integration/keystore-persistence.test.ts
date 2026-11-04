@@ -1,262 +1,70 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+/** Unified inventory persistence uses real crypto and structured-clone storage semantics. */
+import { beforeAll, beforeEach, afterEach, describe, it, expect } from 'bun:test';
+import init, { derive_account_addresses } from '@stars-labs/core-wasm';
 import { REAL_WEBCRYPTO } from '../setup-bun';
-import { KeystoreManager } from '../../src/services/keystoreManager';
+import { storage as wxtStorage } from '../wxt-imports-mock';
+import { storage as aliasStorage } from '../__mocks__/imports';
 import { KeystoreService } from '../../src/services/keystoreService';
-import { resetStorageData } from '../__mocks__/imports';
-import type { KeyShareData, ExtensionWalletMetadata } from "@stars-labs/types/keystore";
-
-// Mock chrome.storage
-const mockStorage = {
-    local: {
-        data: {} as Record<string, any>,
-        get: async (keys: string | string[]): Promise<Record<string, any>> => {
-            const keysArray = Array.isArray(keys) ? keys : [keys];
-            const result: Record<string, any> = {};
-            keysArray.forEach(key => {
-                if (key in mockStorage.local.data) {
-                    result[key] = mockStorage.local.data[key];
-                }
-            });
-            return result;
-        },
-        set: async (items: Record<string, any>): Promise<void> => {
-            Object.assign(mockStorage.local.data, items);
-        },
-        remove: async (keys: string | string[]): Promise<void> => {
-            const keysArray = Array.isArray(keys) ? keys : [keys];
-            keysArray.forEach(key => {
-                delete mockStorage.local.data[key];
-            });
-        }
-    },
-    session: {
-        data: {} as Record<string, any>,
-        get: async (keys: string | string[]): Promise<Record<string, any>> => {
-            const keysArray = Array.isArray(keys) ? keys : [keys];
-            const result: Record<string, any> = {};
-            keysArray.forEach(key => {
-                if (key in mockStorage.session.data) {
-                    result[key] = mockStorage.session.data[key];
-                }
-            });
-            return result;
-        },
-        set: async (items: Record<string, any>): Promise<void> => {
-            Object.assign(mockStorage.session.data, items);
-        }
-    }
-};
-
-(global as any).chrome = { storage: mockStorage };
-
-describe('Keystore Persistence Integration', () => {
-    // Shared #imports mock storage that persists across singleton
-    // resets within a single test (that's the whole point of the
-    // "close extension, reopen" simulation — data survives).
-    let sharedData: Record<string, any> = {};
-
-    // Stash the pre-test global.crypto so afterEach can restore it —
-    // without this, replacing crypto with REAL_WEBCRYPTO would persist
-    // into sibling tests (e.g. extensionCliInterop) that expect the
-    // setup-bun jest.fn() mocks on crypto.subtle.*.
-    let savedCrypto: any;
-
-    beforeEach(() => {
-        savedCrypto = (global as any).crypto;
-
-        // Re-install real WebCrypto (captured by setup-bun BEFORE
-        // it installed its own mock — see REAL_WEBCRYPTO export).
-        (global as any).crypto = REAL_WEBCRYPTO;
-
-        // Re-install file-local mockStorage so our chrome spies actually
-        // see reads/writes from the service layer.
-        (global as any).chrome = { storage: mockStorage };
-
-        // Clear storage (both file-local and the #imports shared store)
-        mockStorage.local.data = {};
-        mockStorage.session.data = {};
-        sharedData = {};
-        resetStorageData(() => sharedData);
-
-        // Reset singletons
-        (KeystoreManager as any).instance = null;
-        KeystoreService.resetInstance();
+import { frostShare } from '../helpers/frostShare';
+import { ECDSA_WALLET } from '../helpers/ecdsaFixture';
+import { normalizeDerivedAddressChain } from '@stars-labs/types/appstate';
+const modulePath='../../src/services/keystoreManager.ts?unified-persistence';
+const {KeystoreManager}=await import(modulePath) as typeof import('../../src/services/keystoreManager');
+const PASSWORD='test-only-persistence-password',PEERS=['device-a','device-b','device-c'];
+let savedCrypto: Crypto,savedChrome: typeof chrome,wxtData:Record<string,unknown>;
+const stores=[...new Set([wxtStorage,aliasStorage])];
+let originals:Array<{get:any;set:any;remove:any}>;
+function area() {
+    const data:Record<string,unknown>={};
+    return {data,get:async(keys?:string|string[]|null)=>keys==null?structuredClone(data):Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(key=>[key,structuredClone(data[key])])),set:async(items:Record<string,unknown>)=>{Object.assign(data,structuredClone(items));},remove:async(keys:string|string[])=>{for(const key of Array.isArray(keys)?keys:[keys])delete data[key];}};
+}
+function freshManager() {
+    const previous=(KeystoreManager as any).instance;if(previous)previous.lock();
+    (KeystoreManager as any).instance=null;KeystoreService.resetInstance();(KeystoreService as any).testMode=false;
+    return KeystoreManager.getInstance();
+}
+async function addUnified(manager: ReturnType<typeof KeystoreManager.getInstance>, id:string, display:'ethereum'|'solana',active:boolean) {
+    const primary={...frostShare('secp256k1',PEERS,2),session_id:id};
+    const ed={...frostShare('ed25519',PEERS,2),session_id:id};
+    const roots={ed25519:ed.group_public_key,secp256k1:primary.group_public_key};
+    const addresses=[...JSON.parse(derive_account_addresses('secp256k1',roots.secp256k1,0)),...JSON.parse(derive_account_addresses('ed25519',roots.ed25519,0)),...JSON.parse(derive_account_addresses('secp256k1-ecdsa',ECDSA_WALLET.group_public_key,0))].map((entry:any)=>({blockchain:normalizeDerivedAddressChain(entry.chain)!,address:entry.address,derivationPath:entry.path}));
+    const common={frost_group_public_keys:roots,ecdsa_group_public_key:ECDSA_WALLET.group_public_key,ecdsa_cohort:{participants:PEERS,threshold:2,total:3,participantIndex:2},blockchains:addresses};
+    Object.assign(primary,common);Object.assign(ed,common);
+    await manager.setCurveShare(id,'ed25519',JSON.stringify(ed));await manager.setCurveShare(id,'secp256k1-ecdsa',ECDSA_WALLET.shares[1]!);
+    expect(await manager.addWallet(id,primary,{id,name:id,blockchain:display,address:addresses.find(entry=>entry.blockchain===display)!.address,session_id:id,isActive:active,hasBackup:true})).toBe(true);
+    return {primary,ed};
+}
+beforeAll(async()=>{await init();});
+beforeEach(()=>{
+    savedCrypto=globalThis.crypto;savedChrome=globalThis.chrome;(globalThis as any).crypto=REAL_WEBCRYPTO;
+    (globalThis as any).chrome={...savedChrome,storage:{local:area(),session:area()}};
+    wxtData={};originals=stores.map(store=>({get:store.getItem.getMockImplementation(),set:store.setItem.getMockImplementation(),remove:store.removeItem.getMockImplementation()}));
+    for(const store of stores){store.getItem.mockImplementation(async(key:string)=>structuredClone(wxtData[key]??null));store.setItem.mockImplementation(async(key:string,value:unknown)=>{wxtData[key]=structuredClone(value);});store.removeItem.mockImplementation(async(key:string)=>{delete wxtData[key];});}
+    freshManager();
+});
+afterEach(()=>{
+    const manager=(KeystoreManager as any).instance;if(manager)manager.lock();(KeystoreManager as any).instance=null;KeystoreService.resetInstance();
+    stores.forEach((store,i)=>{store.getItem.mockImplementation(originals[i]!.get);store.setItem.mockImplementation(originals[i]!.set);store.removeItem.mockImplementation(originals[i]!.remove);});
+    (globalThis as any).crypto=savedCrypto;(globalThis as any).chrome=savedChrome;
+});
+describe('unified wallet persistence integration',()=>{
+    it('cold restart decrypts every algorithm from the persisted inventory, never a cached object',async()=>{
+        let manager=KeystoreManager.getInstance();await manager.initialize('device-b');expect(await manager.createKeystore(PASSWORD,'device-b')).toBe(true);
+        const shares=await addUnified(manager,'wallet-one','ethereum',true);
+        manager=freshManager();await manager.initialize('device-b');expect(await manager.isInitialized()).toBe(true);expect(manager.isLocked()).toBe(true);
+        expect(await manager.unlock(PASSWORD)).toBe(true);expect(manager.getWallets()).toHaveLength(1);
+        expect((await manager.getKeyShare('wallet-one','secp256k1'))?.key_package).toBe(shares.primary.key_package);
+        expect((await manager.getKeyShare('wallet-one','ed25519'))?.key_package).toBe(shares.ed.key_package);
+        expect(await manager.getCurveShare('wallet-one','secp256k1-ecdsa')).toBe(ECDSA_WALLET.shares[1]!);
+        const persisted=JSON.stringify({wxtData,local:await chrome.storage.local.get(null),session:await chrome.storage.session.get(null)});
+        for(const secret of [PASSWORD,shares.primary.key_package,shares.ed.key_package,JSON.parse(ECDSA_WALLET.shares[1]!).key_share.core.x])expect(persisted).not.toContain(secret);
     });
-
-    afterEach(() => {
-        (global as any).crypto = savedCrypto;
-    });
-    
-    it('should persist imported keystore and restore on restart', async () => {
-        // Step 1: Initialize and create keystore
-        const manager1 = KeystoreManager.getInstance();
-        await manager1.initialize('test-device');
-        await manager1.createKeystore('password123');
-        
-        // Step 2: Import a keystore (simulate CLI import)
-        // Note: this literal intentionally uses an older KeyShareData
-        // shape (keystore_id, current_round, party_index, key_packages,
-        // round1/round2 slots) that predates the Rust-aligned interface.
-        // The persistence roundtrip test is about encrypt/store/decrypt,
-        // not KeyShareData field conformance — cast to any to bypass
-        // type checking while keeping the test intent intact.
-        const keyShareData: any = {
-            keystore_id: 'cli-imported',
-            current_round: 2,
-            threshold: 2,
-            total_participants: 3,
-            curve_type: 'secp256k1',
-            blockchain: 'ethereum',
-            party_index: 1,
-            key_packages: {
-                '1': '0x1234',
-                '2': '0x5678',
-                '3': '0x9abc'
-            },
-            round1_secret_package: null,
-            round1_packages: {},
-            round2_secret_package: null,
-            round2_public_packages: {}
-        };
-        
-        const metadata: ExtensionWalletMetadata = {
-            id: 'imported-wallet',
-            name: 'Imported from CLI',
-            blockchain: 'ethereum',
-            address: '0x742d35Cc6634C0532925a3b844Bc9e7595f84D02',
-            session_id: 'cli-session-123',
-            isActive: true,
-            hasBackup: true,
-            createdAt: Date.now()
-        };
-        
-        const addResult = await manager1.addWallet('imported-wallet', keyShareData, metadata);
-        expect(addResult).toBe(true);
-        
-        // Verify wallet is stored
-        const wallets1 = manager1.getWallets();
-        expect(wallets1).toHaveLength(1);
-        expect(wallets1[0].id).toBe('imported-wallet');
-        
-        // Step 3: Lock the keystore (simulate closing extension)
-        manager1.lock();
-        
-        // Step 4: Simulate extension restart - create new manager instance
-        (KeystoreManager as any).instance = null;
-        const manager2 = KeystoreManager.getInstance();
-        await manager2.initialize('test-device');
-        
-        // Step 5: Check if keystore is initialized (has wallets)
-        expect(await manager2.isInitialized()).toBe(true);
-        expect(manager2.isLocked()).toBe(true);
-        
-        // Step 6: Unlock with password
-        const unlockResult = await manager2.unlock('password123');
-        expect(unlockResult).toBe(true);
-        
-        // Step 7: Verify imported wallet is still there
-        const wallets2 = manager2.getWallets();
-        expect(wallets2).toHaveLength(1);
-        expect(wallets2[0].id).toBe('imported-wallet');
-        expect(wallets2[0].name).toBe('Imported from CLI');
-        expect(wallets2[0].address).toBe('0x742d35Cc6634C0532925a3b844Bc9e7595f84D02');
-        
-        // Step 8: Verify we can get the key share
-        const keyShare = await manager2.getKeyShare('imported-wallet');
-        expect(keyShare).toBeDefined();
-        // Legacy-shape fields preserved by the round-trip; access
-        // through `any` since they're not on the KeyShareData type
-        // (see comment on the addWallet site above).
-        expect((keyShare as any)?.keystore_id).toBe('cli-imported');
-        expect((keyShare as any)?.party_index).toBe(1);
-    });
-    
-    it('should handle multiple wallets and active wallet switching', async () => {
-        const manager = KeystoreManager.getInstance();
-        await manager.initialize('test-device');
-        await manager.createKeystore('password123');
-        
-        // Add Ethereum wallet
-        const ethWallet: ExtensionWalletMetadata = {
-            id: 'eth-wallet',
-            name: 'Ethereum Wallet',
-            blockchain: 'ethereum',
-            address: '0x1111111111111111111111111111111111111111',
-            session_id: 'eth-session',
-            isActive: true,
-            hasBackup: false,
-            createdAt: Date.now()
-        };
-        
-        // Legacy shape — see comment on keyShareData at line ~68.
-        await manager.addWallet('eth-wallet', {
-            keystore_id: 'eth-keystore',
-            current_round: 2,
-            threshold: 2,
-            total_participants: 3,
-            curve_type: 'secp256k1',
-            blockchain: 'ethereum',
-            party_index: 1,
-            key_packages: {},
-            round1_secret_package: null,
-            round1_packages: {},
-            round2_secret_package: null,
-            round2_public_packages: {}
-        } as any, ethWallet);
-        
-        // Add Solana wallet
-        const solWallet: ExtensionWalletMetadata = {
-            id: 'sol-wallet',
-            name: 'Solana Wallet',
-            blockchain: 'solana',
-            address: 'So1111111111111111111111111111111111111111',
-            session_id: 'sol-session',
-            isActive: false,
-            hasBackup: false,
-            createdAt: Date.now()
-        };
-        
-        await manager.addWallet('sol-wallet', {
-            keystore_id: 'sol-keystore',
-            current_round: 2,
-            threshold: 2,
-            total_participants: 3,
-            curve_type: 'ed25519',
-            blockchain: 'solana',
-            party_index: 1,
-            key_packages: {},
-            round1_secret_package: null,
-            round1_packages: {},
-            round2_secret_package: null,
-            round2_public_packages: {}
-        } as any, solWallet);
-        
-        // Verify both wallets exist
-        const wallets = manager.getWallets();
-        expect(wallets).toHaveLength(2);
-        
-        // Verify active wallet
-        const activeWallet = manager.getActiveWallet();
-        expect(activeWallet?.id).toBe('eth-wallet');
-        
-        // Switch active wallet
-        await manager.switchWallet('sol-wallet');
-        
-        // Verify switch worked
-        const newActiveWallet = manager.getActiveWallet();
-        expect(newActiveWallet?.id).toBe('sol-wallet');
-        
-        // Verify persistence
-        manager.lock();
-        
-        // Create new instance
-        (KeystoreManager as any).instance = null;
-        const manager2 = KeystoreManager.getInstance();
-        await manager2.initialize('test-device');
-        await manager2.unlock('password123');
-        
-        // Verify active wallet persisted
-        const persistedActiveWallet = manager2.getActiveWallet();
-        expect(persistedActiveWallet?.id).toBe('sol-wallet');
+    it('switches complete wallets and retains the selected identity after a real service reload',async()=>{
+        let manager=KeystoreManager.getInstance();await manager.initialize('device-b');expect(await manager.createKeystore(PASSWORD,'device-b')).toBe(true);
+        await addUnified(manager,'ethereum-primary','ethereum',true);const second=await addUnified(manager,'solana-primary','solana',false);
+        expect(manager.getActiveWallet()?.id).toBe('ethereum-primary');expect(await manager.switchWallet('solana-primary')).toBe(true);expect(manager.getActiveWallet()?.id).toBe('solana-primary');
+        manager=freshManager();await manager.initialize('device-b');expect(await manager.unlock(PASSWORD)).toBe(true);
+        expect(manager.getActiveWallet()?.id).toBe('solana-primary');expect(manager.getWallets()).toHaveLength(2);
+        expect((await manager.getKeyShare('solana-primary','ed25519'))?.key_package).toBe(second.ed.key_package);
     });
 });

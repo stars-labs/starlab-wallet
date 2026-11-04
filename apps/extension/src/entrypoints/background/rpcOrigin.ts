@@ -8,3 +8,8 @@ export function isInternalSender(sender: chrome.runtime.MessageSender, extension
         return false;
     }
 }
+
+/** Web pages can request approved dApp RPC only, never vault or UI commands. */
+export function canSendBackgroundMessage(message: { type: string }, sender: chrome.runtime.MessageSender, extensionId: string): boolean {
+    return isInternalSender(sender, extensionId) || message.type === 'dappRpc';
+}

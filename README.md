@@ -2,7 +2,10 @@
 
 Starlab Wallet is a browser wallet with shared signing across devices. It
 supports threshold ECDSA for Ethereum and FROST for Bitcoin, Solana and Sui,
-with encrypted device shares and public account/address derivation. The popup
+with encrypted device shares and public account/address derivation. One unified
+DKG creates all three signing keys under one wallet identity; new accounts
+are derived without another DKG. Chain selection only chooses the account
+view and operation network. The popup
 includes assets, activity, Receive, Ethereum Send, connected apps, network and
 account management, backups, and signing approvals.
 
@@ -37,9 +40,10 @@ verified browser path is Chromium.
 
 ## Use the wallet
 
-1. Open the extension and set this device's password. Each participating device
-   stores its own encrypted share; the password does not replace the other
-   devices needed to sign.
+1. Open the extension and choose **YubiKey** to create a passwordless local
+   vault, or choose **Password**. YubiKey setup requires a FIDO2 key with
+   WebAuthn PRF support; follow the browser's PIN and touch prompts. Each device
+   stores its own encrypted share and still needs the other signing devices.
 2. Choose **Create wallet** on one device. Select the devices and threshold,
    then share the invitation with the other participants. On each invited
    device, use **Accept & join** and keep the clients connected until setup
@@ -58,9 +62,10 @@ verified browser path is Chromium.
    spending limits and backups. Disconnecting a dApp removes its wallet
    connection; existing on-chain token approvals are managed separately.
 7. In **Backup**, acknowledge that the file contains key material, choose a
-   backup password and export the encrypted share. Restore with **Restore
-   from backup** using the password assigned to that backup. A single share
-   backup is not the complete wallet and does not remove the signing threshold.
+   backup password and export all three encrypted key files for this device.
+   Restore with **Restore from backup**, selecting all three files from the
+   same wallet and device and entering their backup password. These files
+   contain one device’s shares and do not remove the signing threshold.
 
 Locking and reopening preserve the encrypted wallet. Unlock this device to
 resume; keep the required co-signers online for a new signing ceremony. Never
@@ -70,6 +75,23 @@ share an unencrypted device share or a password with another participant.
 are unchanged by refresh.** Dropping a device through FROST refresh does not
 remove that device's Ethereum share. Follow the recovery guidance for the
 chain you use.
+
+## Passwordless vaults
+
+A new or empty vault can use YubiKey for setup and unlock without a wallet
+password. Older single-algorithm test wallets are unsupported and must be recreated;
+there is no migration or single-curve creation mode.
+This uses the browser's WebAuthn PRF flow; the native host described below is
+only needed for hardware signing accounts. Unsupported keys fail with an error.
+
+For a hardware vault, verify your YubiKey in **Settings** before exporting a
+backup, then choose a separate password for the portable backup file. Keep a
+recoverable share backup before relying on one physical key. Physical YubiKey
+compatibility still needs verification on your device.
+
+When updating an unpacked build, replace files in the **same directory** and
+click **Reload** on its extension card. A different directory can change the
+extension identity and prevent access to the existing WebAuthn credential.
 
 ## Hardware accounts
 
@@ -103,7 +125,10 @@ cd apps/extension
 bun run test:interop
 ```
 
-Interop tests exercise actual WASM and native CLI clients. Some cases require
+Interop tests exercise actual WASM and native CLI clients from the exact
+engine revision recorded in `packages/@starlab/core-wasm/package.json`.
+They create unified wallets in both directions, compare all three root keys
+and per-chain addresses, and exercise signing after restart. Some cases require
 network namespaces and the engine CLI; use the committed CI workflow for the
 full setup. Production builds must not enable insecure fixture-prime hooks.
 

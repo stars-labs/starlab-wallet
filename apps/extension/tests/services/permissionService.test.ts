@@ -264,3 +264,36 @@ describe('PermissionService', () => {
         // Removed failing test: should handle storage errors gracefully
     });
 });
+
+
+describe('chain-specific permission identity', () => {
+    it('keeps Solana case through storage reload, lookup and disconnect', async () => {
+        const sol = 'So11111111111111111111111111111111111111112';
+        (PermissionService as any).instance = null;
+        let service = PermissionService.getInstance();
+        await service.ensureInitialized();
+        await service.connectAccounts('https://solana.example',[sol],'solana:mainnet');
+        (PermissionService as any).instance = null;
+        service = PermissionService.getInstance();
+        await service.ensureInitialized();
+        expect(service.getConnectedAccounts('https://solana.example')).toEqual([sol]);
+        expect(service.isAccountConnected('https://solana.example',sol)).toBe(true);
+        expect(service.isAccountConnected('https://solana.example',sol.toLowerCase())).toBe(false);
+        expect(service.getConnectedDApps(sol)).toHaveLength(1);
+        expect(service.getConnectedDApps(sol.toLowerCase())).toHaveLength(0);
+        await service.disconnectAccounts('https://solana.example',[sol.toLowerCase()]);
+        expect(service.isAccountConnected('https://solana.example',sol)).toBe(true);
+        await service.disconnectAccounts('https://solana.example',[sol]);
+        expect(service.getConnectedAccounts('https://solana.example')).toEqual([]);
+    });
+    it('normalizes actual EVM addresses while preserving non-EVM identity', async () => {
+        const evm = '0x' + 'Ab'.repeat(20);
+        (PermissionService as any).instance = null;
+        const service = PermissionService.getInstance();await service.ensureInitialized();
+        await service.connectAccounts('https://evm.example',[evm],'0x1');
+        expect(service.getConnectedAccounts('https://evm.example')).toEqual([evm.toLowerCase()]);
+        expect(service.isAccountConnected('https://evm.example',evm)).toBe(true);
+        await service.disconnectAccounts('https://evm.example',[evm]);
+        expect(service.getConnectedAccounts('https://evm.example')).toEqual([]);
+    });
+});

@@ -1,23 +1,21 @@
 // L3c interop, the other direction: a CLI initiates, the extension joins.
 import { test, expect } from "./fixtures";
-import { startPeers, runCli } from "./cli-peers";
-import { acceptInvitation, approveSigningRequest, dkgResult, extSignature, saveWallet } from "./extension-actions";
-import { setupExtension, CURVE, PASSWORD, CLI_TIMEOUT_S, specTimeout, type Env } from "./scenario";
+import { startPeers, runCli, nativeGroupKeys } from "./cli-peers";
+import { acceptInvitation, approveSigningRequest, waitForDkg, extSignature, saveWallet } from "./extension-actions";
+import { setupExtension, PASSWORD, CLI_TIMEOUT_S, specTimeout, extensionGroupKeys, assertUnifiedAccounts, type Env } from "./scenario";
 
 // Independent tests (each gets its own signal server + room).
 test.describe.configure({ timeout: specTimeout(1) });
 
-/** `Group key:  <hex>` from `starlab-cli wallet create`'s summary. */
-const groupKeyOf = (out: string) => /Group key:\s+([0-9a-f]+)/.exec(out)?.[1];
 const walletIdOf = (out: string) => /Wallet ID:\s+(\S+)/.exec(out)?.[1];
 
 test("CLI-initiated DKG: the extension and a CLI peer join", async ({ page, context, extensionId }) => {
   let env: Env | undefined;
   try {
     env = await setupExtension(page, context, extensionId);
-    env.peers = startPeers({ count: 1, signal: env.signal, room: env.room, curve: CURVE, password: PASSWORD });
+    env.peers = startPeers({ count: 1, signal: env.signal, room: env.room, password: PASSWORD });
     const creator = runCli({
-      args: ["wallet", "create", "--threshold", "2", "--total", "3", "--curve", CURVE, "--timeout", CLI_TIMEOUT_S],
+      args: ["wallet", "create", "--threshold", "2", "--total", "3", "--curve", "unified", "--timeout", CLI_TIMEOUT_S],
       deviceId: "interop-creator",
       signal: env.signal,
       room: env.room,
@@ -26,10 +24,14 @@ test("CLI-initiated DKG: the extension and a CLI peer join", async ({ page, cont
 
     await acceptInvitation(page);
 
-    const creatorKey = groupKeyOf(await creator.done);
-    expect(creatorKey).toMatch(/^[0-9a-f]+$/);
-    expect((await env.peers[0].dkg).groupKey).toBe(creatorKey);
-    expect((await dkgResult(page)).groupPublicKey, "extension must derive the CLI's group key").toBe(creatorKey);
+    const created = await creator.done;
+    const walletId = walletIdOf(created)!;
+    const joined = await env.peers[0].dkg;
+    expect(joined.wallet).toBe(walletId);
+    const keys = await extensionGroupKeys(page);
+    expect(nativeGroupKeys(creator.keystore, "interop-creator", walletId)).toEqual(keys);
+    expect(nativeGroupKeys(env.peers[0].keystore, env.peers[0].deviceId, walletId)).toEqual(keys);
+    await assertUnifiedAccounts(page, creator.keystore, "interop-creator", walletId, keys);
     await saveWallet(page, PASSWORD);
   } finally {
     env?.cleanup();
@@ -40,9 +42,9 @@ test("CLI-initiated signing: the extension co-signs", async ({ page, context, ex
   let env: Env | undefined;
   try {
     env = await setupExtension(page, context, extensionId);
-    env.peers = startPeers({ count: 1, signal: env.signal, room: env.room, curve: CURVE, password: PASSWORD });
+    env.peers = startPeers({ count: 1, signal: env.signal, room: env.room, password: PASSWORD });
     const creator = runCli({
-      args: ["wallet", "create", "--threshold", "2", "--total", "3", "--curve", CURVE, "--timeout", CLI_TIMEOUT_S],
+      args: ["wallet", "create", "--threshold", "2", "--total", "3", "--curve", "unified", "--timeout", CLI_TIMEOUT_S],
       deviceId: "interop-creator",
       signal: env.signal,
       room: env.room,
@@ -50,13 +52,13 @@ test("CLI-initiated signing: the extension co-signs", async ({ page, context, ex
     });
     await acceptInvitation(page);
     const created = await creator.done;
-    await dkgResult(page);
+    await waitForDkg(page);
     await saveWallet(page, PASSWORD);
 
     // With the CLI peer offline the only signer set is {creator, extension}.
     env.peers[0].kill();
     const signer = runCli({
-      args: ["sign", "--wallet-id", walletIdOf(created)!, "--message", "interop-cli-sign", "--curve", CURVE, "--timeout", "120", "--json"],
+      args: ["sign", "--wallet-id", walletIdOf(created)!, "--chain", "ethereum", "--message", "interop-cli-sign", "--curve", "secp256k1", "--timeout", "120", "--json"],
       deviceId: "interop-creator",
       keystore: creator.keystore,
       signal: env.signal,
@@ -78,23 +80,23 @@ test("CLI-initiated reshare: the extension refreshes its share, then co-signs", 
   let env: Env | undefined;
   try {
     env = await setupExtension(page, context, extensionId);
-    env.peers = startPeers({ count: 1, signal: env.signal, room: env.room, curve: CURVE, password: PASSWORD });
+    env.peers = startPeers({ count: 1, signal: env.signal, room: env.room, password: PASSWORD });
     const cli = { deviceId: "interop-creator", signal: env.signal, room: env.room, password: PASSWORD };
     const creator = runCli({
       ...cli,
-      args: ["wallet", "create", "--threshold", "2", "--total", "3", "--curve", CURVE, "--timeout", CLI_TIMEOUT_S],
+      args: ["wallet", "create", "--threshold", "2", "--total", "3", "--curve", "unified", "--timeout", CLI_TIMEOUT_S],
     });
     await acceptInvitation(page);
     const created = await creator.done;
     const walletId = walletIdOf(created)!;
-    await dkgResult(page);
+    await waitForDkg(page);
     await saveWallet(page, PASSWORD);
 
     // Refresh every share; the CLI peer (serve) auto-joins, the extension accepts.
     const reshare = runCli({
       ...cli,
       keystore: creator.keystore,
-      args: ["reshare", "--wallet-id", walletId, "--curve", CURVE, "--timeout", CLI_TIMEOUT_S],
+      args: ["reshare", "--wallet-id", walletId, "--curve", "secp256k1", "--timeout", CLI_TIMEOUT_S],
     });
     await acceptInvitation(page);
     await reshare.done;
@@ -104,7 +106,7 @@ test("CLI-initiated reshare: the extension refreshes its share, then co-signs", 
     const signer = runCli({
       ...cli,
       keystore: creator.keystore,
-      args: ["sign", "--wallet-id", walletId, "--message", "after-reshare", "--curve", CURVE, "--timeout", "120", "--json"],
+      args: ["sign", "--wallet-id", walletId, "--chain", "bitcoin", "--message", "after-reshare", "--curve", "secp256k1", "--timeout", "120", "--json"],
     });
     await approveSigningRequest(page);
     const out = await signer.done;
@@ -121,15 +123,15 @@ test("signal-server outage: everyone reconnects, then the extension co-signs", a
   let env: Env | undefined;
   try {
     env = await setupExtension(page, context, extensionId);
-    env.peers = startPeers({ count: 1, signal: env.signal, room: env.room, curve: CURVE, password: PASSWORD });
+    env.peers = startPeers({ count: 1, signal: env.signal, room: env.room, password: PASSWORD });
     const cli = { deviceId: "interop-creator", signal: env.signal, room: env.room, password: PASSWORD };
     const creator = runCli({
       ...cli,
-      args: ["wallet", "create", "--threshold", "2", "--total", "3", "--curve", CURVE, "--timeout", CLI_TIMEOUT_S],
+      args: ["wallet", "create", "--threshold", "2", "--total", "3", "--curve", "unified", "--timeout", CLI_TIMEOUT_S],
     });
     await acceptInvitation(page);
     const walletId = walletIdOf(await creator.done)!;
-    await dkgResult(page);
+    await waitForDkg(page);
     await saveWallet(page, PASSWORD);
 
     // Outage: the socket drops; the extension must come back on its own.
@@ -144,7 +146,7 @@ test("signal-server outage: everyone reconnects, then the extension co-signs", a
     const signer = runCli({
       ...cli,
       keystore: creator.keystore,
-      args: ["sign", "--wallet-id", walletId, "--message", "after-outage", "--curve", CURVE, "--timeout", "120", "--json"],
+      args: ["sign", "--wallet-id", walletId, "--chain", "ethereum", "--message", "after-outage", "--curve", "secp256k1", "--timeout", "120", "--json"],
     });
     await approveSigningRequest(page);
     const out = await signer.done;

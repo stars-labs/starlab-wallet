@@ -1,16 +1,16 @@
 // Re-export domain types so existing imports from '@stars-labs/types/appstate' still work.
 // Canonical definitions live in session.ts, dkg.ts, mesh.ts, and webrtc.ts.
-export type { SessionInfo, SessionProposal, SessionResponse } from './session';
-export { DkgState } from './dkg';
-export { MeshStatusType } from './mesh';
-export type { MeshStatus } from './mesh';
-export type { WebRTCAppMessage } from './webrtc';
+export type { SessionInfo, SessionProposal, SessionResponse } from './session.js';
+export { DkgState } from './dkg.js';
+export { MeshStatusType } from './mesh.js';
+export type { MeshStatus } from './mesh.js';
+export type { WebRTCAppMessage } from './webrtc.js';
 
 // AppState and related utilities are unique to this file.
-import type { SessionInfo } from './session';
-import type { MeshStatus } from './mesh';
-import { MeshStatusType } from './mesh';
-import { DkgState } from './dkg';
+import type { SessionInfo } from './session.js';
+import type { MeshStatus } from './mesh.js';
+import { MeshStatusType } from './mesh.js';
+import { DkgState } from './dkg.js';
 
 export type WalletCurve = 'secp256k1' | 'ed25519';
 export type ProtocolBlockchain = 'ethereum' | 'solana';
@@ -311,6 +311,9 @@ export interface AppState {
   /** Root group key (SEC1 hex) of the wallet's threshold-ECDSA key — the
    *  Ethereum accounts derive from it (secp256k1 wallets only). */
   ecdsaGroupPublicKey?: string;
+  frostGroupPublicKeys?: { ed25519: string; secp256k1: string };
+  walletQuorums?: Partial<Record<"ed25519" | "secp256k1" | "secp256k1-ecdsa", {threshold: number; total: number}>>;
+  pendingFrostShares?: { ed25519: {keystoreJson: string; groupPublicKey: string}; secp256k1: {keystoreJson: string; groupPublicKey: string} } | null;
   /** Background generation of this device's Paillier safe primes (needed
    *  by the next wallet's ECDSA key): `done` of `total` primes finished. */
   ecdsaPrimes?: { state: "idle" | "generating" | "ready"; done: number; total: number };
@@ -331,10 +334,6 @@ export interface AppState {
     participantIndex: number | null;
     completedAt: number;
   };
-  /** Raw JSON keystore emitted by WASM `export_keystore`. The
-   *  save-wallet handler reads this, decrypts with user password,
-   *  builds a KeyShareData, and persists via KeystoreManager. */
-  pendingKeystoreJson?: string | null;
   /** Flag the popup watches to know whether to render the save form. */
   pendingKeystoreReady?: boolean;
 
@@ -369,6 +368,7 @@ export const INITIAL_APP_STATE: AppState = {
   dkgState: DkgState.Idle,
   webrtcConnections: {},
   blockchain: "ethereum",
+  chain: "ethereum",
   // 2-of-3 is the standard threshold-signing default.
   totalParticipants: 3,
   threshold: 2,

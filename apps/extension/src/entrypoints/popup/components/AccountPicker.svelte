@@ -7,18 +7,15 @@
     // BIP-44 all the way (product decision): there is NO root entry — the
     // group key exists only as the derivation parent. Account 0 is the
     // default identity.
-    import { createEventDispatcher, onMount } from "svelte";
+    import { createEventDispatcher } from "svelte";
     import { addressForChain } from "../../../utils/walletAccount";
     import {
         isSupportedChain,
-        normalizeDerivedAddressChain,
         type SupportedChain,
     } from "@stars-labs/types/appstate";
 
-    export let groupPublicKey: string;
-    /** secp256k1 wallets: root key of the threshold-ECDSA (Ethereum) key. */
-    export let ecdsaGroupPublicKey: string = "";
-    export let curve: string; // "secp256k1" | "ed25519" | "unified"
+    export let frostGroupPublicKeys: { ed25519: string; secp256k1: string };
+    export let ecdsaGroupPublicKey: string;
     export let chain: SupportedChain = "ethereum";
     /** Currently selected account index (account 0 = default identity). */
     export let selected: number = 0;
@@ -35,68 +32,56 @@
     let count = 3;
     let loadEpoch = 0;
 
-    function normalizeAddresses(addresses: ChainAddr[]): ChainAddr[] {
-        return addresses
-            .map((addr) => {
-                const normalized = normalizeDerivedAddressChain(addr.chain);
-                return normalized ? { ...addr, chain: normalized } : addr;
-            })
-            .filter((addr) => !addr.chain || isSupportedChain(addr.chain));
-    }
-
     function addressHint(addresses: ChainAddr[]): string {
         const addr = addressForChain(addresses, chain);
         return addr ? `${addr.slice(0, 10)}…` : "";
     }
 
-    async function load() {
-        if (!groupPublicKey) return;
+    async function load(ed25519Key: string, secp256k1Key: string, ecdsaKey: string) {
         const epoch = ++loadEpoch;
-        const frostKey = groupPublicKey;
-        const ecdsaKey = ecdsaGroupPublicKey;
+        accounts = [];
+        dispatch("select", { account: selected, addresses: [] });
+        if (!ed25519Key || !secp256k1Key || !ecdsaKey) {
+            loading = false;
+            error = "Wallet keys are not ready.";
+            return;
+        }
+        const requestedCount = count;
         loading = true;
         error = "";
         try {
-            // Unified wallets hold two curves; the secp side carries the
-            // group key the popup tracks — derive per the tracked curve.
-            const curveKey = curve === "ed25519" ? "ed25519" : "secp256k1";
-            const res = await chrome.runtime.sendMessage({
-                type: "deriveAccounts",
-                curve: curveKey,
-                groupPublicKey: frostKey,
-                count,
-            });
-            // A secp256k1 wallet's Ethereum accounts come from its
-            // threshold-ECDSA key (the FROST key covers Bitcoin).
-            const ecdsa =
-                curveKey === "secp256k1" && ecdsaKey
-                    ? await chrome.runtime.sendMessage({
-                          type: "deriveAccounts",
-                          curve: "secp256k1-ecdsa",
-                          groupPublicKey: ecdsaKey,
-                          count,
-                      })
-                    : null;
+            const requests = [
+                { curve: "ed25519", groupPublicKey: ed25519Key },
+                { curve: "secp256k1", groupPublicKey: secp256k1Key },
+                { curve: "secp256k1-ecdsa", groupPublicKey: ecdsaKey },
+            ];
+            const results = await Promise.all(requests.map(request => chrome.runtime.sendMessage({
+                type: "deriveAccounts", ...request, count: requestedCount,
+            })));
             if (epoch !== loadEpoch) return;
-            if (res?.success) {
-                accounts = res.accounts.map((account: Account) => ({
-                    ...account,
-                    addresses: normalizeAddresses([
-                        ...(ecdsa?.success
-                            ? (ecdsa.accounts.find((a: Account) => a.account === account.account)?.addresses ?? [])
-                            : []),
-                        ...(account.addresses ?? []),
-                    ]),
-                }));
-                // First load: push account 0's addresses up so the hero shows
-                // the BIP-44 identity immediately (root is never displayed).
-                const current = accounts.find((a) => a.account === selected);
-                if (current) {
-                    dispatch("select", { account: selected, addresses: current.addresses });
-                }
-            } else error = res?.error ?? "derivation failed";
+            if (results.some(result => !result?.success || !Array.isArray(result.accounts))) {
+                throw new Error("Could not load wallet accounts. Try again.");
+            }
+            accounts = Array.from({ length: requestedCount }, (_, account) => ({
+                account,
+                addresses: results.flatMap((result, index) => {
+                    const derived: Account | undefined = result.accounts.find((item: Account) => item.account === account);
+                    if (!derived || !Array.isArray(derived.addresses)) throw new Error("Could not load every chain for this account.");
+                    // Each algorithm is authoritative only for its own chains.
+                    // In particular, a FROST secp256k1 key must never supply an EVM address.
+                    return derived.addresses.filter(address => isSupportedChain(address.chain) && (
+                        index === 0 ? address.chain === "solana" || address.chain === "sui" :
+                        index === 1 ? address.chain === "bitcoin" : address.chain === "ethereum"
+                    ));
+                }),
+            }));
+            const current = accounts.find(account => account.account === selected);
+            if (current) dispatch("select", { account: selected, addresses: current.addresses });
         } catch (e) {
-            if (epoch === loadEpoch) error = (e as Error).message;
+            if (epoch === loadEpoch) {
+                accounts = [];
+                error = (e as Error).message;
+            }
         } finally {
             if (epoch === loadEpoch) loading = false;
         }
@@ -104,17 +89,19 @@
 
     function pick(idx: number) {
         const acct = accounts.find((a) => a.account === idx);
-        dispatch("select", { account: idx, addresses: acct?.addresses ?? [] });
+        if (!acct) return;
+        dispatch("select", { account: idx, addresses: acct.addresses });
         open = false;
     }
 
     async function addAccount() {
         count += 1;
-        await load();
+        await load(frostGroupPublicKeys.ed25519, frostGroupPublicKeys.secp256k1, ecdsaGroupPublicKey);
     }
 
-    onMount(load);
-    $: if (groupPublicKey || ecdsaGroupPublicKey) load();
+    $: ed25519Key = frostGroupPublicKeys.ed25519;
+    $: secp256k1Key = frostGroupPublicKeys.secp256k1;
+    $: void load(ed25519Key, secp256k1Key, ecdsaGroupPublicKey);
 </script>
 
 <div class="acct-picker">

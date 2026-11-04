@@ -10,7 +10,7 @@ import { PopupMessageHandler } from "../../../src/entrypoints/background/message
 
 describe("PopupMessageHandler getState", () => {
     it("omits the pending keystore JSON", async () => {
-        const state = { deviceId: "ext-a", pendingKeystoreJson: '{"key_package":"SECRET_SHARE"}', pendingKeystoreReady: true };
+        const state = { deviceId: "ext-a", pendingFrostShares: {ed25519:{keystoreJson:'{"key_package":"SECRET_SHARE"}'}}, pendingKeystoreReady: true };
         const handler = new PopupMessageHandler(
             { getState: () => ({ ...state }) } as any,
             {} as any, {} as any, {} as any, {} as any, {} as any,

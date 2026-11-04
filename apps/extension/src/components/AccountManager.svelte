@@ -10,21 +10,15 @@
     let currentAccount: Account | null = null;
     let accounts: Account[] = [];
     let showAccountSelector = false;
-    let showCreateAccount = false;
-    let newAccountName = '';
     let accountService: AccountService;
     
     onMount(async () => {
         accountService = AccountService.getInstance();
         await loadAccounts();
         
-        // Get current account from AccountService
-        currentAccount = accountService.getCurrentAccount();
-        
         // Listen for account changes
         accountService.onAccountChange((account) => {
-            currentAccount = account;
-            loadAccounts();
+            void loadAccounts();
         });
     });
     
@@ -32,15 +26,19 @@
         await accountService.ensureInitialized();
         accounts = accountService.getAccounts().filter(
             (account) =>
-                account.blockchain === blockchain ||
-                (isEvmChain(account.blockchain) && isEvmChain(blockchain)),
+                (account.type === 'hardware' || account.type === 'watch-only') && (
+                    account.blockchain === blockchain ||
+                    (isEvmChain(account.blockchain) && isEvmChain(blockchain))
+                ),
         );
+        currentAccount = accounts.find(account => account.id === accountService.getCurrentAccount()?.id) ?? null;
         console.log('[AccountManager] Loaded accounts:', accounts);
     }
     
+    $: if (accountService && blockchain) void loadAccounts();
+
     function toggleAccountSelector() {
         showAccountSelector = !showAccountSelector;
-        showCreateAccount = false;
     }
     
     async function selectAccount(accountId: string) {
@@ -49,32 +47,6 @@
             showAccountSelector = false;
         } catch (error) {
             console.error('[AccountManager] Error selecting account:', error);
-        }
-    }
-    
-    async function createNewAccount() {
-        if (!newAccountName.trim()) {
-            alert('Please enter an account name');
-            return;
-        }
-        
-        try {
-            // Create a new account session - this will trigger a new DKG
-            const newSession = await accountService.generateNewAccount(newAccountName, blockchain);
-            console.log('[AccountManager] Created new account session:', newSession);
-            
-            // Show message to user
-            alert(`New account "${newSession.name}" is being created. Please complete the DKG process with other participants.`);
-            
-            newAccountName = '';
-            showCreateAccount = false;
-            
-            // TODO: Trigger DKG session proposal UI
-            // For now, the user needs to manually propose a session with the new session ID
-            
-        } catch (error) {
-            console.error('[AccountManager] Error creating account:', error);
-            alert('Error creating account: ' + (error instanceof Error ? error.message : String(error)));
         }
     }
     
@@ -138,32 +110,9 @@
     {#if showAccountSelector}
         <div class="account-dropdown">
             <div class="dropdown-header">
-                <h3>My Accounts</h3>
-                <button
-                    class="icon-button"
-                    aria-label="Create new account"
-                    on:click={() => showCreateAccount = !showCreateAccount}
-                >
-                    <svg width="16" height="16" viewBox="0 0 16 16">
-                        <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" fill="none"/>
-                    </svg>
-                </button>
+                <h3>External accounts</h3>
             </div>
-            
-            {#if showCreateAccount}
-                <div class="create-account-form">
-                    <input
-                        type="text"
-                        placeholder="Account name"
-                        bind:value={newAccountName}
-                        on:keydown={(e) => e.key === 'Enter' && createNewAccount()}
-                    />
-                    <button class="create-button" on:click={createNewAccount}>
-                        Create
-                    </button>
-                </div>
-            {/if}
-            
+
             <div class="accounts-list">
                 {#each accounts as account}
                     <div
@@ -316,54 +265,6 @@
         font-size: 14px;
         font-weight: 700;
         color: var(--c-text);
-    }
-
-    .icon-button {
-        background: none;
-        border: none;
-        cursor: pointer;
-        padding: 4px;
-        border-radius: 8px;
-        color: var(--c-muted);
-        transition: background-color 0.2s;
-    }
-
-    .icon-button:hover {
-        background: var(--c-surface-2);
-        color: var(--c-text);
-    }
-
-    .create-account-form {
-        display: flex;
-        gap: 8px;
-        padding: 12px 16px;
-        border-bottom: 1px solid var(--c-line);
-    }
-
-    .create-account-form input {
-        flex: 1;
-        padding: 8px 12px;
-        border: 1px solid var(--c-line-strong);
-        border-radius: 8px;
-        font-size: 14px;
-        background: var(--c-surface);
-        color: var(--c-text);
-    }
-
-    .create-button {
-        padding: 8px 16px;
-        background: var(--c-primary);
-        color: var(--c-primary-fg);
-        border: none;
-        border-radius: 8px;
-        font-size: 14px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: filter 0.2s;
-    }
-
-    .create-button:hover {
-        filter: brightness(1.06);
     }
 
     .accounts-list {

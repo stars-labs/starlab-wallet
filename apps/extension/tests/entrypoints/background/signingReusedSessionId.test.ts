@@ -1,3 +1,4 @@
+import { unifiedCompletion } from "../../helpers/unifiedCompletion";
 /**
  * TUI warm signing REUSES the DKG's session id for the signing session.
  * Seen live (TUI proposer + extension + desktop, 2-of-3): after the DKG
@@ -27,7 +28,7 @@ function wire(extra: Record<string, unknown>) {
             total: 3,
             threshold: 2,
             coordination_type: "Network",
-            curve_type: "secp256k1",
+            curve_type: "unified",
             ...extra,
         },
     };
@@ -39,6 +40,7 @@ const dkgAnnounce = (participants: string[]) =>
 const signingAnnounce = () =>
     wire({
         session_type: "signing",
+        curve_type: "secp256k1-ecdsa",
         participants: COHORT,
         wallet_name: "w-account-0",
         group_public_key: "0372363713",
@@ -84,14 +86,7 @@ async function completeDkg(env: Awaited<ReturnType<typeof setup>>) {
         type: "dkgStateUpdate",
         state: DkgState.Complete,
     } as any);
-    env.stateManager.handleOffscreenStateUpdate({
-        type: "dkgComplete",
-        sessionId: X,
-        groupPublicKey: "0372363713",
-        threshold: 2,
-        total: 3,
-        participants: COHORT,
-    } as any);
+    env.stateManager.handleOffscreenStateUpdate(unifiedCompletion({sessionId: X, participants: COHORT}) as any);
 }
 
 const types = (sent: any[]) => sent.map((m) => m.type);

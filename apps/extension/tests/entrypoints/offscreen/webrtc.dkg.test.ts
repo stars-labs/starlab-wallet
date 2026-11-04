@@ -1,277 +1,90 @@
-import { describe, it, test, expect, beforeAll, beforeEach, afterEach, afterAll, jest } from 'bun:test';
-import { DkgState, WebRTCManager, MeshStatusType } from '../../../src/entrypoints/offscreen/webrtc';
-import {
-    initializeWasmIfNeeded,
-    isWasmInitialized,
-    createTestSessionInfo,
-    dummySend,
-    extractPackageFromMap,
-    createTestDkgInstances,
-    cleanupDkgInstances
-} from './test-utils';
-import { FrostDkgEd25519, FrostDkgSecp256k1 } from '@stars-labs/core-wasm';
+import { beforeAll, describe, it, expect } from 'bun:test';
+import init, { FrostDkgUnified } from '@stars-labs/core-wasm';
+import { WebRTCManager, DkgState } from '../../../src/entrypoints/offscreen/webrtc';
+import { UNIFIED_ROUND1, UNIFIED_ROUND2 } from '../../../src/entrypoints/offscreen/unifiedDkg';
 
-let originalConsoleLog: any;
-let originalConsoleError: any;
-let originalConsoleWarn: any;
-
-beforeAll(async () => {
-    await initializeWasmIfNeeded();
-    
-    // Suppress console output for cleaner test results
-    originalConsoleLog = console.log;
-    originalConsoleError = console.error;
-    originalConsoleWarn = console.warn;
-    
-    console.log = jest.fn();
-    console.error = jest.fn();
-    console.warn = jest.fn();
-});
-
-afterAll(() => {
-    // Restore console methods
-    console.log = originalConsoleLog;
-    console.error = originalConsoleError;
-    console.warn = originalConsoleWarn;
-});
-
-describe('WebRTCManager DKG Process', () => {
-    const sessionInfo = createTestSessionInfo();
-
-    it('should initialize DKG when conditions are met', async () => {
-        const manager = new WebRTCManager('a', dummySend);
-        manager.sessionInfo = sessionInfo as any;
-        (manager as any)._updateMeshStatus({ type: MeshStatusType.Ready });
-        (manager as any)._updateDkgState(DkgState.Idle);
-
-        if (!isWasmInitialized()) {
-            console.warn('⚠️ WASM not initialized, skipping DKG initialization test.');
-            return;
-        }
-
+beforeAll(async () => { await init(); (globalThis as any).FrostDkgUnified = FrostDkgUnified; });
+function manager(curve = 'unified') {
+    const manager = new WebRTCManager('a', () => {});
+    manager.sessionInfo = { session_id: 'dkg_test', proposer_id: 'a', participants: ['c','a','b'], accepted_devices: ['a','b','c'], threshold: 2, total: 3, curve_type: curve, session_type: 'dkg' } as any;
+    const frames: Array<{to: string; message: any}> = [];
+    manager.sendWebRTCAppMessage = (to, message) => frames.push({to, message});
+    return { manager, frames };
+}
+describe('unified wallet DKG lifecycle', () => {
+    it('initializes both curves with canonical identifiers and native JSON round1', async () => {
+        const {manager: m, frames} = manager();
         try {
-            // Directly create FROST DKG instance like the test expects
-            (manager as any).frostDkg = new FrostDkgEd25519();
-            (manager as any).participantIndex = 1;
-            (manager as any).frostDkg.init_dkg(1, 3, 2);
-
-            // Set the state manually
-            (manager as any)._updateDkgState(DkgState.Round1InProgress);
-
-            // The test should pass
-            expect(manager.dkgState).toBe(DkgState.Round1InProgress);
-            expect((manager as any).participantIndex).toBe(1);
-        } finally {
-            if ((manager as any).frostDkg) {
-                (manager as any).frostDkg.free();
+            expect(await m.initializeDkg('solana')).toBe(true);
+            expect(m.dkgState).toBe(DkgState.Round1InProgress);
+            expect(m.getDkgStatus().participantIndex).toBe(1);
+            expect(m.getDkgStatus().frostDkgInitialized).toBe(true);
+            expect(m.getDkgStatus().receivedRound1Packages).toEqual(['a']);
+            expect(frames.map(f => f.to)).toEqual(['b','c']);
+            for (const frame of frames) {
+                expect(frame.message.text.startsWith(UNIFIED_ROUND1)).toBe(true);
+                const round = JSON.parse(frame.message.text.slice(UNIFIED_ROUND1.length));
+                expect(round.ed25519).toMatch(/^[0-9a-f]+$/);
+                expect(round.secp256k1).toMatch(/^[0-9a-f]+$/);
             }
-        }
+            expect(await m.initializeDkg()).toBe(false);
+        } finally { m.resetDkgState(); }
     });
-
-    // Removed failing test: should handle Round 1 package reception and transition to Round 2
-
-    // Removed failing test: should handle Round 2 package reception and transition to finalization
-
-    it('should handle Ethereum secp256k1 DKG initialization', async () => {
-        if (!isWasmInitialized()) {
-            console.warn('⚠️ WASM not initialized, skipping secp256k1 DKG test.');
-            return;
-        }
-
-        const manager = new WebRTCManager('a', dummySend);
-        manager.sessionInfo = createTestSessionInfo() as any;
-
-        // Cast to any so assignments inside the expect arrow callback
-        // (line below) are visible to the later reads. TS doesn't
-        // propagate flow-analysis through closure boundaries, so the
-        // post-callback read would otherwise see the initial `null`
-        // type exclusively and narrow the truthy branch to `never`.
-        let frostDkgSecp: any = null;
-
+    it('rejects single-curve creation and a session cohort missing this device', async () => {
+        const legacy = manager('ed25519');
+        expect(await legacy.manager.initializeDkg()).toBe(false);
+        expect(legacy.frames).toEqual([]);
+        const current = manager();
+        current.manager.sessionInfo!.participants = ['b','c','d'];
+        expect(await current.manager.initializeDkg('solana')).toBe(false);
+        expect(current.manager.dkgState).toBe(DkgState.Failed);
+        expect(current.frames).toEqual([]);
+        current.manager.resetDkgState();
+    });
+    it('buffers early frames once and resets the prior ceremony rather than replaying it into another', async () => {
+        const {manager: m} = manager();
+        const peer = new FrostDkgUnified(); peer.init_dkg(2,3,2);
         try {
-            // Test Secp256k1 DKG creation
-            expect(() => {
-                frostDkgSecp = new FrostDkgSecp256k1();
-            }).not.toThrow();
-
-            (manager as any).frostDkg = frostDkgSecp;
-            (manager as any).participantIndex = 1;
-            (manager as any)._updateDkgState(DkgState.Idle);
-
-            // Initialize DKG
-            if (frostDkgSecp && frostDkgSecp.init_dkg) {
-                frostDkgSecp.init_dkg(1, 3, 2);
-                expect(manager.dkgState).toBe(DkgState.Idle);
-            }
-
-        } finally {
-            if (frostDkgSecp) {
-                frostDkgSecp.free();
-            }
-        }
+            const text = UNIFIED_ROUND1 + peer.generate_round1();
+            for (let i=0;i<5;i++) m.handleWebRTCAppMessage('b', {webrtc_msg_type:'SimpleMessage', text} as any);
+            expect((m as any).bufferedUnifiedFrames).toHaveLength(1);
+            expect(await m.initializeDkg()).toBe(true);
+            expect(m.getDkgStatus().receivedRound1Packages).toEqual(['a','b']);
+            m.resetDkgState();
+            expect(m.getDkgStatus().state).toBe(DkgState.Idle);
+            expect(m.getDkgStatus().frostDkgInitialized).toBe(false);
+            expect((m as any).bufferedUnifiedFrames).toEqual([]);
+        } finally { m.resetDkgState(); peer.free(); }
     });
-
-    it('should complete full DKG process end-to-end', async () => {
-        if (!isWasmInitialized()) {
-            console.warn('⚠️ WASM not initialized, skipping end-to-end DKG test.');
-            return;
-        }
-
-        // Create three managers for a complete 3-peer DKG simulation
-        const managerA = new WebRTCManager('a', dummySend);
-        const managerB = new WebRTCManager('b', dummySend);
-        const managerC = new WebRTCManager('c', dummySend);
-
-        const sessionInfo = createTestSessionInfo();
-
-        let frostDkgA: FrostDkgEd25519 | null = null;
-        let frostDkgB: FrostDkgEd25519 | null = null;
-        let frostDkgC: FrostDkgEd25519 | null = null;
-
+    it('rejects malformed and spoofed round2 without logging or forwarding secret material', async () => {
+        const {manager: m} = manager(); const forwarded: unknown[] = [], logs: string[] = [];
+        m.onWebRTCAppMessage = (_peer, message) => forwarded.push(message);
+        m.onLog = message => logs.push(message);
         try {
-            // Set up session info for all managers
-            [managerA, managerB, managerC].forEach(manager => {
-                manager.sessionInfo = sessionInfo as any;
-                (manager as any)._updateMeshStatus({ type: MeshStatusType.Ready });
-                (manager as any)._updateDkgState(DkgState.Idle);
-            });
-
-            // Create and assign FROST DKG instances
-            const dkgInstances = await createTestDkgInstances(false);
-            frostDkgA = dkgInstances.frostDkgA as FrostDkgEd25519;
-            frostDkgB = dkgInstances.frostDkgB as FrostDkgEd25519;
-            frostDkgC = dkgInstances.frostDkgC as FrostDkgEd25519;
-
-            (managerA as any).frostDkg = frostDkgA;
-            (managerB as any).frostDkg = frostDkgB;
-            (managerC as any).frostDkg = frostDkgC;
-            (managerA as any).participantIndex = 1;
-            (managerB as any).participantIndex = 2;
-            (managerC as any).participantIndex = 3;
-
-            // === ROUND 1: COMMITMENT PHASE ===
-            const round1PackageA_hex = frostDkgA.generate_round1();
-            const round1PackageB_hex = frostDkgB.generate_round1();
-            const round1PackageC_hex = frostDkgC.generate_round1();
-
-            // Cross-exchange Round 1 packages
-            frostDkgA.add_round1_package(2, round1PackageB_hex);
-            frostDkgA.add_round1_package(3, round1PackageC_hex);
-            frostDkgB.add_round1_package(1, round1PackageA_hex);
-            frostDkgB.add_round1_package(3, round1PackageC_hex);
-            frostDkgC.add_round1_package(1, round1PackageA_hex);
-            frostDkgC.add_round1_package(2, round1PackageB_hex);
-
-            // Verify all can start Round 2
-            expect(frostDkgA.can_start_round2()).toBe(true);
-            expect(frostDkgB.can_start_round2()).toBe(true);
-            expect(frostDkgC.can_start_round2()).toBe(true);
-
-            // === ROUND 2: SECRET SHARE PHASE ===
-            const round2PackageA_map_hex = frostDkgA.generate_round2();
-            const round2PackageB_map_hex = frostDkgB.generate_round2();
-            const round2PackageC_map_hex = frostDkgC.generate_round2();
-
-            // Extract individual packages for each participant
-            const r2A_for_B = extractPackageFromMap(2, round2PackageA_map_hex, false);
-            const r2A_for_C = extractPackageFromMap(3, round2PackageA_map_hex, false);
-            const r2B_for_A = extractPackageFromMap(1, round2PackageB_map_hex, false);
-            const r2B_for_C = extractPackageFromMap(3, round2PackageB_map_hex, false);
-            const r2C_for_A = extractPackageFromMap(1, round2PackageC_map_hex, false);
-            const r2C_for_B = extractPackageFromMap(2, round2PackageC_map_hex, false);
-
-            // Exchange Round 2 packages
-            frostDkgA.add_round2_package(2, r2B_for_A);
-            frostDkgA.add_round2_package(3, r2C_for_A);
-            frostDkgB.add_round2_package(1, r2A_for_B);
-            frostDkgB.add_round2_package(3, r2C_for_B);
-            frostDkgC.add_round2_package(1, r2A_for_C);
-            frostDkgC.add_round2_package(2, r2B_for_C);
-
-            // Verify all can finalize
-            expect(frostDkgA.can_finalize()).toBe(true);
-            expect(frostDkgB.can_finalize()).toBe(true);
-            expect(frostDkgC.can_finalize()).toBe(true);
-
-            // === FINALIZATION PHASE ===
-            // finalize_dkg() returns the full per-participant keystore
-            // JSON (different participant_index/signing_share per peer),
-            // so comparing those directly would always fail. Compare the
-            // shared verifying_key via get_group_public_key() — that IS
-            // identical across all threshold participants by construction.
-            frostDkgA.finalize_dkg();
-            frostDkgB.finalize_dkg();
-            frostDkgC.finalize_dkg();
-            const groupPublicKeyA = frostDkgA.get_group_public_key();
-            const groupPublicKeyB = frostDkgB.get_group_public_key();
-            const groupPublicKeyC = frostDkgC.get_group_public_key();
-
-            // Verify all participants generated identical group public keys
-            expect(groupPublicKeyA).toBe(groupPublicKeyB);
-            expect(groupPublicKeyB).toBe(groupPublicKeyC);
-
-            // Update manager states
-            (managerA as any).groupPublicKey = groupPublicKeyA;
-            (managerB as any).groupPublicKey = groupPublicKeyB;
-            (managerC as any).groupPublicKey = groupPublicKeyC;
-            (managerA as any)._updateDkgState(DkgState.Complete);
-            (managerB as any)._updateDkgState(DkgState.Complete);
-            (managerC as any)._updateDkgState(DkgState.Complete);
-
-            // Verify final state
-            expect(managerA.dkgState).toBe(DkgState.Complete);
-            expect(managerB.dkgState).toBe(DkgState.Complete);
-            expect(managerC.dkgState).toBe(DkgState.Complete);
-
-        } finally {
-            cleanupDkgInstances(frostDkgA, frostDkgB, frostDkgC);
-        }
+            await m.initializeDkg();
+            m.handleWebRTCAppMessage('b', {webrtc_msg_type:'SimpleMessage', text:UNIFIED_ROUND2 + JSON.stringify({from_index:3,ed25519:{1:'private-test-share'},secp256k1:{1:'private-test-share'}})} as any);
+            expect(m.dkgState).toBe(DkgState.Failed);
+            expect(forwarded).toEqual([]);
+            expect(logs.join('\n')).not.toContain('private-test-share');
+        } finally { m.resetDkgState(); }
     });
-
-    it('should reset DKG state properly', () => {
-        const manager = new WebRTCManager('a', dummySend);
-        manager.sessionInfo = sessionInfo as any;
-        (manager as any)._updateDkgState(DkgState.Round2InProgress);
-
-        // Set up some DKG state
-        if (isWasmInitialized()) {
-            try {
-                (manager as any).frostDkg = new FrostDkgEd25519();
-            } catch (error) {
-                console.warn('WASM DKG creation failed in test, using mock');
-                (manager as any).frostDkg = { free: () => { } };
-            }
-        } else {
-            (manager as any).frostDkg = { free: () => { } };
-        }
-
-        (manager as any).participantIndex = 1;
-        (manager as any).receivedRound1Packages.add('a');
-        (manager as any).receivedRound2Packages.add('a');
-
-        (manager as any)._resetDkgState();
-
-        expect((manager as any).frostDkg).toBe(null);
-        expect((manager as any).participantIndex).toBe(null);
-        expect((manager as any).receivedRound1Packages.size).toBe(0);
-        expect((manager as any).receivedRound2Packages.size).toBe(0);
+    it('cannot complete a cancelled same-session DKG after waiting for primes', async () => {
+        const {manager: m} = manager(); let ready!: (value: string) => void; let ran = false; const results: unknown[] = [];
+        m.getEcdsaPrimes = () => new Promise(resolve => { ready = resolve; });
+        (m.ecdsa as any).runDkg = async () => { ran = true; throw new Error('must not start'); };
+        m.onDkgComplete = result => results.push(result);
+        (m as any)._updateDkgState(DkgState.Finalizing);
+        const pending = (m as any)._runEcdsaDkg({} as any, 'dkg_test', (m as any).dkgEpoch);
+        m.resetDkgState(); ready('fixture'); await pending;
+        expect(ran).toBe(false); expect(results).toEqual([]); expect(m.dkgState).toBe(DkgState.Idle);
     });
-
-    it('should get DKG status correctly', () => {
-        const manager = new WebRTCManager('a', dummySend);
-        manager.sessionInfo = sessionInfo as any;
-        (manager as any)._updateDkgState(DkgState.Round1InProgress);
-        (manager as any).participantIndex = 1;
-        (manager as any).receivedRound1Packages.add('a');
-        (manager as any).frostDkg = {};
-
-        const status = manager.getDkgStatus();
-
-        expect(status.state).toBe(DkgState.Round1InProgress);
-        expect(status.stateName).toBe('Round1InProgress');
-        expect(status.participantIndex).toBe(1);
-        expect(status.sessionInfo?.session_id).toBe('test-session');
-        expect(status.receivedRound1Packages).toEqual(['a']);
-        expect(status.frostDkgInitialized).toBe(true);
+    it('reports an ECDSA worker failure without publishing a partial wallet', async () => {
+        const {manager: m} = manager(); const results: unknown[] = [];
+        m.getEcdsaPrimes = async () => 'fixture';
+        (m.ecdsa as any).runDkg = async () => { throw new Error('peer vanished'); };
+        m.onDkgComplete = result => results.push(result);
+        (m as any)._updateDkgState(DkgState.Finalizing);
+        await (m as any)._runEcdsaDkg({} as any, 'dkg_test', (m as any).dkgEpoch);
+        expect(m.dkgState).toBe(DkgState.Failed); expect(results).toEqual([]);
     });
 });

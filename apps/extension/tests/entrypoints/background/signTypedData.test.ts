@@ -26,6 +26,7 @@ mock.module("../../../src/services/keystoreManager", () => ({
                     name: "Treasury",
                     address: TEST_ADDR,
                     blockchain: "ethereum",
+                    chainAddresses: {ethereum:TEST_ADDR},
                 },
             ],
             getKeyShareData: () => ({

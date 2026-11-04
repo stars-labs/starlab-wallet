@@ -2,7 +2,7 @@
 // threshold signing over a signal server + shared room. See README.md.
 import { test, expect } from "./fixtures";
 import { signMessage, extSignature } from "./extension-actions";
-import { setupExtension, extensionInitiatedDkg, extensionEthereumAddress, specTimeout, CURVE, type Env } from "./scenario";
+import { setupExtension, extensionInitiatedDkg, extensionEthereumAddress, specTimeout, type Env } from "./scenario";
 import { inNetns, blockUdp, unblockUdp } from "./netns";
 import { parseTransaction, recoverMessageAddress, recoverTransactionAddress } from "viem";
 
@@ -23,19 +23,15 @@ test("ext + 2 CLI: DKG group keys agree, then a signature verifies", async ({ pa
     // …and the extension took part in (and holds) that same signature —
     // two CLI peers alone already meet a 2-of-3 threshold.
     expect(await extSignature(page)).toBe(sigs[0].sig.replace(/^0x/, "").toLowerCase());
-    if (CURVE !== "ed25519") {
-      // Threshold ECDSA: an EIP-191 signature ecrecovers to the wallet's
-      // Ethereum address (what an EOA / dApp checks).
-      const recovered = await recoverMessageAddress({ message: "interop-hello", signature: sigs[0].sig as `0x${string}` });
-      expect(recovered.toLowerCase()).toBe(await extensionEthereumAddress(page));
-    }
+    // Independently recover the Ethereum account from its EIP-191 signature.
+    const recovered = await recoverMessageAddress({ message: "interop-hello", signature: sigs[0].sig as `0x${string}` });
+    expect(recovered.toLowerCase()).toBe(await extensionEthereumAddress(page));
   } finally {
     env?.cleanup();
   }
 });
 
 test("extension Send: an EIP-1559 transaction signed by the ECDSA key recovers to the wallet's address", async ({ page, context, extensionId }) => {
-  test.skip(CURVE === "ed25519", "Ethereum accounts are secp256k1 wallets");
   let env: Env | undefined;
   try {
     env = await setupExtension(page, context, extensionId);
@@ -124,7 +120,7 @@ test("extension-proposed signing: the announce lists the wallet's cohort and acc
     expect(info.group_public_key).toMatch(/^[0-9a-f]+$/);
     expect(info.group_public_key).not.toBe(rootKey);
     // Ethereum signs with the threshold-ECDSA key (engine parity).
-    expect(info.curve_type).toBe(CURVE === "ed25519" ? "ed25519" : "secp256k1-ecdsa");
+    expect(info.curve_type).toBe("secp256k1-ecdsa");
     expect(Object.keys(info).sort()).toEqual(
       [
         "session_id", "total", "threshold", "session_type", "proposer_id", "participants",

@@ -98,6 +98,32 @@ describe('AccountService', () => {
         });
     });
 
+    describe('External-only default selection', () => {
+        it('does not synthesize an MPC account or request a DKG address when empty', async () => {
+            const send = mock(async () => ({success:true,data:{ethereumAddress:'0x1111111111111111111111111111111111111111'}}));
+            const previous = chrome.runtime;
+            (chrome as any).runtime = {sendMessage:send};
+            try {
+                expect(await accountService.ensureDefaultAccount()).toBeNull();
+                expect(accountService.getAccounts()).toEqual([]);
+                expect(send).not.toHaveBeenCalled();
+            } finally { (chrome as any).runtime = previous; }
+        });
+        it('selects an existing external account without promoting an old MPC entry', async () => {
+            await accountService.addAccount(createTestAccount({id:'old-mpc',name:'Old',address:'0x1111111111111111111111111111111111111111',blockchain:'ethereum',type:'frost'}));
+            await accountService.addAccount(createTestAccount({id:'ledger',name:'Ledger',address:'0x2222222222222222222222222222222222222222',blockchain:'ethereum',type:'hardware'}));
+            await accountService.setCurrentAccount('old-mpc');
+            expect((await accountService.ensureDefaultAccount())?.id).toBe('ledger');
+            expect(accountService.getCurrentAccount()?.id).toBe('ledger');
+        });
+        it('clears a non-external selection when no external account exists', async () => {
+            await accountService.addAccount(createTestAccount({id:'old-mpc',name:'Old',address:'0x1111111111111111111111111111111111111111',blockchain:'ethereum',type:'frost'}));
+            await accountService.setCurrentAccount('old-mpc');
+            expect(await accountService.ensureDefaultAccount()).toBeNull();
+            expect(accountService.getCurrentAccount()).toBeNull();
+        });
+    });
+
     describe('Account Management', () => {
         it('should initialize with empty accounts list', async () => {
             const accounts = await accountService.getAccounts();

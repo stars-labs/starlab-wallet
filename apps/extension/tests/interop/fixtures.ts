@@ -10,7 +10,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const EXT_PATH = path.resolve(HERE, "../../.output/chrome-mv3");
+const EXT_PATH = process.env.STARLAB_EXTENSION_DIR ?? path.resolve(HERE, "../../.output/chrome-mv3");
 
 export type ExtFixtures = {
   context: BrowserContext;

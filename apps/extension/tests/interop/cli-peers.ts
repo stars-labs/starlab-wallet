@@ -18,18 +18,21 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // checkout of this repo. Override with STARLAB_MPC_DIR.
 const MPC_DIR = process.env.STARLAB_MPC_DIR ?? path.resolve(HERE, "../../../../../starlab-mpc");
 const DRIVER = path.join(MPC_DIR, "scripts/demo/serve_autojoin.py");
-export const CLI_BIN = path.join(MPC_DIR, "target/release/starlab-cli");
-const SIGNAL_BIN = path.join(MPC_DIR, "target/release/starlab-signal-server");
+export const CLI_BIN = process.env.STARLAB_CLI_BIN ?? path.join(MPC_DIR, "target/release/starlab-cli");
+const SIGNAL_BIN = process.env.STARLAB_SIGNAL_BIN ?? path.join(MPC_DIR, "target/release/starlab-signal-server");
 
 export type DkgResult = { wallet: string; address: string; groupKey: string };
 
 export type Peer = {
   deviceId: string;
   proc: ChildProcess;
+  keystore: string;
   /** Resolves when this peer reports DKG complete. */
   dkg: Promise<DkgResult>;
   /** Resolves when this peer reports a completed signature. */
   signature: Promise<{ hash: string; sig: string }>;
+  /** Stop the node but retain its encrypted share for a fresh CLI process. */
+  stop(): Promise<void>;
   kill(): void;
 };
 
@@ -84,7 +87,6 @@ export function startPeers(opts: {
   count: number;
   signal: string;
   room: string;
-  curve: string;
   password: string;
 }): Peer[] {
   ensurePrereqs();
@@ -104,8 +106,8 @@ export function startPeers(opts: {
         "--keystore", keystore,
         "--signal", opts.signal,
         "--room", opts.room,
-        "--curve", opts.curve,
-        "--cli", opts.curve === "ed25519" ? CLI_BIN : cliWithTestPrimes(i),
+        "--curve", "unified",
+        "--cli", cliWithTestPrimes(i),
         "--pw-var", pwVar,
       ],
       { env: { ...process.env, [pwVar]: opts.password }, stdio: ["ignore", "pipe", "pipe"] },
@@ -138,8 +140,17 @@ export function startPeers(opts: {
     const peer: Peer = {
       deviceId,
       proc,
+      keystore,
       dkg,
       signature,
+      async stop() {
+        if (proc.exitCode !== null || proc.signalCode !== null) return;
+        await new Promise<void>((resolve, reject) => {
+          proc.once("exit", () => resolve());
+          proc.once("error", reject);
+          proc.kill("SIGINT");
+        });
+      },
       kill() {
         proc.kill("SIGTERM");
         try { fs.rmSync(keystore, { recursive: true, force: true }); } catch { /* best effort */ }
@@ -251,4 +262,18 @@ process.once("exit", () => live.forEach((p) => p.kill()));
 
 export function killPeers(peers: Peer[]): void {
   for (const p of peers) p.kill();
+}
+
+/** Public encrypted-file headers only: never decrypt or log a private share. */
+export function nativeGroupKeys(keystore: string, deviceId: string, walletId: string) {
+  const key = (curve: string): string => {
+    const file = path.join(keystore, deviceId, curve, `${walletId}.json`);
+    const value = JSON.parse(fs.readFileSync(file, "utf8"));
+    const group = value.metadata?.group_public_key;
+    if (typeof group !== "string" || !/^[0-9a-f]+$/i.test(group)) {
+      throw new Error(`Missing public group key for ${curve}`);
+    }
+    return group.toLowerCase();
+  };
+  return { ed25519: key("ed25519"), secp256k1: key("secp256k1"), ecdsa: key("secp256k1-ecdsa") };
 }

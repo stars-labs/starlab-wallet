@@ -8,7 +8,7 @@
 // which specific file contains each type.
 //
 // Usage Example:
-// import { AppState, SessionInfo, DkgState } from '../types';
+// import { AppState, SessionInfo, DkgState } from '../types.js';
 // 
 // Key Concepts for Junior Developers:
 // - Index File: A common pattern to re-export types from multiple files
@@ -26,7 +26,7 @@ export type {
     ProtocolBlockchain,
     SupportedChain,
     WalletCurve,
-} from './appstate';
+} from './appstate.js';
 export {
     CHAIN_METADATA,
     CURVE_COMPATIBLE_CHAINS,
@@ -44,7 +44,7 @@ export {
     isKnownChain,
     isSupportedChain,
     normalizeDerivedAddressChain,
-} from './appstate';
+} from './appstate.js';
 // Note: Constants are exported for components that need them
 
 // Session Management
@@ -54,21 +54,21 @@ export type {
     SessionResponse,
     SessionValidation,
     SessionValidator
-} from './session';
+} from './session.js';
 
 // DKG (Distributed Key Generation)
-export { DkgState } from './dkg';
+export { DkgState } from './dkg.js';
 export type {
     DkgPackageInfo,
     DkgStatus,
     DkgEvent
-} from './dkg';
+} from './dkg.js';
 
 // Mesh Network
 export type {
     MeshStatus
-} from './mesh';
-export { MeshStatusType } from './mesh';
+} from './mesh.js';
+export { MeshStatusType } from './mesh.js';
 
 // WebRTC Communication
 export type {
@@ -76,7 +76,7 @@ export type {
     DataChannelInfo,
     WebRTCConnectionStatus,
     WebRTCEvent
-} from './webrtc';
+} from './webrtc.js';
 
 // WebSocket Signaling
 export type {
@@ -87,7 +87,7 @@ export type {
     ServerMsg,
     ClientMsg,
     WebSocketEvent
-} from './websocket';
+} from './websocket.js';
 
 // Account Management
 export type {
@@ -95,14 +95,14 @@ export type {
     AccountBalance,
     AccountStorage,
     AccountEvent
-} from './account';
+} from './account.js';
 
 // Network Configuration
 export type {
     NetworkConfig,
     NetworkEvent,
     Chain
-} from './network';
+} from './network.js';
 
 // Keystore Types
 export type {
@@ -114,9 +114,8 @@ export type {
     CLIKeystoreBackup,
     WalletFile,
     BlockchainInfo,
-    NewAccountSession,
     WalletMetadata
-} from './keystore';
+} from './keystore.js';
 
 // Message Types (commonly used for inter-component communication)
 export type {
@@ -138,16 +137,15 @@ export type {
     OffscreenMessage,
     BackgroundMessage,
     PopupMessage
-} from './messages';
+} from './messages.js';
 
 // Message validation helpers
 export {
     validateMessage,
-    validateSessionProposal,
     validateSessionAcceptance,
     isRpcMessage,
     isAccountManagement,
     isNetworkManagement,
     isUIRequest,
     MESSAGE_TYPES
-} from './messages';
+} from './messages.js';

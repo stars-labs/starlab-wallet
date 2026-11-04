@@ -7,7 +7,7 @@
  * class on <html>. The same class drives both the Tailwind `dark:`
  * variant and the CSS-variable palette in app.css.
  *
- * index.html runs an inline copy of {@link resolveDark} before the
+ * public/theme-init.js runs a CSP-compatible external copy of {@link resolveDark} before the
  * bundle loads to avoid a flash of the wrong theme.
  */
 import { writable } from "svelte/store";

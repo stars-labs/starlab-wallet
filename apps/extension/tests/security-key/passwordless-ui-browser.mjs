@@ -28,8 +28,23 @@ try {
     evidence.browser = await context.browser().version();
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
     const id = new URL(worker.url()).hostname;
+    // Observe browser CSP diagnostics before any extension document executes.
+    const cspErrors = [];
+    context.on('console', message => {
+        if (/content security policy|violates.*script-src/i.test(message.text())) cspErrors.push(message.text());
+    });
     popup = await context.newPage();
     await popup.goto(`chrome-extension://${id}/popup.html`);
+    assert.deepEqual(cspErrors, [], 'Extension startup must not violate CSP');
+    evidence.checks.noStartupCspViolations = true;
+    for (const [mode, os, dark] of [['dark', 'light', true], ['light', 'dark', false], ['system', 'dark', true], ['system', 'light', false]]) {
+        await popup.emulateMedia({ colorScheme: os });
+        await popup.evaluate(mode => localStorage.setItem('starlab_theme', mode), mode);
+        await popup.reload();
+        await expect(popup.getByRole('button', { name: 'Get started', exact: true })).toBeVisible();
+        assert.equal(await popup.evaluate(() => document.documentElement.classList.contains('dark')), dark);
+    }
+    evidence.checks.savedAndSystemTheme = true;
     const status = () => popup.evaluate(async () => (await chrome.runtime.sendMessage({ type: 'getKeystoreStatus' }))?.status);
     await expect(popup.getByRole('button', { name: 'Get started', exact: true })).toBeVisible({ timeout: 20_000 });
     await popup.getByRole('button', { name: 'Get started', exact: true }).click();
@@ -120,6 +135,8 @@ try {
     await expect(keyPage.getByRole('heading', { name: 'Wallet unlocked', exact: true })).toBeVisible({ timeout: 20_000 });
     evidence.checks.retryDoesNotCloseReusedTab = true;
     evidence.checks.realUiRetryUnlock = true;
+    assert.deepEqual(cspErrors, [], 'Extension pages must not violate CSP');
+    evidence.checks.noCspViolations = true;
     await fs.writeFile(path.join(output, 'evidence.json'), JSON.stringify(evidence, null, 2));
     console.log(JSON.stringify(evidence, null, 2));
 } catch (error) {

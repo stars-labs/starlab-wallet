@@ -6,10 +6,15 @@
  * constructor; tests stub it by planting a fake on the private
  * static `instance` slot before the handlers' dynamic import runs.
  */
-import { describe, it, expect, beforeEach, afterEach, jest } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, jest, mock } from "bun:test";
 import { PopupMessageHandler } from "../../../src/entrypoints/background/messageHandlers";
 import { StateManager } from "../../../src/entrypoints/background/stateManager";
-import { KeystoreManager } from "../../../src/services/keystoreManager";
+// Other suites replace this module process-wide with partial RPC fakes.
+// Load a separate real singleton class and register it for the handlers' dynamic
+// imports, so planting its instance works regardless of test-file ordering.
+const realKeystoreModule = "../../../src/services/keystoreManager.ts?reshare-handlers";
+const { KeystoreManager } = (await import(realKeystoreModule)) as typeof import("../../../src/services/keystoreManager");
+mock.module("../../../src/services/keystoreManager", () => ({ KeystoreManager }));
 
 function plantKeystoreStub(overrides: Partial<Record<string, any>> = {}) {
     const stub: any = {

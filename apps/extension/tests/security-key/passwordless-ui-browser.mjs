@@ -105,6 +105,21 @@ try {
 
     // An already-open app observes the canonical background session event.
     await expect(popup.getByRole('button', { name: 'Lock wallet', exact: true })).toBeVisible();
+    const onboarding = popup.getByTestId('onboarding');
+    await expect(onboarding).toBeVisible();
+    await expect(popup.locator('.wallet-tools button').filter({ hasText: 'Create wallet' })).toHaveCount(0);
+    await onboarding.getByRole('button', { name: 'Continue', exact: true }).click();
+    await onboarding.getByRole('button', { name: 'Generate', exact: true }).click();
+    await onboarding.getByRole('button', { name: 'Save room & continue', exact: true }).click();
+    await expect(popup.getByRole('button', { name: 'Create wallet', exact: true })).toHaveCount(1);
+    await expect(popup.getByRole('button', { name: 'Open the create form', exact: true })).toHaveCount(0);
+    await popup.screenshot({ animations: 'disabled', path: path.join(output, 'onboarding-one-create-action.png') });
+    evidence.checks.singleCreateActionDuringOnboarding = true;
+    await onboarding.getByRole('button', { name: 'Create wallet', exact: true }).click();
+    await expect(onboarding).toHaveCount(0);
+    await popup.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(popup.locator('.wallet-tools button').filter({ hasText: 'Create wallet' })).toHaveCount(1);
+    evidence.checks.createToolReturnsAfterOnboarding = true;
     await popup.getByRole('button', { name: 'Lock wallet', exact: true }).click();
     await expect.poll(async () => (await status()).locked).toBe(true);
     await popup.getByRole('button', { name: 'Unlock wallet', exact: true }).click();

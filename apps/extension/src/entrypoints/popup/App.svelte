@@ -2342,7 +2342,8 @@
 
         <!-- First-run onboarding (#26): guided create-or-join wizard, shown
              until this profile has a wallet (or the user dismisses it). -->
-        {#if showAccountSetup || ((keystoreStatus.wallets?.length ?? 0) === 0 && !hasExternalAccounts && !showCreateWallet && !onboardingDismissed)}
+        {@const onboardingVisible = showAccountSetup || ((keystoreStatus.wallets?.length ?? 0) === 0 && !hasExternalAccounts && !showCreateWallet && !onboardingDismissed)}
+        {#if onboardingVisible}
             <Onboarding
                 wsConnected={appState.wsConnected}
                 on:create={() => { showAccountSetup = false; showCreateWallet = true; }}
@@ -2363,8 +2364,8 @@
              post-DKG `dkgAddress` fetch is one-shot and racy, and a saved
              wallet reloaded from the keystore never sets it. -->
         {@const canCreate =
-            !appState.sessionInfo ||
-            appState.dkgState === DkgState.Complete}
+            !onboardingVisible && !showCreateWallet &&
+            (!appState.sessionInfo || appState.dkgState === DkgState.Complete)}
         {@const canSign =
             keystoreStatus.initialized &&
             !keystoreStatus.locked &&

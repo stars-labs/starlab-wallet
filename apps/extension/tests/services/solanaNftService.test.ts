@@ -4,7 +4,7 @@
  * decoding (null-padded strings), and the full fetch pipeline over a mocked
  * JSON-RPC with ipfs normalization + per-mint failure tolerance.
  */
-import { describe, it, expect, jest } from "bun:test";
+import { describe, it, expect, jest, beforeEach, afterEach } from "bun:test";
 import {
   discoverSolanaNftMints,
   metadataPda,
@@ -14,6 +14,12 @@ import {
   makeSolanaRpc,
   SPL_TOKEN_PROGRAM,
 } from "../../src/services/solanaNftService";
+
+// web3.js v3 derives PDAs through WebCrypto; the preload's empty digest is a mock.
+import { REAL_WEBCRYPTO } from "../setup-bun";
+const previousCrypto = globalThis.crypto;
+beforeEach(() => { (globalThis as any).crypto = REAL_WEBCRYPTO; });
+afterEach(() => { (globalThis as any).crypto = previousCrypto; });
 
 const OWNER = "7Np41oeYqPefeNQEHSv1UDhYrehxin3NStELsSKCT4K2";
 const MINT = "So11111111111111111111111111111111111111112"; // wSOL

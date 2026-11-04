@@ -8,10 +8,13 @@ account management, backups, and signing approvals.
 
 ## Install a development build
 
-Use a current Chromium browser. Bun is required to build from source:
+Use a current Chromium browser and Bun 1.4.4 (the version recorded in
+`packageManager`). Build the shared types before running WXT installation scripts:
 
 ```bash
-bun install --frozen-lockfile
+bun install --frozen-lockfile --ignore-scripts
+bun run build:types
+(cd apps/extension && bun run postinstall)
 bun run check
 bun run build
 ```

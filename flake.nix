@@ -20,7 +20,7 @@
             # no Rust toolchain or graphics libs needed to build it.
             nativeBuildInputs = with pkgs; [
               bun
-              nodejs
+              nodejs_26
             ];
             shellHook = ''
               echo "🦊 Starlab Wallet dev shell (WXT + Svelte + FROST WASM)"

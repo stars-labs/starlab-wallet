@@ -80,7 +80,7 @@ export async function discoverSolanaNftMints(
 export async function metadataPda(mint: string): Promise<string> {
   const { PublicKey } = await import("@solana/web3.js");
   const program = new PublicKey(METAPLEX_METADATA_PROGRAM);
-  const [pda] = PublicKey.findProgramAddressSync(
+  const [pda] = await PublicKey.findProgramAddress(
     [new TextEncoder().encode("metadata"), program.toBytes(), new PublicKey(mint).toBytes()],
     program,
   );

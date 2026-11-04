@@ -47,9 +47,23 @@ try {
     evidence.checks.savedAndSystemTheme = true;
     const status = () => popup.evaluate(async () => (await chrome.runtime.sendMessage({ type: 'getKeystoreStatus' }))?.status);
     await expect(popup.getByRole('button', { name: 'Get started', exact: true })).toBeVisible({ timeout: 20_000 });
+    await popup.setViewportSize({ width: 380, height: 600 });
     await popup.getByRole('button', { name: 'Get started', exact: true }).click();
     await expect(popup.getByRole('button', { name: 'Continue with YubiKey', exact: true })).toBeVisible();
     await expect(popup.locator('input[type="password"]')).toHaveCount(0);
+    for (const height of [400, 600]) {
+        await popup.setViewportSize({ width: 380, height });
+        for (const method of ['Password', 'YubiKey']) {
+            await popup.getByRole('button', { name: method === 'Password' ? /^Password$/ : /^YubiKey/ }).click();
+            assert.equal(await popup.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'No horizontal overflow');
+            const actions = popup.locator('.auth-actions');
+            const box = await actions.boundingBox();
+            assert.ok(box && box.y >= 0 && box.y + box.height <= height, `${method} actions must fit ${height}px viewport`);
+            await expect(actions.getByRole('button', { name: 'Cancel', exact: true })).toBeInViewport({ ratio: 1 });
+            await popup.screenshot({ animations: 'disabled', path: path.join(output, `create-${method}-${height}.png`) });
+        }
+    }
+    evidence.checks.createActionsVisibleAt400And600px = true;
     await popup.screenshot({ animations: 'disabled', path: path.join(output, '01-create-method.png') });
     const opened = context.waitForEvent('page');
     await popup.getByRole('button', { name: 'Continue with YubiKey', exact: true }).click();

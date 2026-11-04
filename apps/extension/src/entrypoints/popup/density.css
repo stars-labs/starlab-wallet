@@ -1,5 +1,7 @@
 /* Compact layout preserves type sizes, interaction targets and material layers. */
-body, .wallet-main { min-height: 0; }
+body { min-height: 600px; max-width:100%; }
+body:has(.auth-panel) { overflow:hidden; }
+.wallet-main { min-height: 0; }
 .wallet-header { padding: 6px 12px; }
 .wallet-content { display:flex; flex-direction:column; gap:10px; padding:12px; }
 .wallet-content > *, .wallet-settings > * { margin-block:0; min-width:0; }

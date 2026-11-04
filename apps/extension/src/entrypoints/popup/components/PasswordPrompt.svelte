@@ -89,7 +89,8 @@
     tabindex="-1"
     on:keydown={handleKeydown}
 >
-    <div class="modal-panel">
+    <div class="modal-panel auth-panel">
+        <div class="auth-content">
         <div id="password-prompt-title"><FeatureHeader {title} icon="lock" /></div>
         <p class="mt-1 text-xs text-muted">{message}</p>
 
@@ -169,7 +170,8 @@
             <div class="mt-3 alert alert-danger text-xs">{error}</div>
         {/if}
 
-        <div class="mt-5 flex gap-2">
+        </div>
+        <div class="auth-actions mt-5 flex gap-2">
             <Button
                 block
                 on:click={() => {
@@ -188,6 +190,10 @@
     </div>
 </div>
 <style>
+    .auth-panel { display:flex; flex-direction:column; max-height:calc(100dvh - 32px); overflow:hidden; }
+    .auth-content { min-height:0; overflow-y:auto; padding:2px; }
+    .auth-actions { flex-shrink:0; }
+
     .method-choice { display:flex; flex-direction:column; justify-content:center; gap:2px; min-height:48px; padding:8px; border:1px solid var(--c-line); border-radius:12px; background:var(--c-surface-2); font-size:13px; font-weight:600; }
     .method-choice.selected { border-color:var(--c-primary); box-shadow:0 0 0 1px var(--c-primary); }
     .key-intro { display:flex; gap:12px; padding:12px; border:1px solid var(--c-line); border-radius:12px; background:var(--c-surface-2); }

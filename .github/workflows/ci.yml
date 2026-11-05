@@ -36,6 +36,9 @@ jobs:
       - name: Production passwordless UI and CSP regression
         working-directory: apps/extension
         run: xvfb-run -a bun tests/security-key/passwordless-ui-browser.mjs
+      - name: Popup reconnect after background worker restart
+        working-directory: apps/extension
+        run: xvfb-run -a bun tests/popup/background-reconnect-browser.mjs
       - name: Unified wallet UI contracts
         working-directory: apps/extension
         run: bun tests/components/unifiedWallet.browser.ts

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { connectPopupBackground } from "./backgroundConnection";
     import FeatureHeader from "../../lib/ui/FeatureHeader.svelte";
     import ChainIcon from "../../lib/ui/ChainIcon.svelte";
     import { openInvites } from "../../utils/wallet-id";
@@ -82,6 +83,7 @@
 
     async function reconnectSignalAfterRoomSave() {
         await refreshSignalRoomState();
+        if (popupDestroyed) return;
         await chrome.runtime.sendMessage({ type: "reconnectSignal" });
     }
 
@@ -581,7 +583,9 @@
     let appState: AppState = { ...INITIAL_APP_STATE };
 
     // Keep connection to background script
-    let port: chrome.runtime.Port;
+    let stopBackgroundConnection: (() => void) | undefined;
+    let popupDestroyed = false;
+    let backgroundGeneration = 0;
     
     // UI state flags
     let acceptingSession = false; // Prevent multiple session accept clicks
@@ -1500,79 +1504,19 @@
             console.warn("[UI] external account detection failed:", e);
         }
 
-        // Set up state tracking before connecting port
-        let stateReceived = false;
-        let fallbackTimeoutId: ReturnType<typeof setTimeout>;
-
-        // Initialize as false to prevent reactive statements from running
+        if (popupDestroyed) return;
         initialStateLoaded = false;
-
-        port = chrome.runtime.connect({ name: "popup" });
-        console.log(
-            "[UI] Port connected to background, waiting for initial state...",
+        stopBackgroundConnection = connectPopupBackground(
+            chrome.runtime,
+            message => {
+                if (message.type === "initialState") backgroundGeneration++;
+                handleBackgroundMessage(message);
+            },
+            () => {
+                backgroundGeneration++;
+                appState.wsConnected = false;
+            },
         );
-
-        port.onMessage.addListener((message) => {
-            console.log("[UI] Port message received:", message.type, message);
-            // Track when initial state is received
-            if (message.type === "initialState" && !stateReceived) {
-                stateReceived = true;
-                console.log(
-                    "[UI] Initial state received successfully from StateManager",
-                );
-                // Clear fallback timeout since we received state
-                if (fallbackTimeoutId) {
-                    clearTimeout(fallbackTimeoutId);
-                }
-            }
-            handleBackgroundMessage(message);
-        });
-
-        port.onDisconnect.addListener(() => {
-            console.error("[UI] Port disconnected from background");
-            appState.wsConnected = false;
-            // Clear fallback timeout if port disconnects
-            if (fallbackTimeoutId) {
-                clearTimeout(fallbackTimeoutId);
-            }
-        });
-
-        console.log(
-            "[UI] Port connected, StateManager should automatically send state...",
-        );
-
-        // Add fallback in case automatic state is delayed (StateManager still loading, etc.)
-        fallbackTimeoutId = setTimeout(() => {
-            if (!stateReceived) {
-                console.warn(
-                    "[UI] Automatic state not received within 2 seconds, requesting manually as fallback",
-                );
-                chrome.runtime.sendMessage({ type: "getState" }, (response) => {
-                    if (chrome.runtime.lastError) {
-                        console.error(
-                            "[UI] Fallback getState error:",
-                            chrome.runtime.lastError.message,
-                        );
-                        return;
-                    }
-                    if (response && !stateReceived) {
-                        console.log(
-                            "[UI] Fallback state response received:",
-                            response,
-                        );
-                        handleBackgroundMessage({
-                            type: "initialState",
-                            ...response,
-                        });
-                        stateReceived = true;
-                    }
-                });
-            } else {
-                console.log(
-                    "[UI] State was received automatically, no fallback needed",
-                );
-            }
-        }, 2000); // Increased to 2 seconds to account for async state loading
 
         // Removed ensurePrivateKey() call - this is now an MPC-only wallet
         // Removed ensureOffscreenDocument() call - offscreen management is handled by background script
@@ -1581,9 +1525,9 @@
     onDestroy(() => {
         console.log("[UI] Component destroying, cleaning up port connection");
         removeSignalRoomStorageListener?.();
-        if (port) {
-            port.disconnect();
-        }
+        popupDestroyed = true;
+        backgroundGeneration++;
+        stopBackgroundConnection?.();
     });
 
     // Removed reactive statement for ensurePrivateKey() - this is now an MPC-only wallet
@@ -1857,9 +1801,14 @@
     
     // Keystore management functions
     async function checkKeystoreStatus() {
+        const generation = backgroundGeneration;
         chrome.runtime.sendMessage({ type: MESSAGE_TYPES.GET_KEYSTORE_STATUS }, (response) => {
-            if (chrome.runtime.lastError) {
-                console.error("[UI] Error getting keystore status:", chrome.runtime.lastError.message);
+            const error = chrome.runtime.lastError;
+            if (popupDestroyed || generation !== backgroundGeneration) return;
+            if (error) {
+                // A worker restart can interrupt this read before onDisconnect.
+                // The next initialState requests fresh status; never apply an old reply.
+                console.debug("[UI] Keystore status interrupted; awaiting state resync", error.message);
                 return;
             }
             if (response && response.success) {

@@ -69,13 +69,13 @@
 </script>
 
 <div class="card card-pad">
-    <FeatureHeader title="Create a shared wallet" subtitle="One wallet across your supported chains" icon="users" />
+    <FeatureHeader title="Create a shared wallet" subtitle="All supported chains, created together" icon="users" />
     <div class="threshold-preview"><Icon name="shield" size={28} /><div><strong>{threshold} of {total} devices</strong><span>required to approve a signature</span></div><span class="badge badge-primary">Multi-chain</span></div>
     <p class="mt-1 text-xs text-muted">
-        Create once for Ethereum, Bitcoin, Solana and Sui. Your trusted devices
-        set up all wallet keys together — no single device can sign alone.
+        All four chains included automatically. Your devices create all wallet
+        keys together.
     </p>
-    <div class="mt-3 flex flex-wrap gap-2" aria-label="Supported chains">
+    <div class="mt-3 flex flex-wrap gap-2" aria-label="Chains included automatically">
         {#each ["ethereum", "bitcoin", "solana", "sui"] as chain}
             <span class="chain-chip"><ChainIcon {chain} size={16} />{chain === "ethereum" ? "Ethereum" : chain === "bitcoin" ? "Bitcoin" : chain === "solana" ? "Solana" : "Sui"}</span>
         {/each}

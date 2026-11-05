@@ -380,7 +380,7 @@ export class SessionManager {
         name?: string;
         total: number;
         threshold: number;
-    }): Promise<{ success: boolean; sessionId?: string; error?: string }> {
+    }): Promise<{ success: boolean; sessionId?: string; sessionInfo?: SessionInfo; error?: string }> {
         if (!this.wsClient || this.wsClient.getReadyState() !== WebSocket.OPEN) {
             return { success: false, error: "WebSocket not connected" };
         }
@@ -443,10 +443,11 @@ export class SessionManager {
                     `(${config.threshold}/${config.total} unified)`,
             );
             this.broadcastToPopup({
-                type: "dkgWalletCreated",
+                type: "sessionUpdate",
                 sessionInfo,
+                invites,
             } as any);
-            return { success: true, sessionId };
+            return { success: true, sessionId, sessionInfo };
         } catch (error) {
             console.error("[SessionManager] createDkgWallet failed:", error);
             // Roll back state on failure so the user can retry cleanly.

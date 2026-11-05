@@ -140,7 +140,7 @@ describe("SessionManager.createDkgWallet", () => {
         expect("status" in payload).toBe(false);
     });
 
-    it("defaults curve to ed25519 and emits correct wire", async () => {
+    it("creates unified keys without an algorithm choice", async () => {
         const { mgr, announcedPayloads } = makeManager();
         await mgr.createDkgWallet({
             total: 2,
@@ -169,19 +169,17 @@ describe("SessionManager.createDkgWallet", () => {
         ).toBe(true);
     });
 
-    it("notifies popup so the UI can react without polling", async () => {
-        const { mgr, broadcastToPopup } = makeManager();
-        await mgr.createDkgWallet({
-            total: 3,
-            threshold: 2,
-
+    it("returns the complete committed session and broadcasts it without server callbacks", async () => {
+        const { mgr, appState, broadcastToPopup } = makeManager();
+        const result = await mgr.createDkgWallet({ total: 3, threshold: 2 });
+        expect(result.success).toBe(true);
+        expect(result.sessionInfo).toEqual(appState.sessionInfo!);
+        expect(result.sessionInfo?.session_id).toBe(result.sessionId!);
+        expect(result.sessionInfo?.participants).toEqual([appState.deviceId]);
+        expect(result.sessionInfo?.curve_type).toBe("unified");
+        expect(broadcastToPopup).toHaveBeenCalledWith({
+            type: "sessionUpdate", sessionInfo: result.sessionInfo, invites: appState.invites,
         });
-        expect(broadcastToPopup).toHaveBeenCalled();
-        const calls = (broadcastToPopup as any).mock.calls as any[];
-        const sawDkgWalletCreated = calls.some(
-            (call) => call[0]?.type === "dkgWalletCreated",
-        );
-        expect(sawDkgWalletCreated).toBe(true);
     });
 
     it("generates unique session ids across rapid calls", async () => {

@@ -686,8 +686,8 @@ export class PopupMessageHandler {
      * the popup with (name, total, threshold, curve). We delegate to
      * sessionManager.createDkgWallet which builds the TUI-compatible
      * SessionInfo, stashes it locally, and broadcasts via
-     * `announce_session`. The reply carries the generated session_id
-     * so the popup can transition to "waiting for joiners".
+     * `announce_session`. The reply carries the complete committed public
+     * session so the popup can show invitations without a signaling echo.
      */
     private async handleCreateDkgWalletRequest(
         message: any,

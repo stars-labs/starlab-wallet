@@ -8,6 +8,7 @@
      * This is the DKG *initiator* flow only. Joiner side is Ext-1e.
      */
     import { createEventDispatcher } from "svelte";
+    import type { SessionInfo } from "@stars-labs/types/session";
     import { MESSAGE_TYPES } from "@stars-labs/types/messages";
     import Button from "../lib/ui/Button.svelte";
     import CopyButton from "../lib/ui/CopyButton.svelte";
@@ -18,7 +19,7 @@
     export let room: string = "";
 
     const dispatch = createEventDispatcher<{
-        created: { sessionId: string };
+        created: { sessionInfo: SessionInfo };
         cancel: void;
     }>();
 
@@ -51,8 +52,12 @@
                 total,
                 threshold,
             });
-            if (response?.success && response.sessionId) {
-                dispatch("created", { sessionId: response.sessionId });
+            if (
+                response?.success &&
+                typeof response.sessionId === "string" && response.sessionId.length > 0 &&
+                response.sessionInfo?.session_id === response.sessionId
+            ) {
+                dispatch("created", { sessionInfo: response.sessionInfo });
             } else {
                 errorMessage = guideError(
                     response?.error ?? "Failed to create wallet (no error returned)",

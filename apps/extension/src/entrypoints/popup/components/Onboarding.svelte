@@ -1,12 +1,6 @@
 <script lang="ts">
-    // First-run onboarding (#26): a guided path from "empty wallet" to a
-    // usable account source. MPC remains available, but first-run setup must
-    // also support hardware and simulation/watch-only accounts.
-    //
-    // Step 1  choose account source
-    // Step 2  the shared room (all devices must use the same one) + connection
-    // Step 3  hand off: creators open the create form; joiners get told exactly
-    //         what the invite will look like and where it appears.
+    // Creators move directly from room setup to wallet configuration.
+    // Other account sources retain their own instructions and actions.
     import { createEventDispatcher } from "svelte";
     import {
         getRoom,
@@ -32,7 +26,6 @@
     let step = 1;
     let mode: "mpc" | "join" | "ledger" | "yubikey" | "simulation" = "mpc";
     let room = "";
-    let roomSaved = false;
     let roomError = "";
     let simulationAddress = "";
     let simulationChain: SupportedChain = "ethereum";
@@ -42,7 +35,6 @@
 
     onMount(async () => {
         room = (await getRoom()) ?? "";
-        roomSaved = !!room;
     });
 
     function genRoom() {
@@ -61,13 +53,12 @@
             roomError = "Couldn't save the room.";
             return;
         }
-        roomSaved = true;
         dispatch("reconnect"); // App reconnects the signal socket with the new room
-        step = 3;
+        dispatch(mode === "mpc" ? "create" : "join");
+        dispatch("done");
     }
 
     function finish() {
-        if (mode === "mpc") dispatch("create"); // App opens CreateWalletForm
         if (mode === "ledger") dispatch("ledger");
         if (mode === "yubikey") dispatch("yubikey");
         if (mode === "simulation") {
@@ -88,50 +79,53 @@
 <div class="card card-pad space-y-3" data-testid="onboarding">
     <div class="flex items-center justify-between">
         <FeatureHeader title="Your wallet, shared securely" subtitle="Choose the account that works for you" icon="shield" />
-        <span class="text-xs text-muted">Step {step} of 3</span>
     </div>
 
     {#if step === 1}
         <p class="text-xs text-muted">
-            Choose how this profile should start. You can create a shared MPC
-            wallet, connect hardware, or add a simulation address for testing.
+            Create a shared wallet, join another device, or connect an existing account.
         </p>
         <div class="grid grid-cols-1 gap-2">
             <button
                 class="rounded-xl border p-3 text-left text-sm transition hover:border-primary {mode === 'mpc' ? 'border-primary' : 'border-line'}"
                 on:click={() => (mode = "mpc")}
             >
-                <strong>MPC shared wallet</strong>
-                <span class="block text-xs text-muted">You start the ceremony; other devices join it.</span>
+                <strong>Create shared wallet</strong>
+                <span class="block text-xs text-muted">Choose your devices and invite them to set up one wallet.</span>
             </button>
             <button
                 class="rounded-xl border p-3 text-left text-sm transition hover:border-primary {mode === 'join' ? 'border-primary' : 'border-line'}"
                 on:click={() => (mode = "join")}
             >
-                <strong>Join an existing ceremony</strong>
-                <span class="block text-xs text-muted">Someone else created a wallet and invited this device.</span>
+                <strong>Join a shared wallet</strong>
+                <span class="block text-xs text-muted">Accept an invitation from another device to set up the wallet.</span>
             </button>
-            <button
-                class="rounded-xl border p-3 text-left text-sm transition hover:border-primary {mode === 'ledger' ? 'border-primary' : 'border-line'}"
-                on:click={() => (mode = "ledger")}
-            >
-                <strong>Ledger</strong>
-                <span class="block text-xs text-muted">Connect a Ledger over WebHID and use its default accounts.</span>
-            </button>
-            <button
-                class="rounded-xl border p-3 text-left text-sm transition hover:border-primary {mode === 'yubikey' ? 'border-primary' : 'border-line'}"
-                on:click={() => (mode = "yubikey")}
-            >
-                <strong>YubiKey</strong>
-                <span class="block text-xs text-muted">Use accounts discovered from the YubiWallet native host.</span>
-            </button>
-            <button
-                class="rounded-xl border p-3 text-left text-sm transition hover:border-primary {mode === 'simulation' ? 'border-primary' : 'border-line'}"
-                on:click={() => (mode = "simulation")}
-            >
-                <strong>Simulation address</strong>
-                <span class="block text-xs text-muted">Add any address as watch-only for sandbox testing.</span>
-            </button>
+            <details open={mode !== "mpc" && mode !== "join"}>
+                <summary class="cursor-pointer py-2 text-xs text-muted">More account options</summary>
+                <div class="grid grid-cols-1 gap-2 mt-2">
+                    <button
+                        class="rounded-xl border p-3 text-left text-sm transition hover:border-primary {mode === 'ledger' ? 'border-primary' : 'border-line'}"
+                        on:click={() => (mode = "ledger")}
+                    >
+                        <strong>Ledger</strong>
+                        <span class="block text-xs text-muted">Connect a Ledger over WebHID and use its default accounts.</span>
+                    </button>
+                    <button
+                        class="rounded-xl border p-3 text-left text-sm transition hover:border-primary {mode === 'yubikey' ? 'border-primary' : 'border-line'}"
+                        on:click={() => (mode = "yubikey")}
+                    >
+                        <strong>YubiKey</strong>
+                        <span class="block text-xs text-muted">Use accounts discovered from the YubiWallet native host.</span>
+                    </button>
+                    <button
+                        class="rounded-xl border p-3 text-left text-sm transition hover:border-primary {mode === 'simulation' ? 'border-primary' : 'border-line'}"
+                        on:click={() => (mode = "simulation")}
+                    >
+                        <strong>Simulation address</strong>
+                        <span class="block text-xs text-muted">Add any address as watch-only for sandbox testing.</span>
+                    </button>
+                </div>
+            </details>
         </div>
         <div class="flex justify-end">
             <button class="btn btn-primary btn-sm" on:click={() => (requiresRoom ? step = 2 : step = 3)}>Continue</button>
@@ -167,27 +161,7 @@
                 {wsConnected ? "Connected" : "Connecting…"}
             </span>
         </p>
-        {#if mode === "mpc"}
-            <p class="text-xs text-muted">
-                You'll pick a name, how many devices in total, and how many must
-                approve each transaction (the threshold). The other devices must
-                be online, in the <strong>same room</strong>, before you start.
-            </p>
-            <div class="flex items-center justify-between">
-                <button class="btn btn-ghost btn-sm" on:click={() => (step = 2)}>Back</button>
-                <button class="btn btn-primary btn-sm" on:click={finish}>Create wallet</button>
-            </div>
-        {:else if mode === "join"}
-            <p class="text-xs text-muted">
-                Keep this popup open. When the creator starts the ceremony, an
-                <strong>invite appears under "Session invites"</strong> — accept it
-                and the key generation runs automatically. Nothing else to do here.
-            </p>
-            <div class="flex items-center justify-between">
-                <button class="btn btn-ghost btn-sm" on:click={() => (step = 2)}>Back</button>
-                <button class="btn btn-primary btn-sm" on:click={finish}>Got it</button>
-            </div>
-        {:else if mode === "ledger"}
+        {#if mode === "ledger"}
             <p class="text-xs text-muted">
                 Connect and unlock your Ledger, open the Ethereum or Solana app,
                 then approve the browser device prompt.

@@ -13,7 +13,6 @@
     import CopyButton from "../lib/ui/CopyButton.svelte";
     import FeatureHeader from "../lib/ui/FeatureHeader.svelte";
     import ChainIcon from "../lib/ui/ChainIcon.svelte";
-    import Icon from "../lib/ui/Icon.svelte";
     import { guideError } from "../utils/error-guidance";
     export let wsConnected: boolean = false;
     export let room: string = "";
@@ -26,7 +25,7 @@
     // Defaults match TUI's ThresholdConfig screen starting values.
     let total = 3;
     let threshold = 2;
-    let walletName = "";
+    export let walletName = "";
     let submitting = false;
     let errorMessage = "";
 
@@ -69,13 +68,12 @@
 </script>
 
 <div class="card card-pad">
-    <FeatureHeader title="Create a shared wallet" subtitle="All supported chains, created together" icon="users" />
-    <div class="threshold-preview"><Icon name="shield" size={28} /><div><strong>{threshold} of {total} devices</strong><span>required to approve a signature</span></div><span class="badge badge-primary">Multi-chain</span></div>
-    <p class="mt-1 text-xs text-muted">
-        All four chains included automatically. Your devices create all wallet
-        keys together.
-    </p>
-    <div class="mt-3 flex flex-wrap gap-2" aria-label="Chains included automatically">
+    <div class="setup-heading">
+        <FeatureHeader title="Configure wallet" subtitle="Choose the devices that approve transactions" icon="users" />
+        <span class="setup-step">Setup 1 of 3</span>
+    </div>
+    <p class="mt-2 text-xs text-muted">All four chains included automatically</p>
+    <div class="included-chains" aria-label="Chains included automatically">
         {#each ["ethereum", "bitcoin", "solana", "sui"] as chain}
             <span class="chain-chip"><ChainIcon {chain} size={16} />{chain === "ethereum" ? "Ethereum" : chain === "bitcoin" ? "Bitcoin" : chain === "solana" ? "Solana" : "Sui"}</span>
         {/each}
@@ -120,41 +118,33 @@
         </div>
     </div>
 
+    <p class="mt-2 text-xs text-muted" aria-live="polite">
+        <strong>{threshold} of {total} devices</strong> must approve each transaction.
+    </p>
+
     {#if room}
-        <div class="mt-3 alert alert-info">
-            <div class="mb-1.5 flex items-center justify-between gap-2">
-                <span class="text-xs font-semibold">Room for co-signers</span>
+        <details class="room-details mt-3">
+            <summary>Share room with devices</summary>
+            <div class="room-value">
+                <code class="mono text-xs">{room}</code>
                 <CopyButton value={room} label="Copy room" title="Copy room" />
             </div>
-            <p class="text-xs">
-                Other devices must use this room before they can see the wallet
-                session.
-            </p>
-            <code class="mono mt-2 block truncate text-xs">{room}</code>
-        </div>
+            <p class="text-xs text-muted">Use this same room on the other devices to find your invitation.</p>
+        </details>
     {:else}
         <div class="mt-3 alert alert-warning text-xs">
-            Generate and save a room before creating an MPC wallet.
+            Set up a shared room before inviting devices.
         </div>
     {/if}
-
-    <div class="mt-3 alert alert-info text-xs">
-        Any <b>{threshold}</b> of <b>{total}</b> devices will be able to approve
-        a transaction together.
-    </div>
 
     {#if errorMessage}
         <div class="mt-3 alert alert-danger text-xs">{errorMessage}</div>
     {/if}
 
-    <div class="mt-4 flex gap-2">
-        <Button
-            block
-            on:click={handleSubmit}
-            disabled={submitting || !wsConnected}
-        >
-            {submitting ? "Creating…" : "Create wallet"}
-        </Button>
+    <p class="mt-3 text-xs text-muted">
+        Invite your other devices next. Wallet setup starts when everyone joins.
+    </p>
+    <div class="mt-3 flex gap-2">
         <Button
             variant="secondary"
             on:click={() => dispatch("cancel")}
@@ -162,12 +152,23 @@
         >
             Cancel
         </Button>
+        <Button
+            block
+            on:click={handleSubmit}
+            disabled={submitting || !wsConnected}
+        >
+            {submitting ? "Inviting devices…" : "Invite devices"}
+        </Button>
     </div>
 </div>
 
 <style>
-.chain-chip { display:inline-flex; align-items:center; gap:5px; padding:4px 7px; border-radius:8px; background:var(--c-surface-2); font-size:11px; font-weight:600; }
-.threshold-preview { display:flex; gap:10px; align-items:center; padding:14px; border-radius:12px; background:var(--c-surface-2); margin:16px 0; }
-.threshold-preview strong { display:block; font-size:14px; }
-.threshold-preview span:not(.badge) { display:block; color:var(--c-muted); font-size:11px; }
+    .setup-heading { display: flex; align-items: flex-start; gap: 12px; justify-content: space-between; }
+    .setup-step { flex: none; padding-top: 3px; font-size: 11px; color: var(--c-muted); }
+    .included-chains { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+    .chain-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border-radius: 8px; background: var(--c-surface-2); font-size: 11px; font-weight: 600; }
+    .room-details { border-top: 1px solid var(--c-line); padding-top: 10px; }
+    .room-details summary { cursor: pointer; font-size: 12px; color: var(--c-muted); }
+    .room-value { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+    .room-value code { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 </style>

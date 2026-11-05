@@ -44,7 +44,7 @@ export async function setRoom(page: Page, room: string): Promise<void> {
 /** First-run onboarding: set the keystore password ("Get started"). */
 export async function onboard(page: Page, password: string): Promise<void> {
   await page.getByRole("button", { name: "Get started" }).click();
-  const dialog = page.getByRole("dialog", { name: "Create Wallet" });
+  const dialog = page.getByRole("dialog", { name: "Protect this device" });
   // Fresh onboarding recommends a security key. These interop cases deliberately
   // exercise the password vault; choose it through the actual user interface.
   await dialog.getByRole("button", { name: "Password", exact: true }).click({ timeout: 10_000 });
@@ -89,15 +89,14 @@ export async function createWallet(
   await closeSettings(page);
 
   const onboarding = page.getByTestId("onboarding");
-  await onboarding.getByRole("button", { name: /^MPC shared wallet/ }).click({ timeout: 10_000 });
+  await onboarding.getByRole("button", { name: /^Create shared wallet/ }).click({ timeout: 10_000 });
   await onboarding.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(onboarding.getByPlaceholder("room id (16+ chars)")).toHaveValue(/.{16,}/);
   await onboarding.getByRole("button", { name: "Save room & continue" }).click();
-  await onboarding.getByRole("button", { name: "Create wallet", exact: true }).click();
 
   await page.locator("#cw-total").fill(String(opts.total));
   await page.locator("#cw-threshold").fill(String(opts.threshold));
-  await page.getByRole("button", { name: "Create wallet", exact: true }).click();
+  await page.getByRole("button", { name: "Invite devices", exact: true }).click();
 }
 
 /** Accept the (single) pending wallet / signing invitation. */
@@ -131,7 +130,7 @@ export async function extSignature(page: Page): Promise<string> {
   return sig.replace(/^0x/, "").toLowerCase();
 }
 
-/** Save the freshly generated wallet (the post-DKG "Save this wallet" form). */
+/** Save the freshly generated wallet (the post-DKG "Finish wallet setup" form). */
 export async function saveWallet(page: Page, password: string): Promise<void> {
   await page.getByPlaceholder("Password (at least 8 characters)").fill(password);
   await page.getByPlaceholder("Confirm password").fill(password);

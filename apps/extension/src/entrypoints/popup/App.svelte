@@ -1,5 +1,6 @@
 <script lang="ts">
     import { connectPopupBackground } from "./backgroundConnection";
+    import WalletSetupStatus from "./components/WalletSetupStatus.svelte";
     import FeatureHeader from "../../lib/ui/FeatureHeader.svelte";
     import ChainIcon from "../../lib/ui/ChainIcon.svelte";
     import { openInvites } from "../../utils/wallet-id";
@@ -72,6 +73,7 @@
     let hasExternalAccounts = false;
     let accountSetupStatus = "";
     let createdDkgSessionId = "";
+    let waitingForInvite = false;
     let hasSignalRoom = false;
     let signalRoom = "";
     let removeSignalRoomStorageListener: (() => void) | null = null;
@@ -105,13 +107,13 @@
     $: activeShareSessionId = appState.sessionInfo?.session_id ?? createdDkgSessionId;
     $: setupInviteText = activeShareSessionId
         ? [
-              "Starlab Wallet setup",
+              appState.sessionInfo?.session_type === "reshare" ? "Starlab Wallet device refresh" : "Starlab Wallet setup",
               `Room: ${signalRoom || "(not set)"}`,
               `Session ID: ${activeShareSessionId}`,
               appState.sessionInfo
                   ? `Wallet: ${appState.sessionInfo.threshold}-of-${appState.sessionInfo.total}`
                   : "",
-              `Network: ${chainLabel(appState.chain)}`,
+              appState.sessionInfo?.session_type === "reshare" ? "" : "Chains: Ethereum, Bitcoin, Solana, Sui",
           ]
               .filter(Boolean)
               .join("\n")
@@ -668,6 +670,19 @@
         appState.invites ?? [],
         (keystoreStatus.wallets ?? []).map((w) => w.id),
     );
+    $: actionableInvites = shownInvites.filter(invite =>
+        invite.proposer_id !== appState.deviceId &&
+        (invite.participants.includes(appState.deviceId) || invite.participants.length < invite.total) &&
+        (invite.session_type !== "reshare" ||
+            keystoreStatus.wallets.some(wallet => wallet.id === invite.wallet_name)));
+    $: walletSetupActive = (appState.sessionInfo?.session_type === "dkg" || appState.sessionInfo?.session_type === "reshare") &&
+        (appState.dkgState !== DkgState.Complete || appState.pendingKeystoreReady);
+    $: walletSessionIdle = !appState.sessionInfo ||
+        (appState.sessionInfo.session_type === "dkg" &&
+            appState.dkgState === DkgState.Complete && !appState.pendingKeystoreReady);
+    $: setupHandoff = !!createdDkgSessionId && !appState.sessionInfo && !keystoreStatus.wallets.length;
+    $: setupFocused = walletSetupActive || setupHandoff || waitingForInvite || actionableInvites.length > 0;
+
     
     // Password prompt state
     let showPasswordPrompt = false;
@@ -1474,6 +1489,7 @@
     onMount(async () => {
         console.log("[UI] Component mounting");
         await refreshSignalRoomState();
+        if (popupDestroyed) return;
 
         const onStorageChanged = (
             changes: Record<string, chrome.storage.StorageChange>,
@@ -1763,42 +1779,6 @@
         signatureRequests = signatureRequests.filter(req => req.signingId !== signingId);
     }
     
-    // Test MPC signing function
-    function testMPCSigning() {
-        console.log("[UI] Testing MPC signing");
-        
-        // Generate a test signing ID
-        const signingId = `test_signing_${Date.now()}`;
-        
-        // Use hex of "hello" (68656c6c6f) to match the TUI node's signing smoke-test fixture.
-        const testTransactionData = "68656c6c6f";
-        
-        // Use the threshold from the current session
-        const requiredSigners = appState.sessionInfo?.threshold || 2;
-        
-        chrome.runtime.sendMessage({
-            type: "requestSigning",
-            signingId: signingId,
-            transactionData: testTransactionData,
-            requiredSigners: requiredSigners
-        }, (response) => {
-            if (chrome.runtime.lastError) {
-                console.error("[UI] Error requesting signing:", chrome.runtime.lastError.message);
-                return;
-            }
-            console.log("[UI] Signing request response:", response);
-            if (!response.success) {
-                console.error(`Failed to initiate signing: ${response.error}`);
-            }
-        });
-        
-        console.log("[UI] Sent signing request:", {
-            signingId,
-            transactionData: testTransactionData + ' (hex of "hello")',
-            requiredSigners
-        });
-    }
-    
     // Keystore management functions
     async function checkKeystoreStatus() {
         const generation = backgroundGeneration;
@@ -1845,7 +1825,7 @@
     
     function showCreateKeystorePrompt() {
         passwordPromptConfig = {
-            title: "Create Wallet",
+            title: "Protect this device",
             message: "Choose how to unlock this device",
             confirmMode: true,
             onSubmit: handleCreateKeystore,
@@ -2027,18 +2007,9 @@
             }}
         />
     {:else if showCreateWallet}
-        <!-- Ext-1b: DKG wallet creation form. Covers the popup while
-             the user configures threshold/total/curve. On success we
-             flip back to the main view; the session_available
-             broadcast will populate appState.sessionInfo and the
-             existing wallet-status banner will reflect the new state. -->
-        {#if appState.ecdsaPrimes && appState.ecdsaPrimes.state !== "ready"}
-            <p class="mb-2 text-xs text-faint" data-testid="ecdsa-primes-status">
-                {ecdsaPrimesLabel(appState.ecdsaPrimes)} — runs in the background; an Ethereum
-                wallet waits for it.
-            </p>
-        {/if}
+        <!-- Configure once, then hand off to the device invitation stage. -->
         <CreateWalletForm
+            bind:walletName={saveWalletName}
             wsConnected={appState.wsConnected}
             room={signalRoom}
             on:created={({ detail }) => {
@@ -2047,10 +2018,13 @@
                     detail.sessionId,
                 );
                 createdDkgSessionId = detail.sessionId;
+                waitingForInvite = false;
+                onboardingDismissed = true;
                 showCreateWallet = false;
             }}
             on:cancel={() => {
                 showCreateWallet = false;
+                if (!keystoreStatus.wallets.length && !hasExternalAccounts) onboardingDismissed = false;
             }}
         />
     {:else if !keystoreStatus.initialized}
@@ -2086,7 +2060,7 @@
             </div>
         {/if}
 
-        {#if keystoreStatus.wallets.length > 0}
+        {#if keystoreStatus.wallets.length > 0 && !setupFocused && !showAccountSetup}
             <WalletSelector
                 wallets={keystoreStatus.wallets}
                 activeWallet={keystoreStatus.activeWallet}
@@ -2096,6 +2070,7 @@
             />
         {/if}
 
+        {#if !setupFocused && !showAccountSetup && keystoreStatus.wallets.length > 0}
         <div class="flex items-center justify-between gap-2">
             <span class="section-title">Overview</span>
             <div class="flex items-center gap-2">
@@ -2119,11 +2094,13 @@
             </div>
         </div>
 
+        {/if}
+
         <!-- Hero: address card (shown once a wallet's keys exist). Keyed on
              the group key: the AccountPicker derives every account address
              from it, while the post-DKG `dkgAddress` fetch can lose a race
              with the offscreen document and leave the whole card hidden. -->
-        {#if appState.dkgState === DkgState.Complete && appState.dkgGroupPublicKey}
+        {#if !setupFocused && !showAccountSetup && appState.dkgState === DkgState.Complete && appState.dkgGroupPublicKey}
             <div class="hero">
                 <div class="relative flex items-center justify-between">
                     <span class="flex items-center gap-2">
@@ -2188,11 +2165,12 @@
 
         <!-- First-run onboarding (#26): guided create-or-join wizard, shown
              until this profile has a wallet (or the user dismisses it). -->
-        {@const onboardingVisible = showAccountSetup || ((keystoreStatus.wallets?.length ?? 0) === 0 && !hasExternalAccounts && !showCreateWallet && !onboardingDismissed)}
+        {@const onboardingVisible = !setupFocused && (showAccountSetup || ((keystoreStatus.wallets?.length ?? 0) === 0 && !hasExternalAccounts && !showCreateWallet && !onboardingDismissed))}
         {#if onboardingVisible}
             <Onboarding
                 wsConnected={appState.wsConnected}
-                on:create={() => { showAccountSetup = false; showCreateWallet = true; }}
+                on:create={() => { waitingForInvite = false; showAccountSetup = false; showCreateWallet = true; }}
+                on:join={() => { waitingForInvite = true; showAccountSetup = false; }}
                 on:ledger={connectLedgerAccounts}
                 on:yubikey={refreshYubiKeyAccounts}
                 on:simulation={({ detail }) =>
@@ -2210,13 +2188,13 @@
              post-DKG `dkgAddress` fetch is one-shot and racy, and a saved
              wallet reloaded from the keystore never sets it. -->
         {@const canCreate =
-            !onboardingVisible && !showCreateWallet &&
+            !setupFocused && !onboardingVisible && !showCreateWallet &&
             (!appState.sessionInfo || appState.dkgState === DkgState.Complete)}
         {@const canSign =
-            keystoreStatus.initialized &&
+            !setupFocused && !onboardingVisible && keystoreStatus.initialized &&
             !keystoreStatus.locked &&
             (keystoreStatus.wallets?.length ?? 0) > 0 &&
-            !appState.sessionInfo}
+            walletSessionIdle}
         {#if canSign && displayAddress}
             {#if showSend && isEvmChain(appState.chain)}
                 <div class="card card-pad">
@@ -2334,7 +2312,7 @@
             </div>
         {/if}
 
-        {#if keystoreStatus.initialized}
+        {#if keystoreStatus.initialized && !setupFocused && !onboardingVisible}
             <button class="btn btn-secondary btn-block" on:click={() => (showAccountSetup = !showAccountSetup)}><Icon name="plus" size={18} /> Add hardware or watch-only account</button>
         {/if}
 
@@ -2391,98 +2369,6 @@
                     </Button>
                 </div>
             </form>
-        {/if}
-
-        <!-- Discovered shared-wallet sessions you can join -->
-        {#if !appState.sessionInfo && shownInvites.length > 0}
-            {@const joinable = shownInvites.filter(
-                (inv) =>
-                    ((inv.session_type ?? "dkg") === "dkg" ||
-                        // M3 reshare: only show if we hold a share in
-                        // the wallet's current cohort — outsiders
-                        // can't participate in a reshare.
-                        (inv.session_type === "reshare" &&
-                            (inv.reshare_old_participants ?? []).includes(
-                                appState.deviceId,
-                            ))) &&
-                    inv.proposer_id !== appState.deviceId &&
-                    (inv.participants?.length ?? 0) <
-                        (inv.total ?? Number.POSITIVE_INFINITY),
-            )}
-            {#if joinable.length > 0}
-                <div class="card card-pad">
-                    <h3 class="mb-2 text-sm font-semibold">
-                        Wallet invitations
-                    </h3>
-                    <div class="space-y-2">
-                        {#each joinable as inv (inv.session_id)}
-                            <div class="list-row">
-                                <div class="min-w-0 pr-2">
-                                    <p class="text-sm font-medium">
-                                        {inv.threshold}-of-{inv.total}
-                                        {chainLabel(chainFromSession(inv))}
-                                        {#if inv.session_type === "reshare"}
-                                            <span class="badge badge-info"
-                                                >Reshare</span
-                                            >
-                                        {/if}
-                                    </p>
-                                    <p class="truncate text-xs text-muted">
-                                        from {inv.proposer_id} ·
-                                        {inv.participants?.length ?? 0}/{inv.total}
-                                        joined
-                                    </p>
-                                    {#if inv.session_type === "reshare"}
-                                        <p class="truncate text-xs text-muted">
-                                            Rotates shares of wallet
-                                            {inv.wallet_name ?? "(unknown)"} —
-                                            addresses stay the same
-                                        </p>
-                                    {/if}
-                                </div>
-                                <Button
-                                    size="sm"
-                                    variant="success"
-                                    disabled={!appState.wsConnected}
-                                    on:click={async () => {
-                                        try {
-                                            const response =
-                                                await chrome.runtime.sendMessage(
-                                                    {
-                                                        type: MESSAGE_TYPES.JOIN_DKG_SESSION,
-                                                        session_id:
-                                                            inv.session_id,
-                                                    },
-                                                );
-                                            if (!response?.success) {
-                                                console.error(
-                                                    "[UI] Join failed:",
-                                                    response?.error,
-                                                );
-                                                alert(
-                                                    `Join failed: ${response?.error ?? "unknown error"}`,
-                                                );
-                                            } else {
-                                                console.log(
-                                                    "[UI] Joined session",
-                                                    inv.session_id,
-                                                );
-                                            }
-                                        } catch (e) {
-                                            console.error(
-                                                "[UI] Join exception:",
-                                                e,
-                                            );
-                                        }
-                                    }}
-                                >
-                                    Join
-                                </Button>
-                            </div>
-                        {/each}
-                    </div>
-                </div>
-            {/if}
         {/if}
 
         <!-- Confirm before broadcasting a signing request. The hash
@@ -2797,20 +2683,14 @@
                     }}
                 >
                     <p class="flex items-center gap-1.5 text-sm font-semibold">
-                        <Icon name="download" size={15} /> Save this wallet
+                        <Icon name="download" size={15} /> Finish wallet setup
                     </p>
                     <p class="-mt-1 text-xs text-muted">
                         {keystoreStatus.authMode === "hardware"
                             ? "Save this wallet using the YubiKey protection already set up on this device. No wallet password is needed."
-                            : "Encrypt your key share with a password so it survives restarts."}
+                            : "Save your wallet keys encrypted on this device so they survive restarts."}
                     </p>
-                    <input
-                        type="text"
-                        placeholder="Wallet name (optional)"
-                        bind:value={saveWalletName}
-                        class="input"
-                        disabled={saving}
-                    />
+
                     {#if keystoreStatus.authMode !== "hardware"}
                     <input
                         type="password"
@@ -2840,91 +2720,36 @@
                     </Button>
                 </form>
             {/if}
-        {:else if appState.sessionInfo && appState.dkgState === DkgState.Initializing}
-            <!-- Creator-side: waiting for joiners to discover the session -->
-            {@const needed =
-                (appState.sessionInfo.total ?? 0) -
-                (appState.sessionInfo.participants?.length ?? 0)}
-            <div class="card card-pad">
-                <p class="flex items-center gap-1.5 text-sm font-semibold">
-                    <Icon name="users" size={15} /> Waiting for people to join
-                </p>
-                <p class="mt-2 text-xs text-muted">
-                    {appState.sessionInfo.threshold}-of-{appState.sessionInfo
-                        .total} · share this session so others can join:
-                </p>
-                <div class="mt-2 rounded-lg border border-line bg-surface-2 p-2.5">
-                    <div class="mb-2 flex items-center justify-between gap-2">
-                        <span class="text-xs font-semibold">Share setup</span>
-                        <CopyButton
-                            value={setupInviteText}
-                            label="Copy invite"
-                            title="Copy room and session ID"
-                        />
-                    </div>
-                    <div class="space-y-1.5">
-                        <div class="flex items-center gap-2">
-                            <span class="w-16 shrink-0 text-xs text-muted">Room</span>
-                            <code class="mono min-w-0 flex-1 truncate text-xs">
-                                {signalRoom || "No room set"}
-                            </code>
-                            {#if signalRoom}
-                                <CopyButton
-                                    value={signalRoom}
-                                    variant="icon"
-                                    title="Copy room"
-                                />
-                            {/if}
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <span class="w-16 shrink-0 text-xs text-muted">Session</span>
-                            <code class="mono min-w-0 flex-1 truncate text-xs">
-                                {appState.sessionInfo.session_id}
-                            </code>
-                            <CopyButton
-                                value={appState.sessionInfo.session_id}
-                                variant="icon"
-                                title="Copy session ID"
-                            />
-                        </div>
-                    </div>
-                </div>
-                <ul class="mt-3 space-y-1">
-                    {#each appState.sessionInfo.participants ?? [] as pid}
-                        <li class="flex items-center gap-2 text-xs">
-                            <span
-                                class="h-1.5 w-1.5 rounded-full {pid ===
-                                appState.deviceId
-                                    ? 'bg-success'
-                                    : 'bg-faint'}"
-                            ></span>
-                            <span class="mono truncate"
-                                >{pid}{pid === appState.deviceId
-                                    ? " (you)"
-                                    : ""}</span
-                            >
-                        </li>
-                    {/each}
-                </ul>
-                {#if needed > 0}
-                    <p class="mt-2 text-xs text-muted">
-                        Need {needed} more participant{needed === 1 ? "" : "s"}.
-                    </p>
-                {/if}
-            </div>
-        {:else if appState.sessionInfo?.session_type === "dkg" && appState.dkgState === DkgState.Failed}
-            <div class="alert alert-danger" role="alert">
-                Wallet setup failed. Check your devices and try again.
-            </div>
-        {:else if appState.sessionInfo?.session_type === "dkg" && appState.dkgState !== DkgState.Idle}
-            <div class="alert alert-info">
-                Generating keys — your wallet address will appear when complete.
+        {:else if (appState.sessionInfo?.session_type === "dkg" || appState.sessionInfo?.session_type === "reshare") && appState.dkgState !== DkgState.Complete}
+            <WalletSetupStatus
+                session={appState.sessionInfo}
+                state={appState.dkgState}
+                deviceId={appState.deviceId}
+                room={signalRoom}
+                invite={setupInviteText}
+                connections={appState.webrtcConnections}
+                ethereumStatus={appState.ecdsaDkgStatus ?? null}
+                preparationLabel={ecdsaPrimesLabel(appState.ecdsaPrimes)}
+                error={appState.dkgError || ""}
+                on:review={() => (showCreateWallet = true)}
+                on:connection={() => (appState.showSettings = true)}
+            />
+        {/if}
+
+        {#if setupHandoff}
+            <div class="card card-pad" role="status">Preparing your device invitation…</div>
+        {:else if waitingForInvite && !appState.sessionInfo && actionableInvites.length === 0}
+            <div class="card card-pad space-y-3" data-testid="waiting-for-invite">
+                <FeatureHeader title="Waiting for an invitation" subtitle="Ask the creator to share their setup invitation" icon="users" />
+                <p class="text-xs text-muted">Keep this device in the same room as the creator. Your invitation will appear here.</p>
+                <CopyButton value={signalRoom} label="Copy room" title="Copy room" />
+                <button class="btn btn-ghost btn-sm" on:click={() => { waitingForInvite = false; onboardingDismissed = false; }}>Choose another option</button>
             </div>
         {/if}
 
         <!-- Multi-account support. Also rendered for hardware/simulation users
              even before any FROST DKG completes. -->
-        {#if hasExternalAccounts}
+        {#if hasExternalAccounts && !setupFocused && !showAccountSetup}
             <AccountManager blockchain={isSupportedChain(appState.chain) ? appState.chain : "ethereum"} />
         {/if}
 
@@ -2946,183 +2771,14 @@
             </div>
         {/if}
 
-    <!-- Wallet creation has its own progress; signing uses the signing roster above. -->
-    {#if appState.sessionInfo?.session_type === "dkg"}
-        <div class="card card-pad">
-            <div class="mb-3 flex items-center justify-between">
-                <h3 class="flex items-center gap-1.5 text-sm font-bold">
-                    <Icon name="users" size={16} /> Session
-                </h3>
-                {#if appState.dkgState === DkgState.Complete}
-                    <span class="badge badge-success">Ready to sign</span>
-                {:else if appState.dkgState === DkgState.Initializing || appState.dkgState === DkgState.Round1InProgress || appState.dkgState === DkgState.Round1Complete || appState.dkgState === DkgState.Round2InProgress || appState.dkgState === DkgState.Round2Complete || appState.dkgState === DkgState.Finalizing}
-                    <span class="badge badge-info">Generating keys…</span>
-                {:else if appState.dkgState === DkgState.Failed}
-                    <span class="badge badge-danger">Failed</span>
-                {:else if appState.meshStatus?.type === MeshStatusType.Ready}
-                    <span class="badge badge-warning">Ready to start</span>
-                {:else}
-                    <span class="badge badge-muted">Connecting…</span>
-                {/if}
-            </div>
-
-            <div class="grid grid-cols-2 gap-2 text-xs">
-                <div class="rounded-lg bg-surface-2 p-2">
-                    <span class="text-faint">Threshold</span>
-                    <p class="text-sm font-bold">
-                        {appState.sessionInfo.threshold} of {appState.sessionInfo
-                            .total}
-                    </p>
-                </div>
-                <div class="rounded-lg bg-surface-2 p-2">
-                    <span class="text-faint">Stage</span>
-                    <p class="text-sm font-semibold">
-                        {DkgState[appState.dkgState] || "Unknown"}
-                    </p>
-                </div>
-            </div>
-
-            <div class="mt-3 rounded-lg border border-line bg-surface-2 p-2.5">
-                <div class="mb-2 flex items-center justify-between gap-2">
-                    <div>
-                        <p class="text-xs font-semibold">Share setup</p>
-                        <p class="text-[10px] text-muted">
-                            Send this to each co-signer joining the wallet.
-                        </p>
-                    </div>
-                    <CopyButton
-                        value={setupInviteText}
-                        label="Copy invite"
-                        title="Copy room and session ID"
-                    />
-                </div>
-
-                <div class="space-y-1.5">
-                    <div class="flex items-center gap-2">
-                        <span class="w-16 shrink-0 text-xs text-muted">Room</span>
-                        <code class="mono min-w-0 flex-1 truncate text-xs">
-                            {signalRoom || "No room set"}
-                        </code>
-                        {#if signalRoom}
-                            <CopyButton
-                                value={signalRoom}
-                                variant="icon"
-                                title="Copy room"
-                            />
-                        {/if}
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <span class="w-16 shrink-0 text-xs text-muted">Session</span>
-                        <code class="mono min-w-0 flex-1 truncate text-xs">
-                            {appState.sessionInfo.session_id}
-                        </code>
-                        <CopyButton
-                            value={appState.sessionInfo.session_id}
-                            variant="icon"
-                            title="Copy session ID"
-                        />
-                    </div>
-                </div>
-            </div>
-
-            <div class="mt-3">
-                <div class="mb-1.5 flex items-center justify-between">
-                    <span class="label mb-0">Participants</span>
-                    <span class="text-xs text-faint">
-                        {appState.sessionInfo.accepted_devices?.length || 0}/{appState
-                            .sessionInfo.participants.length} accepted
-                    </span>
-                </div>
-                <div class="space-y-1">
-                    {#each appState.sessionInfo.participants as participant}
-                        {@const isAccepted =
-                            appState.sessionInfo.accepted_devices?.includes(
-                                participant,
-                            )}
-                        {@const isConnected =
-                            appState.webrtcConnections[participant]}
-                        <div class="list-row py-1.5 text-xs">
-                            <span
-                                class="mono truncate"
-                                class:font-semibold={participant ===
-                                    appState.deviceId}
-                            >
-                                {participant}{participant === appState.deviceId
-                                    ? " (you)"
-                                    : ""}
-                            </span>
-                            <span class="flex items-center gap-1.5">
-                                <span
-                                    class="badge {isAccepted
-                                        ? 'badge-success'
-                                        : 'badge-muted'}"
-                                    >{isAccepted ? "Accepted" : "Pending"}</span
-                                >
-                                {#if participant !== appState.deviceId}
-                                    <span
-                                        class="h-1.5 w-1.5 rounded-full {isConnected
-                                            ? 'bg-success'
-                                            : 'bg-faint'}"
-                                        title={isConnected
-                                            ? "Connected"
-                                            : "Not connected"}
-                                    ></span>
-                                {/if}
-                            </span>
-                        </div>
-                    {/each}
-                </div>
-            </div>
-
-            {#if appState.meshStatus?.type === MeshStatusType.Ready && appState.dkgState === DkgState.Idle}
-                <div class="mt-3 border-t border-line pt-3">
-                    <p class="mb-2 text-xs text-muted">
-                        Everyone's connected — ready to generate keys.
-                    </p>
-                    <Button block disabled>Start key generation</Button>
-                </div>
-            {:else if appState.dkgState === DkgState.Complete}
-                <div class="mt-3 border-t border-line pt-3">
-                    <div class="alert alert-success mb-2">
-                        Wallet ready. Any {appState.sessionInfo.threshold} of {appState
-                            .sessionInfo.total} can sign together.
-                    </div>
-                    {#if showDeveloper}
-                    <Button
-                        variant="ghost"
-                        block
-                        on:click={testMPCSigning}
-                        title="Developer: run a test signing ceremony"
-                    >
-                        Run test signing
-                    </Button>
-                    {/if}
-                </div>
-            {:else if appState.dkgState === DkgState.Initializing || appState.dkgState === DkgState.Round1InProgress || appState.dkgState === DkgState.Round1Complete || appState.dkgState === DkgState.Round2InProgress || appState.dkgState === DkgState.Round2Complete || appState.dkgState === DkgState.Finalizing}
-                <div class="mt-3 border-t border-line pt-3">
-                    <div class="alert alert-info" data-testid="dkg-progress">
-                        {#if appState.dkgState === DkgState.Finalizing && appState.ecdsaDkgStatus === "waiting-primes"}
-                            {ecdsaPrimesLabel(appState.ecdsaPrimes)} — the Ethereum key is created as soon as it is done.
-                        {:else if appState.dkgState === DkgState.Finalizing && appState.ecdsaDkgStatus === "aux-info"}
-                            Creating the Ethereum key (step 1 of 2, takes a few minutes)…
-                        {:else if appState.dkgState === DkgState.Finalizing && appState.ecdsaDkgStatus === "keygen"}
-                            Creating the Ethereum key (step 2 of 2)…
-                        {:else}
-                            Generating keys — please keep the popup open until it
-                            completes.
-                        {/if}
-                    </div>
-                </div>
-            {/if}
-        </div>
-    {:else if shownInvites.length > 0}
+    {#if walletSessionIdle && actionableInvites.length > 0}
         <!-- Pending invitations -->
         <div class="space-y-2">
-            {#each shownInvites as invite}
+            {#each actionableInvites as invite}
                 <div class="card card-pad">
                     <div class="mb-2 flex items-center justify-between">
                         <h3 class="flex items-center gap-1.5 text-sm font-bold">
-                            <Icon name="users" size={15} /> Invitation
+                            <Icon name="users" size={15} /> Wallet invitation
                         </h3>
                         <span class="badge badge-warning"
                             >{invite.threshold} of {invite.total}</span
@@ -3165,7 +2821,8 @@
         </div>
     {/if}
 
-    <!-- Developer options (connection, devices, manual sessions) -->
+    <!-- Diagnostics are secondary to an active wallet setup. -->
+    {#if !setupFocused && !onboardingVisible}
     <Collapsible
         title="Advanced"
         subtitle="Connection and device details"
@@ -3266,6 +2923,7 @@
 
         </div>
     </Collapsible>
+    {/if}
 
         <!-- Connection error -->
         {#if appState.wsError}

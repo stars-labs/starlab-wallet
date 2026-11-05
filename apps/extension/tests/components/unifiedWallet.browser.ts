@@ -26,7 +26,7 @@ try{
  });
  const goto=(path:string)=>page.goto(`http://127.0.0.1:${server.port}/${path}`);
  await goto('create');await page.locator('#cw-name').fill('  Treasury  ');await page.locator('#cw-total').fill('4');await page.locator('#cw-threshold').fill('3');assert.equal(await page.locator('select').count(),0);assert(!/FROST|ECDSA|ed25519|secp256k1/.test(await page.locator('body').innerText()));
- await page.getByRole('button',{name:'Create wallet',exact:true}).click();await page.waitForFunction(()=>(window as any).results.length>0);
+ await page.getByRole('button',{name:'Invite devices',exact:true}).click();await page.waitForFunction(()=>(window as any).results.length>0);
  assert.deepEqual(await page.evaluate(()=>(window as any).messages.find((m:any)=>m.type==='createDkgWallet')),{type:'createDkgWallet',name:'Treasury',total:4,threshold:3});assert.deepEqual(await page.evaluate(()=>(window as any).results.at(-1)),{sessionId:'unified-session'});console.log('PASS unified creation exact payload and session event, no algorithm selector');
  await goto('accounts');await page.waitForFunction(()=>(window as any).results.at(-1)?.addresses.length===4);assert.equal(await page.evaluate(()=>(window as any).messages.length),3);assert.deepEqual(await page.evaluate(()=>(window as any).results.at(-1).addresses.map((a:any)=>a.chain)),['solana','sui','bitcoin','ethereum']);assert(!JSON.stringify(await page.evaluate(()=>(window as any).results)).includes('WRONG_FROST_EVM'));
  await page.evaluate(()=>(window as any).component.$set({chain:'solana'}));await page.waitForTimeout(50);assert.equal(await page.evaluate(()=>(window as any).messages.length),3);

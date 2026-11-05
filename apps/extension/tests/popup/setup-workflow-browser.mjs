@@ -53,6 +53,18 @@ async function assertWaiting(page) {
     if (await details.count()) await expect(details).not.toHaveAttribute('open', '');
 }
 async function startSignal() {
+    if (process.env.SETUP_WORKFLOW_SILENT_SIGNAL === '1') {
+        const received = [];
+        const server = Bun.serve({
+            hostname: '127.0.0.1', port: 0,
+            fetch(request, server) { return server.upgrade(request) ? undefined : new Response('WebSocket required', { status: 400 }); },
+            websocket: { message(_socket, message) { received.push(JSON.parse(String(message))); } },
+        });
+        const record = { url: `ws://127.0.0.1:${server.port}`, scope: 'Real WebSocket transport that receives announcements but never sends messages', serverMessages: 0 };
+        (evidence.signals ??= []).push(record);
+        evidence.signal = record;
+        return { url: record.url, announcements: () => received.filter(message => message.type === 'announce_session').length, async stop() { record.receivedTypes = received.map(message => message.type); server.stop(true); } };
+    }
     const binary = process.env.SETUP_WORKFLOW_SIGNAL_BIN || '/tmp/starlab-unified-artifacts/712f0364/starlab-signal-server';
     await fs.access(binary);
     const port = await new Promise((resolve, reject) => {
@@ -125,6 +137,7 @@ async function realWorkflow() {
         await screenshot(page, 'real-configure-once');
         await invite.click();
         await assertWaiting(page);
+        if (signal.announcements) await expect.poll(signal.announcements).toBe(1);
         assert.equal(await page.evaluate(() => globalThis.__workflowCreateCalls), 1, 'Only Invite devices may create the ceremony, once');
         await screenshot(page, 'real-waiting');
         const before = await page.evaluate(() => chrome.runtime.sendMessage({ type: 'getState' }));

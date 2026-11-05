@@ -47,6 +47,12 @@ jobs:
         env:
           SETUP_WORKFLOW_MODE: ui-contract
         run: bun tests/popup/setup-workflow-browser.mjs
+      - name: Wallet creation without signaling echoes
+        working-directory: apps/extension
+        env:
+          SETUP_WORKFLOW_MODE: real
+          SETUP_WORKFLOW_SILENT_SIGNAL: "1"
+        run: xvfb-run -a bun tests/popup/setup-workflow-browser.mjs
       - name: Browser PRF cryptography
         working-directory: apps/extension
         run: xvfb-run -a bun tests/security-key/prf-extension-browser.mjs
@@ -60,6 +66,7 @@ jobs:
             /tmp/starlab-passwordless-ui-browser
             /tmp/starlab-prf-extension-browser
             /tmp/starlab-setup-workflow-ui-contract
+            /tmp/starlab-setup-workflow-real
           if-no-files-found: ignore
           retention-days: 7
 

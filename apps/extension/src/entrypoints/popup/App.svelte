@@ -72,7 +72,6 @@
     // still show the account list.
     let hasExternalAccounts = false;
     let accountSetupStatus = "";
-    let createdDkgSessionId = "";
     let waitingForInvite = false;
     let hasSignalRoom = false;
     let signalRoom = "";
@@ -104,7 +103,7 @@
         : hasSignalRoom
           ? "Not connected to the signal server"
           : "Generate or enter a signal room to connect";
-    $: activeShareSessionId = appState.sessionInfo?.session_id ?? createdDkgSessionId;
+    $: activeShareSessionId = appState.sessionInfo?.session_id;
     $: setupInviteText = activeShareSessionId
         ? [
               appState.sessionInfo?.session_type === "reshare" ? "Starlab Wallet device refresh" : "Starlab Wallet setup",
@@ -680,8 +679,7 @@
     $: walletSessionIdle = !appState.sessionInfo ||
         (appState.sessionInfo.session_type === "dkg" &&
             appState.dkgState === DkgState.Complete && !appState.pendingKeystoreReady);
-    $: setupHandoff = !!createdDkgSessionId && !appState.sessionInfo && !keystoreStatus.wallets.length;
-    $: setupFocused = walletSetupActive || setupHandoff || waitingForInvite || actionableInvites.length > 0;
+    $: setupFocused = walletSetupActive || waitingForInvite || actionableInvites.length > 0;
 
     
     // Password prompt state
@@ -2013,11 +2011,10 @@
             wsConnected={appState.wsConnected}
             room={signalRoom}
             on:created={({ detail }) => {
-                console.log(
-                    "[UI] DKG wallet creation announced:",
-                    detail.sessionId,
-                );
-                createdDkgSessionId = detail.sessionId;
+                // The command reply owns the handoff; no peer/server echo is needed.
+                if (appState.sessionInfo?.session_id !== detail.sessionInfo.session_id) {
+                    appState = { ...appState, sessionInfo: detail.sessionInfo, dkgState: DkgState.Initializing };
+                }
                 waitingForInvite = false;
                 onboardingDismissed = true;
                 showCreateWallet = false;
@@ -2736,9 +2733,7 @@
             />
         {/if}
 
-        {#if setupHandoff}
-            <div class="card card-pad" role="status">Preparing your device invitation…</div>
-        {:else if waitingForInvite && !appState.sessionInfo && actionableInvites.length === 0}
+        {#if waitingForInvite && !appState.sessionInfo && actionableInvites.length === 0}
             <div class="card card-pad space-y-3" data-testid="waiting-for-invite">
                 <FeatureHeader title="Waiting for an invitation" subtitle="Ask the creator to share their setup invitation" icon="users" />
                 <p class="text-xs text-muted">Keep this device in the same room as the creator. Your invitation will appear here.</p>

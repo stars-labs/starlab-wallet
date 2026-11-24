@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (defaults to current ref name)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    name: Build & Publish Browser Extensions
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine release tag & version
+        id: meta
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          VER="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies & build shared types
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          bun run build:types
+          cd apps/extension && bun run postinstall
+
+      - name: Stamp release version into extension manifest
+        run: |
+          VER="${{ steps.meta.outputs.version }}"
+          bun -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const p = "apps/extension/package.json";
+            const pkg = JSON.parse(readFileSync(p, "utf8"));
+            pkg.version = process.env.VER;
+            writeFileSync(p, JSON.stringify(pkg, null, 2) + "\n");
+          '
+        env:
+          VER: ${{ steps.meta.outputs.version }}
+
+      - name: Verify vendored core-wasm integrity
+        run: |
+          bun -e 'import {readFileSync} from "node:fs"; import {createHash} from "node:crypto"; const p=JSON.parse(readFileSync("packages/@starlab/core-wasm/package.json","utf8")); const hash=createHash("sha256").update(readFileSync("packages/@starlab/core-wasm/pkg/starlab_core_wasm_bg.wasm")).digest("hex"); if(hash!==p.starlabWasmSha256) throw new Error("Vendored WASM hash mismatch");'
+
+      - name: Build & zip Chrome, Edge, and Firefox packages
+        working-directory: apps/extension
+        run: |
+          bun run zip
+          bun run zip:edge
+          bun run zip:firefox
+          # Security gate: production builds must never contain the test-only insecure prime hook
+          ! grep -rq '__starlabInsecureTestPrimes' .output/chrome-mv3
+          ! grep -q 'from"./popup-' .output/chrome-mv3/chunks/offscreen-*.js
+
+      - name: Collect release artifacts & SHA256SUMS
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          mkdir -p release-assets
+          cp apps/extension/.output/*-chrome.zip  "release-assets/starlab-wallet-${TAG}-chrome-mv3.zip"
+          cp apps/extension/.output/*-edge.zip    "release-assets/starlab-wallet-${TAG}-edge-mv3.zip"
+          cp apps/extension/.output/*-firefox.zip "release-assets/starlab-wallet-${TAG}-firefox.zip"
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
+          ls -lh
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: Starlab MPC Browser Extension ${{ steps.meta.outputs.tag }}
+          generate_release_notes: true
+          body: |
+            ## Starlab MPC Wallet — Browser Extension (${{ steps.meta.outputs.tag }})
+
+            Multi-chain MPC wallet extension (100+ EVM networks, Bitcoin Taproot, Solana, Sui, Ledger WebHID, YubiKey FIDO2 unlock & pre-sign Spending Policies).
+
+            ### Packages
+            - **Chrome / Brave / Arc / Vivaldi / Chromium**: `starlab-wallet-${{ steps.meta.outputs.tag }}-chrome-mv3.zip`
+            - **Microsoft Edge**: `starlab-wallet-${{ steps.meta.outputs.tag }}-edge-mv3.zip`
+            - **Firefox**: `starlab-wallet-${{ steps.meta.outputs.tag }}-firefox.zip`
+
+            ### Quick Install (Chrome / Brave / Edge)
+            1. Download and unzip `starlab-wallet-${{ steps.meta.outputs.tag }}-chrome-mv3.zip`.
+            2. Open `chrome://extensions` (or `edge://extensions`) and enable **Developer mode**.
+            3. Click **Load unpacked** and select the extracted folder.
+
+            - **Full 36-Screenshot Visual Guide**: https://starslab-app.freeman-xiong.workers.dev/wallet
+            - **Desktop App**: https://github.com/stars-labs/starlab-desktop/releases
+            - **TUI / CLI Engine**: https://github.com/stars-labs/starlab-mpc/releases
+          files: release-assets/*

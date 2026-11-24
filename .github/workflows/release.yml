@@ -98,7 +98,7 @@ jobs:
             2. Open `chrome://extensions` (or `edge://extensions`) and enable **Developer mode**.
             3. Click **Load unpacked** and select the extracted folder.
 
-            - **Full 36-Screenshot Visual Guide**: https://starslab-app.freeman-xiong.workers.dev/wallet
+            - **Full 36-Screenshot Visual Guide**: https://wallet.starslab.qzz.io
             - **Desktop App**: https://github.com/stars-labs/starlab-desktop/releases
             - **TUI / CLI Engine**: https://github.com/stars-labs/starlab-mpc/releases
           files: release-assets/*

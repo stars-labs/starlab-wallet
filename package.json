@@ -15,5 +15,8 @@
     "check": "bun run build:types && cd apps/extension && bun run check",
     "test": "cd apps/extension && bun test"
   },
-  "packageManager": "bun@1.4.4"
+  "packageManager": "bun@1.4.4",
+  "overrides": {
+    "@ledgerhq/logs": "6.20.0"
+  }
 }
